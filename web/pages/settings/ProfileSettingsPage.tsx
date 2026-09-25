@@ -295,7 +295,7 @@ function UsernameCard({ user }: { user: MeUser }) {
         footer={
           <>
             <p className="text-xs text-muted-foreground">
-              {LIMITS.username.min}–{LIMITS.username.max} lowercase letters, digits or underscores.
+              Your old username becomes free for anyone to take.
             </p>
             <Button
               type="submit"

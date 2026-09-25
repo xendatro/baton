@@ -25,7 +25,8 @@ const BROWSERS: ReadonlyArray<readonly [RegExp, string]> = [
   [/\b(?:Firefox|FxiOS)\//, 'Firefox'],
   [/\b(?:Chrome|CriOS|Chromium)\//, 'Chrome'],
   [/\bVersion\/[\d.]+.*\bSafari\//, 'Safari'],
-  [/\bPlaywright\b|\bHeadlessChrome\//, 'Headless Chrome'],
+  [/\bHeadlessChrome\//, 'Headless Chrome'],
+  [/^Playwright\//, 'Playwright'],
   [/^curl\//, 'curl'],
   [/^node(?:-fetch)?\b|\bundici\b/i, 'Node.js'],
 ];

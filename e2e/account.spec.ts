@@ -111,7 +111,7 @@ test('creates an API key, shows it once with agent setup, and revokes it', async
   await page.getByRole('option', { name: '30 days' }).click();
   await dialog.getByRole('button', { name: 'Create key' }).click();
 
-  const keyText = dialog.getByLabel('Your new API key');
+  const keyText = dialog.getByLabel('API key, shown once');
   await expect(keyText).toHaveText(/^bat_[A-Za-z0-9]{40}$/);
   const key = (await keyText.textContent()) ?? '';
   await expect(

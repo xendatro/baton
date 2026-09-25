@@ -149,8 +149,8 @@ export default function AppearanceSettingsPage() {
           })}
         </RadioGroup.Root>
         <p className="mt-4 text-xs text-muted-foreground">
-          You can also switch themes from the command palette (<Kbd keys="mod+k" />) or the account
-          menu.
+          You can also switch themes from the account menu, or the command palette{' '}
+          <Kbd keys="mod+k" />.
         </p>
       </SettingsCard>
     </SettingsPage>

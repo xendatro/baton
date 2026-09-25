@@ -95,7 +95,7 @@ function ProviderRow({ provider, account, configured, isLastMethod }: ProviderRo
                   ·{' '}
                 </>
               ) : null}
-              since <RelativeTime value={account.connectedAt} />
+              linked <RelativeTime value={account.connectedAt} />
             </>
           ) : configured ? (
             `Sign in with your ${label} account.`

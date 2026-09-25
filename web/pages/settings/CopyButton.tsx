@@ -57,7 +57,7 @@ export function CopyButton({
 export function CodeBlock({ code, label }: { code: string; label: string }) {
   return (
     <div className="relative min-w-0 rounded-md border bg-muted/50">
-      <pre className="overflow-x-auto p-3 pr-12 font-mono text-xs leading-relaxed whitespace-pre">
+      <pre className="p-3 pr-12 font-mono text-xs leading-relaxed [overflow-wrap:anywhere] whitespace-pre-wrap">
         <code>{code}</code>
       </pre>
       <CopyButton value={code} label={label} className="absolute top-2 right-2 bg-background" />

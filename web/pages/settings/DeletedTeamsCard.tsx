@@ -21,12 +21,14 @@ function DeletedTeamRow({ team }: { team: DeletedTeam }) {
   const left = daysLeft(team);
   return (
     <li className="flex flex-wrap items-center gap-3 py-3 first:pt-0 last:pb-0">
-      <EntityIcon
-        icon={team.icon}
-        name={team.name}
-        color={team.color}
-        className="size-8 rounded-md text-base"
-      />
+      <span className="flex size-9 shrink-0 items-center justify-center rounded-md border bg-background">
+        <EntityIcon
+          icon={team.icon}
+          name={team.name}
+          color={team.color}
+          className="size-5 text-base"
+        />
+      </span>
       <div className="min-w-0 flex-1">
         <p className="truncate text-sm font-medium">{team.name}</p>
         <p className="text-xs text-muted-foreground">

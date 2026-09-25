@@ -83,6 +83,7 @@ function SessionRow({ session }: { session: AccountSession }) {
           type="button"
           variant="outline"
           size="sm"
+          className="max-sm:ml-13"
           disabled={revoke.isPending}
           aria-label={`Sign out ${name}`}
           onClick={() =>
@@ -209,11 +210,12 @@ function SecurityLogCard() {
                   </span>
                   <div className="min-w-0 flex-1">
                     <p className="text-sm break-words">{event.title}</p>
-                    <p className="flex flex-wrap gap-x-2 text-xs text-muted-foreground">
+                    <p className="flex flex-wrap gap-x-1.5 text-xs text-muted-foreground">
                       <RelativeTime value={entry.createdAt} />
                       {event.details.map((detail) => (
-                        <span key={detail} className="break-all">
-                          · {detail}
+                        <span key={detail} className="flex gap-x-1.5 break-all">
+                          <span aria-hidden="true">·</span>
+                          {detail}
                         </span>
                       ))}
                     </p>

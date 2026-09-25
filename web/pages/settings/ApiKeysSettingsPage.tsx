@@ -119,7 +119,7 @@ function CreatedKey({ created }: { created: CreateApiKeyResponse }) {
       <div className="flex min-w-0 items-center gap-2">
         <code
           className="min-w-0 flex-1 truncate rounded-md border bg-muted/50 px-3 py-2 font-mono text-sm select-all"
-          aria-label="Your new API key"
+          aria-label="API key, shown once"
         >
           {created.key}
         </code>
@@ -335,7 +335,7 @@ function KeyRow({ apiKey, onRevoke }: { apiKey: ApiKey; onRevoke: (key: ApiKey) 
           type="button"
           variant="outline"
           size="sm"
-          className="text-destructive hover:text-destructive"
+          className="text-destructive hover:text-destructive max-sm:ml-13"
           onClick={() => onRevoke(apiKey)}
           aria-label={`Revoke ${apiKey.name}`}
         >

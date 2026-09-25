@@ -16,8 +16,8 @@ export function SettingsPage({ title, description, actions, children }: Settings
   useDocumentTitle([title, 'Settings']);
   return (
     <div className="grid gap-6">
-      <div className="flex flex-wrap items-end justify-between gap-3 border-b pb-4">
-        <div className="min-w-0 space-y-1">
+      <div className="flex flex-col gap-3 border-b pb-4 sm:flex-row sm:items-end sm:justify-between">
+        <div className="min-w-0 flex-1 space-y-1">
           <h2 className="text-lg font-semibold tracking-tight">{title}</h2>
           {description ? <p className="text-sm text-muted-foreground">{description}</p> : null}
         </div>
@@ -61,8 +61,8 @@ export function SettingsCard({
         className,
       )}
     >
-      <div className="flex flex-wrap items-start justify-between gap-3 px-4 pt-4 sm:px-5 sm:pt-5">
-        <div className="min-w-0 space-y-1">
+      <div className="flex flex-col gap-3 px-4 pt-4 sm:flex-row sm:items-start sm:justify-between sm:px-5 sm:pt-5">
+        <div className="min-w-0 flex-1 space-y-1">
           <h3 className={cn('text-sm font-semibold', tone === 'danger' && 'text-destructive')}>
             {title}
           </h3>

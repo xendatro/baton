@@ -12,4 +12,6 @@ import { lazy, type ComponentType, type LazyExoticComponent } from 'react';
 export const shellExtensions: ReadonlyArray<LazyExoticComponent<ComponentType>> = [
   // teams: the New team dialog (`team.create`)
   lazy(() => import('@web/pages/teams/NewTeamDialog')),
+  // projects: "New project" dialog (`project.create`) and its palette command
+  lazy(() => import('@web/pages/projects/NewProjectDialog')),
 ];

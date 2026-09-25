@@ -109,3 +109,10 @@ Notes from the engineers who built the foundation, for everyone building feature
 - @tiptap/markdown registers custom tokenizers on the global marked singleton for each editor instance, so extensions pile up. This was already the case; the two new raw-markdown tokenizers are affected the same way.
 - Not run: the visual review suite (npx playwright test -c e2e/visual/visual.config.ts), which is outside the required checks. The dev gallery's mention lookups are answered by setQueryDefaults in ComponentsPage.
 - A user can still reach 50 API keys x 300 MCP calls/min, by SPEC design (per-key limit).
+
+## Projects module
+
+- Server: `requireProject(db, actor, projectId)` (server/services/projects.ts) returns the live project, its team and the actor's membership (404 for outsiders and deleted projects). `statusesOf(db, projectId)` and `labelsOf(db, projectId)` return the wire `Status[]`/`Label[]` with counts. Contracts are in `shared/schemas/projects.ts`; REST in docs/API.md → Projects.
+- Tasks module: a task's `completedAt` is also set/cleared by the projects module when a status is recategorized or deleted (tasks moved to the `moveTo` status get fresh fractional positions at the end of that column). Default status for new tasks: `isDefault` (exactly one per project).
+- Web: the project layout (`web/pages/projects/ProjectLayout.tsx`) wraps every `/t/:team/p/:key/*` page with the header and the Overview/Tasks/Issues/Settings tabs, so issue and task pages render below it (use `PageContainer`, not another page-level project header). It only renders its children once the team and project resolve, so `useRouteContext()` gives both. Reusable hooks: `useProject`, `useStatuses`, `useLabels` (and label/status mutations) in `web/pages/projects/queries.ts`.
+- Shell action `project.create` takes `{ teamId?: string }` (the teams module's "New project" button passes the team); the palette's "New project…" comes from the projects shell extension.

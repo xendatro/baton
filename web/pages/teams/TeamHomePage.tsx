@@ -34,13 +34,6 @@ import { useMembers, useTeamOverview } from './api';
 import { InviteDialog } from './InviteDialog';
 import { TeamIcon } from './TeamIcon';
 
-declare module '@web/lib/shellActions' {
-  interface ShellActionPayloads {
-    /** Open the "create a project" flow in a team (implemented by the projects module). */
-    'project.create': { teamId: string };
-  }
-}
-
 /** Members shown in the preview before "View all". */
 const MEMBER_PREVIEW = 8;
 

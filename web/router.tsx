@@ -57,33 +57,43 @@ const shellRoutes: RouteObject[] = [
     ],
   },
 
-  // projects
-  { path: 't/:team/p/:key', ...page(() => import('./pages/projects/ProjectOverviewPage')) },
+  // projects: the project layout (header + Overview/Tasks/Issues/Settings tabs, old-key
+  // redirects) wraps every page of a project, including the issues and tasks modules' pages.
   {
-    path: 't/:team/p/:key/settings',
-    ...page(() => import('./pages/project-settings/ProjectSettingsLayout')),
+    path: 't/:team/p/:key',
+    ...page(() => import('./pages/projects/ProjectLayout')),
     children: [
-      redirectTo('general'),
+      { index: true, ...page(() => import('./pages/projects/ProjectOverviewPage')) },
       {
-        path: 'general',
-        ...page(() => import('./pages/project-settings/GeneralSettingsPage')),
+        path: 'settings',
+        ...page(() => import('./pages/project-settings/ProjectSettingsLayout')),
+        children: [
+          redirectTo('general'),
+          {
+            path: 'general',
+            ...page(() => import('./pages/project-settings/GeneralSettingsPage')),
+          },
+          {
+            path: 'statuses',
+            ...page(() => import('./pages/project-settings/StatusesSettingsPage')),
+          },
+          {
+            path: 'labels',
+            ...page(() => import('./pages/project-settings/LabelsSettingsPage')),
+          },
+        ],
       },
-      {
-        path: 'statuses',
-        ...page(() => import('./pages/project-settings/StatusesSettingsPage')),
-      },
-      { path: 'labels', ...page(() => import('./pages/project-settings/LabelsSettingsPage')) },
+
+      // issues
+      { path: 'issues', ...page(() => import('./pages/issues/IssueListPage')) },
+      { path: 'issues/new', ...page(() => import('./pages/issues/NewIssuePage')) },
+      { path: 'issues/:number', ...page(() => import('./pages/issues/IssuePage')) },
+
+      // tasks
+      { path: 'tasks', ...page(() => import('./pages/tasks/TasksPage')) },
+      { path: 'tasks/:number', ...page(() => import('./pages/tasks/TaskPage')) },
     ],
   },
-
-  // issues
-  { path: 't/:team/p/:key/issues', ...page(() => import('./pages/issues/IssueListPage')) },
-  { path: 't/:team/p/:key/issues/new', ...page(() => import('./pages/issues/NewIssuePage')) },
-  { path: 't/:team/p/:key/issues/:number', ...page(() => import('./pages/issues/IssuePage')) },
-
-  // tasks
-  { path: 't/:team/p/:key/tasks', ...page(() => import('./pages/tasks/TasksPage')) },
-  { path: 't/:team/p/:key/tasks/:number', ...page(() => import('./pages/tasks/TaskPage')) },
 
   // account
   {

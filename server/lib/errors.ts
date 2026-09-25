@@ -1,0 +1,69 @@
+import type { ContentfulStatusCode } from 'hono/utils/http-status';
+import type { ApiError, ErrorCode } from '@shared/schemas/common';
+
+export type { ErrorCode };
+
+/** Default HTTP status for each error code. */
+export const ERROR_STATUS: Readonly<Record<ErrorCode, ContentfulStatusCode>> = {
+  unauthorized: 401,
+  forbidden: 403,
+  not_found: 404,
+  validation_failed: 400,
+  conflict: 409,
+  rate_limited: 429,
+  payload_too_large: 413,
+  email_not_verified: 403,
+  username_required: 403,
+  internal: 500,
+};
+
+/**
+ * An expected failure with a stable code. Services throw these; the REST error handler turns them
+ * into `{ error: { code, message, details } }` and MCP tools into `isError` results.
+ * `message` is shown to users and agents, so keep it human and free of internals.
+ */
+export class AppError extends Error {
+  override name = 'AppError';
+
+  constructor(
+    readonly code: ErrorCode,
+    readonly status: ContentfulStatusCode,
+    message: string,
+    readonly details?: unknown,
+  ) {
+    super(message);
+  }
+
+  toJSON(): ApiError {
+    return {
+      error: {
+        code: this.code,
+        message: this.message,
+        ...(this.details === undefined ? {} : { details: this.details }),
+      },
+    };
+  }
+}
+
+function make(code: ErrorCode, message: string, details?: unknown): AppError {
+  return new AppError(code, ERROR_STATUS[code], message, details);
+}
+
+/** Shorthands with the default status for each code. */
+export const errors = {
+  unauthorized: (message = 'Sign in to continue') => make('unauthorized', message),
+  forbidden: (message = "You don't have permission to do that") => make('forbidden', message),
+  /** Also used for resources in teams the caller doesn't belong to (never leak existence). */
+  notFound: (what = 'Resource') => make('not_found', `${what} not found`),
+  validation: (message: string, details?: unknown) => make('validation_failed', message, details),
+  conflict: (message: string, details?: unknown) => make('conflict', message, details),
+  rateLimited: (message = 'Too many requests, slow down') => make('rate_limited', message),
+  payloadTooLarge: (message = 'Payload too large') => make('payload_too_large', message),
+  emailNotVerified: () => make('email_not_verified', 'Verify your email address first'),
+  usernameRequired: () => make('username_required', 'Choose a username first'),
+  internal: (message = 'Something went wrong') => make('internal', message),
+} as const;
+
+export function isAppError(error: unknown): error is AppError {
+  return error instanceof AppError;
+}

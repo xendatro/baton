@@ -1,0 +1,99 @@
+import { z } from 'zod';
+
+/**
+ * Live events (SPEC §5). Services emit them on the in-process event bus after their transaction
+ * commits; `GET /api/events` streams them over SSE to members of the event's team (personal events
+ * only to `userId`); the web client maps each type to TanStack Query invalidations (web/lib/live.ts).
+ * Events are hints to refetch — they never carry entity data.
+ */
+
+export const LIVE_EVENT_TYPES = [
+  'team.updated',
+  'team.deleted',
+  'member.joined',
+  'member.left',
+  'member.updated',
+  'role.changed',
+  'invite.changed',
+  'project.created',
+  'project.updated',
+  'project.deleted',
+  'project.restored',
+  'status.changed',
+  'label.changed',
+  'issue.created',
+  'issue.updated',
+  'issue.deleted',
+  'issue.restored',
+  'task.created',
+  'task.updated',
+  'task.deleted',
+  'task.restored',
+  'task.claimed',
+  'task.released',
+  'reply.created',
+  'reply.updated',
+  'reply.deleted',
+  'attachment.changed',
+  'activity.created',
+  'notification.created',
+  'me.updated',
+] as const;
+
+export type LiveEventType = (typeof LIVE_EVENT_TYPES)[number];
+
+/** Events delivered only to one user (`userId`) instead of a whole team. */
+export const PERSONAL_EVENT_TYPES = [
+  'notification.created',
+  'me.updated',
+] as const satisfies readonly LiveEventType[];
+
+export type PersonalEventType = (typeof PERSONAL_EVENT_TYPES)[number];
+
+export const LIVE_ENTITY_TYPES = [
+  'user',
+  'team',
+  'member',
+  'role',
+  'invite',
+  'project',
+  'status',
+  'label',
+  'issue',
+  'task',
+  'reply',
+  'attachment',
+  'activity',
+  'notification',
+] as const;
+
+export type LiveEntityType = (typeof LIVE_ENTITY_TYPES)[number];
+
+export const liveEventSchema = z.object({
+  type: z.enum(LIVE_EVENT_TYPES),
+  /** Team the event belongs to; null only for personal events without a team (`me.updated`). */
+  teamId: z.string().nullable(),
+  projectId: z.string().nullable().optional(),
+  entityType: z.enum(LIVE_ENTITY_TYPES),
+  entityId: z.string(),
+  /**
+   * For `reply.*` and `attachment.changed`: the item they belong to (e.g. `task` + task id).
+   * For `activity.created`: the entity the activity row is about (`entityId` is the row id).
+   */
+  parentType: z.string().nullable().optional(),
+  parentId: z.string().nullable().optional(),
+  /** Who caused the event; null for system jobs. */
+  actorId: z.string().nullable(),
+  /** Recipient of a personal event. */
+  userId: z.string().nullable().optional(),
+  /** ISO 8601 timestamp. */
+  at: z.string(),
+});
+
+export type LiveEvent = z.infer<typeof liveEventSchema>;
+
+const PERSONAL_SET: ReadonlySet<LiveEventType> = new Set(PERSONAL_EVENT_TYPES);
+
+export function isPersonalEvent(event: Pick<LiveEvent, 'type'>): boolean {
+  return PERSONAL_SET.has(event.type);
+}

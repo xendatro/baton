@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "types": ["node"],
+    "paths": {
+      "@shared/*": ["../shared/*"],
+      "@server/*": ["./*"]
+    }
+  },
+  "include": ["**/*.ts", "../shared/**/*.ts"],
+  "exclude": ["../shared/**/*.test.ts"]
+}

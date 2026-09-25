@@ -5,12 +5,10 @@
 import path from 'node:path';
 import { serve } from '@hono/node-server';
 import { createApp } from './app';
-import type { AppDeps } from './context';
-import { openDatabase } from './db';
 import { runMigrations } from './db/migrate';
+import { createAppDeps } from './deps';
 import { EnvError, loadDotEnv, parseEnv, type Env } from './env';
 import { startJobs } from './jobs';
-import { createEventBus } from './lib/eventBus';
 import { dataPaths, ensureDataDirs } from './lib/paths';
 import { createLogger } from './logger';
 import { VERSION } from './version';
@@ -36,15 +34,12 @@ const logger = createLogger(env);
 const paths = dataPaths(env.dataDir);
 ensureDataDirs(paths);
 
-const db = openDatabase(paths.database);
+const deps = createAppDeps({ env, logger, databaseFile: paths.database });
+const { db } = deps;
 runMigrations(db);
 
-const deps: AppDeps = { env, db, logger, events: createEventBus(logger) };
 // The SPA build (dist/web) is resolved from the working directory, like Hono's serveStatic.
 const app = createApp({ ...deps, webDir: path.resolve('dist', 'web') });
-
-if (!env.smtpUrl)
-  logger.warn('SMTP_URL is not set: emails will be logged to the console instead of sent');
 
 const server = serve({ fetch: app.fetch, hostname: env.host, port: env.port }, (info) => {
   logger.info(

@@ -1,5 +1,8 @@
-import type { Hono } from 'hono';
+import type { Hono, MiddlewareHandler } from 'hono';
 import type { AppEnv } from '../context';
+import { actorMiddleware } from '../middleware/actor';
+import { csrfMiddleware } from '../middleware/csrf';
+import { byClientIp, byUser, rateLimit } from '../middleware/rateLimit';
 import { accountRoutes } from './account';
 import { activityRoutes } from './activity';
 import { apiKeyRoutes } from './apiKeys';
@@ -70,6 +73,24 @@ const routers: ReadonlyArray<Hono<AppEnv>> = [
   accountRoutes,
 ];
 
+/** Better Auth serves /api/auth/* itself (sessions, CSRF/origin checks, its own rate limits). */
+function isAuthPath(path: string): boolean {
+  return path === '/api/auth' || path.startsWith('/api/auth/');
+}
+
+function exceptAuth(middleware: MiddlewareHandler<AppEnv>): MiddlewareHandler<AppEnv> {
+  return (c, next) => (isAuthPath(c.req.path) ? next() : middleware(c, next));
+}
+
+/**
+ * Mounts every router under /api behind the shared middleware: auth endpoints are rate limited per
+ * IP; everything else resolves the actor (session cookie or API key, plus the verification and
+ * username guards), enforces CSRF for cookie requests and rate limits writes per user.
+ */
 export function mountApiRoutes(api: Hono<AppEnv>): void {
+  api.use('/auth/*', rateLimit({ name: 'auth', key: byClientIp, writesOnly: true }));
+  api.use('*', exceptAuth(actorMiddleware()));
+  api.use('*', exceptAuth(csrfMiddleware()));
+  api.use('*', exceptAuth(rateLimit({ name: 'writes', key: byUser, writesOnly: true })));
   for (const router of routers) api.route('/', router);
 }

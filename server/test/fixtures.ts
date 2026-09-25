@@ -1,4 +1,5 @@
 import { hashPassword } from 'better-auth/crypto';
+import { and, eq, sql } from 'drizzle-orm';
 import { DEFAULT_PROJECT_COLOR, DEFAULT_STATUSES, DEFAULT_TEAM_COLOR } from '@shared/constants';
 import { TEAM_ROLE_SEEDS, type Permission } from '@shared/permissions';
 import type { Database } from '../db';
@@ -229,4 +230,74 @@ export function createApiKey(
     .returning()
     .get();
   return { key: generated.key, apiKey };
+}
+
+export type IssueRow = typeof s.issue.$inferSelect;
+export type TaskRow = typeof s.task.$inferSelect;
+
+export interface CreateItemOptions {
+  project: ProjectRow;
+  authorId?: string | null;
+  title?: string;
+  body?: string;
+}
+
+/** Hands out the project's next issue or task number (like the services do). */
+function nextNumber(db: Database, projectId: string, kind: 'issue' | 'task'): number {
+  const column = kind === 'issue' ? s.project.issueSeq : s.project.taskSeq;
+  const updated = db.orm
+    .update(s.project)
+    .set(kind === 'issue' ? { issueSeq: sql`${column} + 1` } : { taskSeq: sql`${column} + 1` })
+    .where(eq(s.project.id, projectId))
+    .returning({ issueSeq: s.project.issueSeq, taskSeq: s.project.taskSeq })
+    .get();
+  if (!updated) throw new Error('project not found');
+  return kind === 'issue' ? updated.issueSeq : updated.taskSeq;
+}
+
+/** An issue (`KEY#n`) in the project. */
+export function createIssue(db: Database, options: CreateItemOptions): IssueRow {
+  const n = nextSequence();
+  return db.orm
+    .insert(s.issue)
+    .values({
+      projectId: options.project.id,
+      teamId: options.project.teamId,
+      number: nextNumber(db, options.project.id, 'issue'),
+      title: options.title ?? `Issue ${n}`,
+      body: options.body ?? '',
+      authorId: options.authorId ?? null,
+    })
+    .returning()
+    .get();
+}
+
+/** A task (`KEY-n`) in the project's default status. */
+export function createTask(
+  db: Database,
+  options: CreateItemOptions & { statusId?: string },
+): TaskRow {
+  const n = nextSequence();
+  const statusId =
+    options.statusId ??
+    db.orm
+      .select({ id: s.status.id })
+      .from(s.status)
+      .where(and(eq(s.status.projectId, options.project.id), eq(s.status.isDefault, true)))
+      .get()?.id;
+  if (!statusId) throw new Error('project has no default status');
+  return db.orm
+    .insert(s.task)
+    .values({
+      projectId: options.project.id,
+      teamId: options.project.teamId,
+      number: nextNumber(db, options.project.id, 'task'),
+      title: options.title ?? `Task ${n}`,
+      description: options.body ?? '',
+      statusId,
+      position: `a${n}`,
+      authorId: options.authorId ?? null,
+    })
+    .returning()
+    .get();
 }

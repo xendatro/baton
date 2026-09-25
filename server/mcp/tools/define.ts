@@ -33,27 +33,46 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-/** Wraps a handler's return value (or thrown error) in an MCP tool result. */
+/**
+ * Wraps a handler's return value (or thrown error) in an MCP tool result and logs the call (tool,
+ * key, duration, outcome — never the arguments, which may hold content or secrets).
+ */
 export async function toToolResult(
   ctx: ToolContext,
   toolName: string,
   run: () => unknown,
 ): Promise<CallToolResult> {
+  const started = performance.now();
+  const log = (outcome: string, extra: Record<string, unknown> = {}) =>
+    ctx.deps.logger.info(
+      {
+        tool: toolName,
+        userId: ctx.actor.userId,
+        keyId: ctx.actor.key?.id ?? null,
+        ms: Math.round(performance.now() - started),
+        outcome,
+        ...extra,
+      },
+      'mcp tool call',
+    );
   try {
     const value = await run();
     const structuredContent = isPlainObject(value) ? value : { result: value ?? null };
+    log('ok');
     return {
       content: [{ type: 'text', text: JSON.stringify(value ?? null) }],
       structuredContent,
     };
   } catch (error) {
     if (isAppError(error)) {
+      log(error.code);
       return {
         isError: true,
         content: [{ type: 'text', text: `${error.code}: ${error.message}` }],
       };
     }
     ctx.deps.logger.error({ err: error, tool: toolName }, 'MCP tool failed');
+    log('internal');
     return { isError: true, content: [{ type: 'text', text: 'internal: Something went wrong' }] };
   }
 }

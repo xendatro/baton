@@ -9,6 +9,7 @@ import { errors } from '../../lib/errors';
 import { consumeRateLimit } from '../../middleware/rateLimit';
 import { appPaths } from '../../lib/urls';
 import { listAuditLog, listEntityActivity } from '../../services/activity';
+import { resolveAuditLogKey } from '../../services/admin';
 import {
   deleteAttachment,
   getAttachmentWithContent,
@@ -339,20 +340,26 @@ const getActivity = defineTool({
   name: 'get_activity',
   title: 'Get activity',
   description:
-    'History of one task, issue, reply or attachment (who changed what, oldest first; every member can read it), or — with VIEW_AUDIT_LOG — the history of any other team entity (entityType + entityId, e.g. project or role) or, with `team`, the team audit log (newest first, filterable, paginated).',
+    'History of one task, issue, reply or attachment (who changed what, oldest first; every member can read it), or — with VIEW_AUDIT_LOG — the history of any other team entity (entityType + entityId, e.g. project or role) or, with `team`, the team audit log (newest first, paginated, filterable by project, actor, source, API key, entity type, action and time; get_audit_log_facets lists the values present).',
   input: z.object({
     item: itemRef.optional().describe('Task or issue whose history to show (ref or id)'),
     entityType: z
       .enum(ACTIVITY_ENTITY_TYPES)
       .optional()
       .describe(
-        'Other entity type for a history (with entityId): reply or attachment for any member; project, role and other team entities need VIEW_AUDIT_LOG',
+        'Other entity type for a history (with entityId): reply or attachment for any member; project, role and other team entities need VIEW_AUDIT_LOG. With team and no entityId: audit log filter by entity type',
       ),
     entityId: z.string().optional().describe('Entity id for entityType'),
     team: z.string().optional().describe('Team (slug or id) whose audit log to read'),
     project: z.string().optional().describe('Audit log: only this project (KEY, team/KEY or id)'),
     actor: z.string().optional().describe('Audit log: only actions by this user (username or id)'),
     source: z.enum(ACTOR_SOURCES).optional().describe('Audit log: only this source'),
+    key: z
+      .string()
+      .optional()
+      .describe(
+        'Audit log: only actions made through this API key (key id, or its name as shown in via)',
+      ),
     action: z
       .string()
       .optional()
@@ -403,6 +410,8 @@ const getActivity = defineTool({
         ? resolveUser(ctx.deps, ctx.actor, input.actor, { teamId: team.id }).id
         : undefined,
       source: input.source,
+      keyId: input.key ? resolveAuditLogKey(ctx.deps, ctx.actor, team.id, input.key) : undefined,
+      entityType: input.entityType,
       action: input.action,
       from: input.since,
       to: input.until,

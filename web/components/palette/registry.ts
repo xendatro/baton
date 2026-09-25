@@ -26,6 +26,12 @@ export interface PaletteSearchResult {
   label: string;
   /** Secondary text, e.g. a ref or snippet. */
   description?: string;
+  /** Short identifier shown before the label, e.g. `API-12`. */
+  ref?: string;
+  /** Right-aligned context, e.g. the project name. */
+  hint?: string;
+  /** Search terms to highlight in the label and description (see web/lib/highlight.ts). */
+  highlight?: readonly string[];
   icon?: LucideIcon;
   /** App path to open. */
   href: string;

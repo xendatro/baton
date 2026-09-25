@@ -55,7 +55,9 @@ export function ReplyItem({ reply }: ReplyItemProps) {
 
   return (
     <article
-      className="group/reply flex gap-3 rounded-lg border bg-card p-3"
+      id={`reply-${reply.id}`}
+      tabIndex={-1}
+      className="group/reply flex scroll-mt-20 gap-3 rounded-lg border bg-card p-3 outline-none"
       aria-label={`Reply by ${reply.author?.name ?? 'deleted user'}`}
     >
       <UserAvatar user={reply.author} size="lg" className="mt-0.5" />

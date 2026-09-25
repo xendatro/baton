@@ -1,4 +1,5 @@
 import { ErrorState } from '@web/components/common/ErrorState';
+import { useScrollToHash } from '@web/lib/useScrollToHash';
 import { ActivityRow } from './ActivityRow';
 import { useActivity, useReplies } from './queries';
 import { ReplyItem } from './ReplyItem';
@@ -9,6 +10,7 @@ import { mergeTimeline } from './mergeTimeline';
 export function Timeline({ parentType, parentId }: ThreadProps) {
   const replies = useReplies(parentType, parentId);
   const activity = useActivity(parentType, parentId);
+  useScrollToHash(replies.isSuccess && activity.isSuccess);
   if (replies.isPending || activity.isPending) return <ThreadSkeleton />;
   if (replies.isError || activity.isError) {
     return (

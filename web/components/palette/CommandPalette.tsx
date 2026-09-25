@@ -15,7 +15,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { Command as CommandPrimitive } from 'cmdk';
-import { useEffect, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { Kbd } from '@web/components/common/Kbd';
 import { Spinner } from '@web/components/common/Spinner';
@@ -30,6 +30,7 @@ import {
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@web/components/ui/dialog';
 import { useMe, useSignOut } from '@web/lib/auth';
 import { commandFilter } from '@web/lib/commandFilter';
+import { highlightSegments } from '@web/lib/highlight';
 import { setShortcutsHelpOpen } from '@web/lib/hotkeys';
 import { useShellActionAvailable, runShellAction } from '@web/lib/shellActions';
 import { useTheme } from '@web/lib/theme';
@@ -274,45 +275,64 @@ function PaletteBody() {
         className="h-12"
       />
       <CommandList className="max-h-[min(60vh,26rem)]">
-        <CommandEmpty>No results.</CommandEmpty>
+        {/* cmdk doesn't count force-mounted search results, so its empty state would show beside them. */}
+        {search.some((provider) => provider.loading || provider.results.length > 0) ? null : (
+          <CommandEmpty>No results.</CommandEmpty>
+        )}
         {[...registeredGroups.entries()].map(([group, commands]) => (
           <CommandGroup key={group} heading={group}>
             {commands.map(renderEntry)}
           </CommandGroup>
         ))}
-        {search.map((provider) => (
-          <CommandGroup key={provider.id} heading={provider.group} forceMount>
-            {provider.loading ? (
-              <CommandPrimitive.Loading>
-                <div className="flex items-center gap-2 px-2 py-1.5 text-sm text-muted-foreground">
-                  <Spinner /> Searching…
-                </div>
-              </CommandPrimitive.Loading>
-            ) : null}
-            {provider.results.map((result) => {
-              const Icon = result.icon;
-              return (
-                <CommandItem
-                  key={`${provider.id}.${result.id}`}
-                  value={`${provider.id}.${result.id}`}
-                  keywords={[result.label]}
-                  forceMount
-                  onSelect={() => run(go(result.href))}
-                >
-                  {Icon ? <Icon aria-hidden="true" /> : null}
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate">{result.label}</span>
-                    {result.description ? (
-                      <span className="block truncate text-xs text-muted-foreground">
-                        {result.description}
+        {search
+          .filter((provider) => provider.loading || provider.results.length > 0)
+          .map((provider) => (
+            <CommandGroup key={provider.id} heading={provider.group} forceMount>
+              {provider.loading ? (
+                <CommandPrimitive.Loading>
+                  <div className="flex items-center gap-2 px-2 py-1.5 text-sm text-muted-foreground">
+                    <Spinner /> Searching…
+                  </div>
+                </CommandPrimitive.Loading>
+              ) : null}
+              {provider.results.map((result) => {
+                const Icon = result.icon;
+                return (
+                  <CommandItem
+                    key={`${provider.id}.${result.id}`}
+                    value={`${provider.id}.${result.id}`}
+                    keywords={[result.label]}
+                    forceMount
+                    onSelect={() => run(go(result.href))}
+                  >
+                    {Icon ? <Icon aria-hidden="true" /> : null}
+                    <span className="min-w-0 flex-1">
+                      <span className="flex min-w-0 items-baseline gap-2">
+                        {result.ref ? (
+                          <span className="shrink-0 font-mono text-xs text-muted-foreground">
+                            {result.ref}
+                          </span>
+                        ) : null}
+                        <span className="truncate">
+                          <Highlighted text={result.label} terms={result.highlight} />
+                        </span>
+                      </span>
+                      {result.description ? (
+                        <span className="block truncate text-xs text-muted-foreground">
+                          <Highlighted text={result.description} terms={result.highlight} />
+                        </span>
+                      ) : null}
+                    </span>
+                    {result.hint ? (
+                      <span className="ml-2 hidden max-w-[35%] shrink-0 truncate text-xs text-muted-foreground sm:block">
+                        {result.hint}
                       </span>
                     ) : null}
-                  </span>
-                </CommandItem>
-              );
-            })}
-          </CommandGroup>
-        ))}
+                  </CommandItem>
+                );
+              })}
+            </CommandGroup>
+          ))}
         <CommandGroup heading="Go to">{navigation.map(renderEntry)}</CommandGroup>
         {places.length ? (
           <CommandGroup heading="Teams & projects">{places.map(renderEntry)}</CommandGroup>
@@ -320,5 +340,19 @@ function PaletteBody() {
         <CommandGroup heading="Actions">{actions.map(renderEntry)}</CommandGroup>
       </CommandList>
     </Command>
+  );
+}
+
+/** `text` with the search terms in bold. */
+function Highlighted({ text, terms }: { text: string; terms?: readonly string[] | undefined }) {
+  if (!terms?.length) return text;
+  return highlightSegments(text, terms).map((segment, index) =>
+    segment.match ? (
+      <mark key={index} className="rounded-sm bg-transparent font-semibold text-foreground">
+        {segment.text}
+      </mark>
+    ) : (
+      <Fragment key={index}>{segment.text}</Fragment>
+    ),
   );
 }

@@ -8,8 +8,10 @@ import { secureHeaders } from 'hono/secure-headers';
 import { ZodError } from 'zod';
 import type { ConfigResponse } from '@shared/schemas/core';
 import type { AppDeps, AppEnv } from './context';
+import { clientIp } from './lib/clientIp';
 import { AppError, errors, type ErrorCode } from './lib/errors';
 import { toValidationIssues } from './lib/validate';
+import { mcpRoutes } from './mcp/server';
 import { mountApiRoutes } from './routes';
 import { VERSION } from './version';
 
@@ -57,6 +59,7 @@ export function createApp(options: CreateAppOptions): Hono<AppEnv> {
     c.set('deps', deps);
     c.set('logger', log);
     c.set('actor', null);
+    c.set('clientIp', clientIp(c, env.trustProxy));
     const started = performance.now();
     await next();
     const entry = {
@@ -138,6 +141,9 @@ export function createApp(options: CreateAppOptions): Hono<AppEnv> {
   const api = new Hono<AppEnv>();
   mountApiRoutes(api);
   app.route('/api', api);
+
+  // --- MCP (Streamable HTTP, stateless) ------------------------------------------------------
+  app.route('/', mcpRoutes);
 
   // --- SPA ---------------------------------------------------------------------------------
   const indexFile = webDir ? path.join(webDir, 'index.html') : null;

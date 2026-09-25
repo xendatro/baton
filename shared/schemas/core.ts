@@ -9,6 +9,7 @@ import {
   SEARCH_ENTITY_TYPES,
   SUBSCRIBABLE_TYPES,
   THEMES,
+  TRASHABLE_TYPES,
 } from '../constants';
 import { PERMISSIONS } from '../permissions';
 import { cursorPaginationSchema, idSchema, paginatedSchema, timestampSchema } from './common';
@@ -284,6 +285,18 @@ export const uploadAttachmentFieldsSchema = z
   });
 export type UploadAttachmentFields = z.infer<typeof uploadAttachmentFieldsSchema>;
 
+/** Parents whose attachments can be listed (`GET /api/attachments`). */
+export const ATTACHMENT_LIST_PARENT_TYPES = ['issue', 'task', 'reply', 'project'] as const;
+
+export const listAttachmentsQuerySchema = z.object({
+  parentType: z.enum(ATTACHMENT_LIST_PARENT_TYPES),
+  parentId: idSchema,
+});
+export type ListAttachmentsQuery = z.infer<typeof listAttachmentsQuerySchema>;
+
+export const attachmentListResponseSchema = z.object({ items: z.array(attachmentSchema) });
+export type AttachmentListResponse = z.infer<typeof attachmentListResponseSchema>;
+
 // ---------------------------------------------------------------------------------------------
 // Replies: /api/replies
 // ---------------------------------------------------------------------------------------------
@@ -407,3 +420,45 @@ export type SetSubscriptionInput = z.infer<typeof setSubscriptionInputSchema>;
 
 export const subscriptionResponseSchema = z.object({ subscribed: z.boolean() });
 export type SubscriptionResponse = z.infer<typeof subscriptionResponseSchema>;
+
+// ---------------------------------------------------------------------------------------------
+// Trash (service: core; routes: admin)
+// ---------------------------------------------------------------------------------------------
+
+export const trashItemSchema = z.object({
+  type: z.enum(TRASHABLE_TYPES),
+  id: z.string(),
+  teamId: z.string(),
+  projectId: z.string().nullable(),
+  /** Title snapshot: item title, project name, file name, or a reply excerpt. */
+  title: z.string(),
+  /** `KEY-12` / `KEY#51` for tasks and issues, the parent's ref for replies, else null. */
+  ref: z.string().nullable(),
+  /** Author, uploader or creator of the item. */
+  author: userSummarySchema.nullable(),
+  deletedBy: userSummarySchema.nullable(),
+  via: viaKeySchema.nullable(),
+  deletedAt: timestampSchema,
+  /** Whole days until the daily purge removes it for good. */
+  daysLeft: z.number().int().nonnegative(),
+});
+export type TrashItem = z.infer<typeof trashItemSchema>;
+
+export const trashListResponseSchema = z.object({ items: z.array(trashItemSchema) });
+export type TrashListResponse = z.infer<typeof trashListResponseSchema>;
+
+export const trashItemRefSchema = z.object({
+  type: z.enum(TRASHABLE_TYPES),
+  id: idSchema,
+});
+export type TrashItemRef = z.infer<typeof trashItemRefSchema>;
+
+// ---------------------------------------------------------------------------------------------
+// Security log: GET /api/me/security-log
+// ---------------------------------------------------------------------------------------------
+
+export const securityLogQuerySchema = cursorPaginationSchema;
+export type SecurityLogQuery = z.infer<typeof securityLogQuerySchema>;
+
+export const securityLogResponseSchema = paginatedSchema(activityEntrySchema);
+export type SecurityLogResponse = z.infer<typeof securityLogResponseSchema>;

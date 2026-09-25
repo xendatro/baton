@@ -35,6 +35,8 @@ const envSchema = z
     TEAM_STORAGE_QUOTA_MB: z.coerce.number().int().min(1).default(5120),
     TRUST_PROXY: z.enum(['none', 'cloudflare']).default('none'),
     LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).optional(),
+    /** Test-only: also write every outgoing email as JSON into DATA_DIR/mailbox/. */
+    E2E_MAILBOX: booleanString.default(false),
   })
   .superRefine((env, ctx) => {
     if (env.NODE_ENV === 'production') {
@@ -88,6 +90,8 @@ export interface Env {
   teamStorageQuotaMb: number;
   trustProxy: 'none' | 'cloudflare';
   logLevel: LogLevel;
+  /** Test-only: write outgoing emails as JSON files into `DATA_DIR/mailbox/` (e2e tests read them). */
+  e2eMailbox: boolean;
 }
 
 export class EnvError extends Error {
@@ -136,6 +140,7 @@ export function parseEnv(source: Record<string, string | undefined>): Env {
     teamStorageQuotaMb: env.TEAM_STORAGE_QUOTA_MB,
     trustProxy: env.TRUST_PROXY,
     logLevel: env.LOG_LEVEL ?? (env.NODE_ENV === 'test' ? 'silent' : 'info'),
+    e2eMailbox: env.E2E_MAILBOX,
   };
 }
 

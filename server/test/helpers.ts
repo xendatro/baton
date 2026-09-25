@@ -4,12 +4,14 @@ import path from 'node:path';
 import type { Hono } from 'hono';
 import { createApp } from '../app';
 import type { AppDeps, AppEnv } from '../context';
-import { openDatabase, type Database } from '../db';
+import type { Database } from '../db';
 import { runMigrations } from '../db/migrate';
+import { createAppDeps } from '../deps';
 import { parseEnv, type Env } from '../env';
-import { createEventBus } from '../lib/eventBus';
 import { dataPaths, ensureDataDirs } from '../lib/paths';
 import { createLogger } from '../logger';
+
+import { addPassword } from './fixtures';
 
 export * from './fixtures';
 
@@ -44,10 +46,9 @@ export function createTestContext(options: TestContextOptions = {}): TestContext
   const env = parseEnv({ NODE_ENV: 'test', DATA_DIR: dataDir, ...options.env });
   const paths = dataPaths(env.dataDir);
   ensureDataDirs(paths);
-  const db = openDatabase(paths.database);
+  const deps = createAppDeps({ env, logger: createLogger(env), databaseFile: paths.database });
+  const { db } = deps;
   runMigrations(db);
-  const logger = createLogger(env);
-  const deps: AppDeps = { env, db, logger, events: createEventBus(logger) };
   const app = createApp({ ...deps, webDir: options.webDir ?? null });
   return {
     env,
@@ -60,6 +61,39 @@ export function createTestContext(options: TestContextOptions = {}): TestContext
       fs.rmSync(dataDir, { recursive: true, force: true });
     },
   };
+}
+
+/**
+ * Signs `user` in through Better Auth (adding the password first when given) and returns the
+ * `Cookie` header value of the session.
+ */
+export async function signIn(
+  ctx: TestContext,
+  user: { email: string; id: string },
+  password = 'correct horse battery staple',
+  options: { addPassword?: boolean } = {},
+): Promise<string> {
+  if (options.addPassword !== false) await addPassword(ctx.db, user.id, password);
+  const res = await ctx.app.request('/api/auth/sign-in/email', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Origin: ctx.env.baseUrl },
+    body: JSON.stringify({ email: user.email, password }),
+  });
+  if (res.status !== 200) throw new Error(`sign-in failed: ${res.status} ${await res.text()}`);
+  return cookieHeader(res);
+}
+
+/** `Cookie` header value built from a response's `Set-Cookie` headers. */
+export function cookieHeader(res: Response): string {
+  return res.headers
+    .getSetCookie()
+    .map((cookie) => cookie.split(';')[0])
+    .join('; ');
+}
+
+/** Headers of a same-origin browser request with a session cookie. */
+export function web(ctx: TestContext, cookie: string): Record<string, string> {
+  return { Cookie: cookie, Origin: ctx.env.baseUrl };
 }
 
 /** `Authorization: Bearer <key>` header for API-key requests. */

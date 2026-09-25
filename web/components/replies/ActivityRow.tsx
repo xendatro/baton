@@ -4,7 +4,7 @@ import type { ActivityEntry } from '@shared/schemas/core';
 import { RelativeTime } from '@web/components/common/RelativeTime';
 import { UserName } from '@web/components/common/UserName';
 import { cn } from '@web/lib/utils';
-import { describeActivity } from './describeActivity';
+import { describeActivity, hugsPrevious } from '@web/lib/activityText';
 
 export interface ActivityRowProps {
   entry: ActivityEntry;
@@ -28,7 +28,7 @@ export function ActivityRow({ entry, className }: ActivityRowProps) {
         />
         {parts.map((part, index) => (
           <Fragment key={index}>
-            {part.text === ',' ? '' : ' '}
+            {hugsPrevious(part) ? '' : ' '}
             {part.emphasis ? (
               <span className="font-medium text-foreground">{part.text}</span>
             ) : (

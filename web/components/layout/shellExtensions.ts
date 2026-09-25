@@ -1,4 +1,4 @@
-import type { ComponentType, LazyExoticComponent } from 'react';
+import { lazy, type ComponentType, type LazyExoticComponent } from 'react';
 
 /**
  * Components that feature modules mount inside the app shell (registration file, like
@@ -9,4 +9,7 @@ import type { ComponentType, LazyExoticComponent } from 'react';
  *
  *   export const shellExtensions = [lazy(() => import('@web/pages/teams/NewTeamDialog'))];
  */
-export const shellExtensions: ReadonlyArray<LazyExoticComponent<ComponentType>> = [];
+export const shellExtensions: ReadonlyArray<LazyExoticComponent<ComponentType>> = [
+  // admin: full-text search in the command palette
+  lazy(() => import('@web/pages/admin/PaletteSearch')),
+];

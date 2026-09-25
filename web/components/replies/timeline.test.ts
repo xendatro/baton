@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import type { ActivityEntry, Reply } from '@shared/schemas/core';
-import { describeActivity, describeChange } from './describeActivity';
 import { mergeTimeline } from './mergeTimeline';
 
 function entry(overrides: Partial<ActivityEntry>): ActivityEntry {
@@ -19,41 +18,6 @@ function entry(overrides: Partial<ActivityEntry>): ActivityEntry {
     ...overrides,
   };
 }
-
-function text(parts: ReturnType<typeof describeActivity>): string {
-  return parts.map((part) => part.text).join(' ');
-}
-
-describe('describeActivity', () => {
-  it('describes field changes with human values', () => {
-    expect(
-      text(describeActivity(entry({ changes: { status: { from: 'Open', to: 'Done' } } }))),
-    ).toBe('changed status from Open to Done');
-    expect(text(describeChange('dueDate', { from: null, to: '2026-10-01' }))).toBe(
-      'set due date to 2026-10-01',
-    );
-    expect(text(describeChange('dueDate', { from: '2026-10-01', to: null }))).toBe(
-      'cleared the due date',
-    );
-    expect(text(describeChange('description', { from: 'a', to: 'b' }))).toBe(
-      'edited the description',
-    );
-  });
-
-  it('describes list changes as additions and removals', () => {
-    expect(text(describeChange('labels', { from: ['Bug'], to: ['Docs', 'Feature'] }))).toBe(
-      'added labels Docs, Feature and removed labels Bug',
-    );
-  });
-
-  it('uses verbs for lifecycle actions', () => {
-    expect(text(describeActivity(entry({ action: 'task.claimed' })))).toBe('claimed this task');
-    expect(text(describeActivity(entry({ action: 'issue.resolved', entityType: 'issue' })))).toBe(
-      'resolved this issue',
-    );
-    expect(text(describeActivity(entry({ action: 'task.link_added' })))).toBe('link added');
-  });
-});
 
 describe('mergeTimeline', () => {
   const reply = (id: string, createdAt: string): Reply => ({

@@ -46,7 +46,18 @@ export const queryKeys = {
       params === undefined
         ? (['teams', teamId, 'audit-log'] as const)
         : (['teams', teamId, 'audit-log', params] as const),
-    trash: (teamId: string) => ['teams', teamId, 'trash'] as const,
+    /**
+     * The audit log page's loaded rows. Outside the `auditLog` prefix on purpose: live events
+     * would refetch every loaded page; new rows arrive through an `auditLog` query instead.
+     */
+    auditLogFeed: (teamId: string, params: KeyParams) =>
+      ['teams', teamId, 'audit-log-feed', params] as const,
+    auditLogFacets: (teamId: string) => ['teams', teamId, 'audit-log-facets'] as const,
+    /** Without `params`: prefix of every trash query of the team. */
+    trash: (teamId: string, params?: KeyParams) =>
+      params === undefined
+        ? (['teams', teamId, 'trash'] as const)
+        : (['teams', teamId, 'trash', params] as const),
   },
 
   /** Public preview of an invite link (`/join/:code`). */

@@ -3,6 +3,7 @@ import type { ReplyParentType } from '@shared/constants';
 import { EmptyState } from '@web/components/common/EmptyState';
 import { ErrorState } from '@web/components/common/ErrorState';
 import { Skeleton } from '@web/components/ui/skeleton';
+import { useScrollToHash } from '@web/lib/useScrollToHash';
 import { useReplies } from './queries';
 import { ReplyItem } from './ReplyItem';
 
@@ -31,6 +32,7 @@ export interface ThreadProps {
 /** Replies only, oldest first. */
 export function ReplyThread({ parentType, parentId }: ThreadProps) {
   const replies = useReplies(parentType, parentId);
+  useScrollToHash(replies.isSuccess);
   if (replies.isPending) return <ThreadSkeleton />;
   if (replies.isError) {
     return (

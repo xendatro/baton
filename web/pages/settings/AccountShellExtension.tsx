@@ -6,26 +6,8 @@ import { usePaletteCommands } from '@web/components/palette/registry';
 import { useMe, useSession } from '@web/lib/auth';
 import { applyStoredTheme, getStoredTheme, useThemePersister } from '@web/lib/theme';
 import { saveThemeRequest, setCachedProfile } from './queries';
+import { markThemeSession, readThemeSession } from './themeSession';
 import { SETTINGS_SECTIONS } from './sections';
-
-/** Remembers which sign-in last adopted the profile theme (see `useApplyProfileThemeOnSignIn`). */
-const THEME_SESSION_KEY = 'baton-theme-session';
-
-function readThemeSession(): string | null {
-  try {
-    return localStorage.getItem(THEME_SESSION_KEY);
-  } catch {
-    return null;
-  }
-}
-
-function writeThemeSession(sessionId: string): void {
-  try {
-    localStorage.setItem(THEME_SESSION_KEY, sessionId);
-  } catch {
-    // Storage unavailable: the profile theme is simply re-applied on the next load.
-  }
-}
 
 /**
  * On the first load of a new sign-in (a session this browser hasn't seen), the theme saved in the
@@ -38,7 +20,7 @@ function useApplyProfileThemeOnSignIn() {
   const profileTheme = useMe().data?.user.theme;
   useEffect(() => {
     if (!sessionId || !profileTheme || readThemeSession() === sessionId) return;
-    writeThemeSession(sessionId);
+    markThemeSession(sessionId);
     if (getStoredTheme() !== profileTheme) applyStoredTheme(profileTheme);
   }, [sessionId, profileTheme]);
 }
@@ -52,7 +34,12 @@ export default function AccountShellExtension() {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
 
+  const sessionId = useSession().data?.session.id;
+
+  // Theme changes from the account menu and the palette; a choice made in this session also
+  // settles it, so the profile theme is not adopted over it.
   useThemePersister(async (theme) => {
+    if (sessionId) markThemeSession(sessionId);
     setCachedProfile(queryClient, await saveThemeRequest(theme));
   });
   useApplyProfileThemeOnSignIn();

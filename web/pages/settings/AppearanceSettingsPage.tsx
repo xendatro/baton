@@ -2,9 +2,12 @@ import { CheckIcon, MonitorIcon, MoonIcon, SunIcon, type LucideIcon } from 'luci
 import { RadioGroup } from 'radix-ui';
 import { THEMES, type Theme } from '@shared/constants';
 import { Kbd } from '@web/components/common/Kbd';
-import { useTheme } from '@web/lib/theme';
+import { useSession } from '@web/lib/auth';
+import { applyStoredTheme, useTheme } from '@web/lib/theme';
 import { cn } from '@web/lib/utils';
+import { useSaveTheme } from './queries';
 import { SettingsCard, SettingsPage } from './SettingsCard';
+import { markThemeSession } from './themeSession';
 
 const OPTIONS: Record<Theme, { label: string; description: string; icon: LucideIcon }> = {
   light: { label: 'Light', description: 'Always light', icon: SunIcon },
@@ -80,7 +83,17 @@ function Preview({ theme }: { theme: Theme }) {
 }
 
 export default function AppearanceSettingsPage() {
-  const { theme, resolvedTheme, setTheme } = useTheme();
+  const { theme, resolvedTheme } = useTheme();
+  const sessionId = useSession().data?.session.id;
+  const save = useSaveTheme();
+
+  // Applied here and saved explicitly (not through the shell's theme persister, which may still
+  // be loading when this page first renders).
+  function choose(value: Theme) {
+    if (sessionId) markThemeSession(sessionId);
+    applyStoredTheme(value);
+    save.mutate(value);
+  }
   return (
     <SettingsPage title="Appearance" description="How Baton looks on this and your other devices.">
       <SettingsCard
@@ -95,7 +108,7 @@ export default function AppearanceSettingsPage() {
         <RadioGroup.Root
           value={theme}
           onValueChange={(value) => {
-            if (isTheme(value)) setTheme(value);
+            if (isTheme(value)) choose(value);
           }}
           aria-label="Theme"
           className="grid gap-3 sm:grid-cols-3"

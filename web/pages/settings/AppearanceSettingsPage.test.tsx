@@ -74,4 +74,29 @@ describe('appearance settings', () => {
     await screen.findByRole('radio', { name: /Light/ }, LAZY);
     expect(getStoredTheme()).toBe('light');
   });
+
+  it('never adopts the profile theme over a choice made before the profile loaded', async () => {
+    let releaseMe: () => void = () => undefined;
+    const meLoaded = new Promise<void>((resolve) => {
+      releaseMe = resolve;
+    });
+    mockApi({
+      'GET /api/auth/get-session': testSession,
+      'GET /api/me': () => jsonResponse(testMe({ theme: 'system' })),
+      'PATCH /api/me': () => jsonResponse(testMe({ theme: 'dark' }).user),
+    });
+    const fetchMock = vi.mocked(fetch);
+    const original = fetchMock.getMockImplementation();
+    fetchMock.mockImplementation(async (input, init) => {
+      if (requestUrl(input) === '/api/me' && (init?.method ?? 'GET') === 'GET') await meLoaded;
+      return original ? original(input, init) : new Response(null, { status: 500 });
+    });
+    const user = userEvent.setup();
+    renderSettingsPage(withExtension());
+    await user.click(await screen.findByRole('radio', { name: /Dark/ }, LAZY));
+    releaseMe();
+    await waitFor(() => expect(localStorage.getItem('baton-theme-session')).toBe('s1'));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(getStoredTheme()).toBe('dark');
+  });
 });

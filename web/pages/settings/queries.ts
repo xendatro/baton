@@ -66,6 +66,15 @@ export function saveThemeRequest(theme: Theme): Promise<ProfileResponse> {
   return updateProfileRequest({ theme });
 }
 
+/** Saves the theme chosen on the appearance page (applied locally by the caller). */
+export function useSaveTheme() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: saveThemeRequest,
+    onSuccess: (profile) => setCachedProfile(queryClient, profile),
+  });
+}
+
 export function useUploadAvatar() {
   const queryClient = useQueryClient();
   return useMutation({

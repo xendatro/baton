@@ -52,6 +52,6 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
     to: '/settings/security',
     label: 'Security',
     icon: ShieldCheckIcon,
-    keywords: ['sessions', 'devices', 'sign out', 'security log'],
+    keywords: ['sessions', 'devices', 'security log'],
   },
 ];

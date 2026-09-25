@@ -129,7 +129,7 @@ describe('listTrash', () => {
     expect(() => listTrash(ctx.deps, actorOf(outsider), team.team.id)).toThrow(/not found/);
   });
 
-  it('restores through the registered handler and refuses unknown types', () => {
+  it('restores through the registered handlers', () => {
     const task = createTask(ctx.db, { project: project.project });
     const reply = createReply(ctx.deps, actorOf(member), {
       parentType: 'task',
@@ -143,8 +143,9 @@ describe('listTrash', () => {
     expect(
       ctx.db.orm.select().from(s.reply).where(eq(s.reply.id, reply.id)).get()?.deletedAt,
     ).toBeNull();
+    // The teams module's handler: a live team is not in Trash.
     expect(() => restoreItem(ctx.deps, actorOf(owner), { type: 'team', id: team.team.id })).toThrow(
-      /can't be restored/,
+      /Deleted team not found/,
     );
   });
 });

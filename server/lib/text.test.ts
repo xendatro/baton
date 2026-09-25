@@ -63,6 +63,47 @@ describe('markdown helpers', () => {
 
   it('strips code before scanning', () => {
     expect(stripCode('a `b` c\n```\nd\n```\ne')).not.toMatch(/[bd]/);
+    expect(stripCode('a ``b ` c`` d `e')).toBe('a   d `e');
+  });
+
+  it('drops emphasis markers but keeps intraword and spaced characters', () => {
+    expect(markdownToPlainText('**bold**, _it_, ~~gone~~ and `code`')).toBe(
+      'bold, it, gone and code',
+    );
+    expect(markdownToPlainText('user_id and 2 * 3 and a*b')).toBe('user_id and 2 * 3 and a*b');
+    expect(markdownToPlainText('\\*literal\\* and a\\|b')).toBe('*literal* and a|b');
+    expect(markdownToPlainText('![logo](a.png) <b>x</b> <https://x.y>')).toBe('logo x https://x.y');
+  });
+
+  it('cuts excerpts of long bodies without converting all of them', () => {
+    const long = excerpt(`${'word '.repeat(50)}${'x'.repeat(100_000)}`, 40);
+    expect(long.length).toBeLessThanOrEqual(40);
+    expect(long.endsWith('…')).toBe(true);
+  });
+
+  // Regression (SEC-1): these unterminated constructs used to backtrack quadratically and take
+  // seconds each on a 100 KB reply, blocking the event loop while holding the write lock.
+  it('runs in linear time on adversarial 100 KB bodies', () => {
+    const inputs = [
+      '_a '.repeat(33_000),
+      '*a '.repeat(33_000),
+      '~~a '.repeat(25_000),
+      '<a'.repeat(50_000),
+      '<http:'.repeat(16_000),
+      '[a]('.repeat(25_000),
+      '![a]('.repeat(20_000),
+      '`'.repeat(50_000) + 'a'.repeat(50_000),
+      Array.from({ length: 440 }, (_, i) => `${'`'.repeat(i + 1)}a`).join(''),
+      '|---'.repeat(25_000) + 'x',
+      '[<*_`'.repeat(20_000),
+    ];
+    for (const input of inputs) {
+      const started = performance.now();
+      markdownToPlainText(input);
+      excerpt(input, 140);
+      parseMentions(input);
+      expect(performance.now() - started).toBeLessThan(250);
+    }
   });
 });
 

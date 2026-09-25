@@ -12,7 +12,7 @@ import * as s from '../db/schema';
 import { change } from '../lib/diff';
 import { errors } from '../lib/errors';
 import { newId } from '../lib/ids';
-import { excerpt } from '../lib/markdown';
+import { excerpt, markdownToPlainText } from '../lib/markdown';
 import { appPaths } from '../lib/urls';
 import {
   canRestoreContent,
@@ -142,13 +142,23 @@ function notificationTarget(item: ItemInfo, replyId: string, body: string): Noti
   };
 }
 
-function activityMeta(item: ItemInfo, body: string) {
+const EXCERPT_LENGTH = 140;
+
+/**
+ * Text derived from a reply body (search text, activity excerpt). Computed before `db.write`, so
+ * no text processing runs while the write lock is held.
+ */
+function derivedText(body: string) {
+  return { plain: markdownToPlainText(body), excerpt: excerpt(body, EXCERPT_LENGTH) };
+}
+
+function activityMeta(item: ItemInfo, bodyExcerpt: string) {
   return {
     parentType: item.type,
     parentId: item.id,
     parentRef: item.ref,
     parentTitle: item.title,
-    excerpt: excerpt(body, 140),
+    excerpt: bodyExcerpt,
   };
 }
 
@@ -165,6 +175,7 @@ export function createReply(
   const { orm } = deps.db;
   const { item, membership } = requireItem(orm, actor, input.parentType, input.parentId);
   requirePermission(membership, 'REPLY', "You don't have permission to reply here");
+  const text = derivedText(input.body);
 
   const row = deps.db.write((tx) => {
     const now = new Date();
@@ -198,7 +209,7 @@ export function createReply(
       entityType: 'reply',
       entityId: reply.id,
       action: 'reply.created',
-      meta: activityMeta(item, reply.body),
+      meta: activityMeta(item, text.excerpt),
     });
     indexSearch(tx, {
       entityType: 'reply',
@@ -206,7 +217,7 @@ export function createReply(
       teamId: item.teamId,
       projectId: item.projectId,
       title: '',
-      body: reply.body,
+      text: text.plain,
     });
     const target = notificationTarget(item, reply.id, reply.body);
     const notified = new Set<string>();
@@ -238,6 +249,8 @@ export function editReply(
   const { row, item, membership } = requireReply(deps, actor, id);
   requireCanEditContent(membership, row.authorId);
   if (row.body === input.body) return withContext(deps, toReply(orm, row), item);
+  const previousExcerpt = excerpt(row.body, EXCERPT_LENGTH);
+  const text = derivedText(input.body);
 
   const updated = deps.db.write((tx) => {
     const now = new Date();
@@ -253,8 +266,8 @@ export function editReply(
       entityType: 'reply',
       entityId: id,
       action: 'reply.edited',
-      changes: { body: change(excerpt(row.body, 140), excerpt(next.body, 140)) },
-      meta: activityMeta(item, next.body),
+      changes: { body: change(previousExcerpt, text.excerpt) },
+      meta: activityMeta(item, text.excerpt),
     });
     indexSearch(tx, {
       entityType: 'reply',
@@ -262,7 +275,7 @@ export function editReply(
       teamId: item.teamId,
       projectId: item.projectId,
       title: '',
-      body: next.body,
+      text: text.plain,
     });
     notifyMentions(tx, actor, notificationTarget(item, id, next.body), next.body, {
       previousBody: row.body,
@@ -286,6 +299,7 @@ export function editReply(
 export function deleteReply(deps: AppDeps, actor: Actor, id: string): { ok: true } {
   const { row, item, membership } = requireReply(deps, actor, id);
   requireCanDeleteContent(membership, row.authorId);
+  const bodyExcerpt = excerpt(row.body, EXCERPT_LENGTH);
   deps.db.write((tx) => {
     tx.update(s.reply)
       .set({
@@ -302,7 +316,7 @@ export function deleteReply(deps: AppDeps, actor: Actor, id: string): { ok: true
       entityType: 'reply',
       entityId: id,
       action: 'reply.deleted',
-      meta: activityMeta(item, row.body),
+      meta: activityMeta(item, bodyExcerpt),
     });
     emitAfterCommit(tx, {
       type: 'reply.deleted',
@@ -331,6 +345,7 @@ export function restoreReply(deps: AppDeps, actor: Actor, id: string): void {
   if (!item) {
     throw errors.conflict(`Restore the ${row.parentType} this reply belongs to first`);
   }
+  const bodyExcerpt = excerpt(row.body, EXCERPT_LENGTH);
   deps.db.write((tx) => {
     tx.update(s.reply)
       .set({ deletedAt: null, deletedById: null, deletedViaKeyId: null })
@@ -343,7 +358,7 @@ export function restoreReply(deps: AppDeps, actor: Actor, id: string): void {
       entityType: 'reply',
       entityId: id,
       action: 'reply.restored',
-      meta: activityMeta(item, row.body),
+      meta: activityMeta(item, bodyExcerpt),
     });
     // The reply reappears in its thread.
     emitAfterCommit(tx, {

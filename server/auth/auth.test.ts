@@ -282,6 +282,101 @@ describe('sign-in, sessions and password changes', () => {
   });
 });
 
+// Regression (SEC-4): a verification code for an already-verified address signed its owner in
+// (verify-email auto-signs in), i.e. a password-less login for anyone reading the mailbox.
+describe('verification codes for verified addresses', () => {
+  it('sends no code and never signs in', async () => {
+    setup();
+    createUser(ctx.db, { email: 'done@example.test' });
+    const sent = await post('/api/auth/email-otp/send-verification-otp', {
+      email: 'done@example.test',
+      type: 'email-verification',
+    });
+    expect(sent.status).toBe(200);
+    expect(await sent.json()).toEqual({ success: true });
+    expect(mailbox()).toEqual([]);
+
+    const verify = await post('/api/auth/email-otp/verify-email', {
+      email: 'done@example.test',
+      otp: '123456',
+    });
+    expect(verify.status).toBe(400);
+    expect(verify.headers.getSetCookie()).toEqual([]);
+    expect(ctx.db.orm.select().from(s.session).all()).toEqual([]);
+  });
+
+  it('sends only email-verification codes through send-verification-otp', async () => {
+    setup();
+    await signUp();
+    const res = await post('/api/auth/email-otp/send-verification-otp', {
+      email: 'ethan@example.test',
+      type: 'sign-in',
+    });
+    expect(res.status).toBe(200);
+    expect(mailbox().map((mail) => mail.kind)).toEqual(['email-verification']);
+  });
+});
+
+// Regression (SEC-9): update-user accepted a 100,000-character name, any displayUsername and any
+// image URL (a tracking pixel for every teammate).
+describe('profile input through Better Auth', () => {
+  async function setupUser() {
+    setup();
+    const user = createUser(ctx.db, { username: 'verified', email: 'v@example.test' });
+    const cookie = await signIn(ctx, user);
+    const update = (body: Record<string, unknown>) =>
+      post('/api/auth/update-user', body, { Cookie: cookie });
+    const stored = () => ctx.db.orm.select().from(s.user).where(eq(s.user.id, user.id)).get();
+    return { user, update, stored };
+  }
+
+  it('bounds and trims the display name', async () => {
+    const { update, stored } = await setupUser();
+    expect((await update({ name: 'x'.repeat(100_000) })).status).toBe(400);
+    expect((await update({ name: '   ' })).status).toBe(400);
+    expect((await update({ name: '  Mia  ' })).status).toBe(200);
+    expect(stored()?.name).toBe('Mia');
+    expect((await signUp({ name: 'x'.repeat(65) })).status).toBe(400);
+  });
+
+  it('keeps displayUsername equal to the username', async () => {
+    const { update, stored } = await setupUser();
+    expect((await update({ displayUsername: 'ethan' })).status).toBe(400);
+    expect((await update({ username: 'mia_2', displayUsername: 'someone' })).status).toBe(400);
+    expect(stored()).toMatchObject({ username: 'verified', displayUsername: 'verified' });
+    expect((await update({ displayUsername: 'Verified' })).status).toBe(200);
+    expect(stored()).toMatchObject({ username: 'verified', displayUsername: 'Verified' });
+    // A username change carries the display form along, so the old handle never lingers.
+    expect((await update({ username: 'Mia_2' })).status).toBe(200);
+    expect(stored()).toMatchObject({ username: 'mia_2', displayUsername: 'Mia_2' });
+  });
+
+  it('accepts only the user’s own avatar upload as image', async () => {
+    const { user, update, stored } = await setupUser();
+    expect((await update({ image: 'https://tracker.example/pixel.png' })).status).toBe(400);
+    const avatar = ctx.db.orm
+      .insert(s.attachment)
+      .values({
+        teamId: null,
+        uploaderId: user.id,
+        parentType: 'user_avatar',
+        filename: 'me.png',
+        mimeType: 'image/png',
+        size: 1,
+        sha256: 'x',
+        storagePath: 'x',
+      })
+      .returning()
+      .get();
+    const url = `/api/attachments/${avatar.id}/me.png`;
+    expect((await update({ image: url })).status).toBe(200);
+    expect(stored()?.image).toBe(url);
+    expect((await update({ image: null })).status).toBe(200);
+    expect(stored()?.image).toBeNull();
+    expect((await signUp({ image: url })).status).toBe(400);
+  });
+});
+
 describe('config', () => {
   it('reports enabled social providers', async () => {
     setup({ GOOGLE_CLIENT_ID: 'g', GOOGLE_CLIENT_SECRET: 'gs' });

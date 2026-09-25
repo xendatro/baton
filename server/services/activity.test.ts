@@ -1,7 +1,11 @@
 import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { LiveEvent } from '@shared/events';
-import { auditLogResponseSchema, securityLogResponseSchema } from '@shared/schemas/core';
+import {
+  activityListResponseSchema,
+  auditLogResponseSchema,
+  securityLogResponseSchema,
+} from '@shared/schemas/core';
 import type { Actor } from '../context';
 import * as s from '../db/schema';
 import {
@@ -137,6 +141,78 @@ describe('entity URLs', () => {
     expect(urls[rows[2]?.id ?? '']).toBe(`/t/acme/settings/roles/${role.id}`);
     expect(urls[rows[3]?.id ?? '']).toBe('/t/acme/p/API/settings/statuses');
     expect(urls[rows[4]?.id ?? '']).toBe('/t/acme/settings/members');
+  });
+});
+
+// Regression (SEC-3): any member could read the history of roles, the team, invites and so on,
+// and of Trash items they may not see, through GET /api/activity.
+describe('entity history access', () => {
+  const history = async (key: string, entityType: string, entityId: string) =>
+    ctx.app.request(`/api/activity?entityType=${entityType}&entityId=${entityId}`, {
+      headers: bearer(key),
+    });
+
+  it('shows item history to members and team entities only with VIEW_AUDIT_LOG', async () => {
+    const member = createUser(ctx.db);
+    addMember(ctx.db, { teamId: team.team.id, userId: member.id });
+    const { key } = createApiKey(ctx.db, { userId: member.id });
+    const role = createRole(ctx.db, { teamId: team.team.id, permissions: ['ADMINISTRATOR'] });
+    const issue = createIssue(ctx.db, { project: project.project, authorId: owner.id });
+    record(web(owner), { entityType: 'role', entityId: role.id, action: 'role.created' });
+    record(web(owner), { entityType: 'team', entityId: team.team.id, action: 'team.updated' });
+    record(web(owner), { entityType: 'issue', entityId: issue.id, action: 'issue.created' });
+
+    expect((await history(key, 'issue', issue.id)).status).toBe(200);
+    for (const [type, id] of [
+      ['role', role.id],
+      ['team', team.team.id],
+      ['project', project.project.id],
+    ] as const) {
+      expect((await history(key, type, id)).status).toBe(403);
+    }
+
+    const auditor = createRole(ctx.db, { teamId: team.team.id, permissions: ['VIEW_AUDIT_LOG'] });
+    ctx.db.orm
+      .insert(s.memberRole)
+      .values({ teamId: team.team.id, userId: member.id, roleId: auditor.id })
+      .run();
+    const res = await history(key, 'role', role.id);
+    expect(res.status).toBe(200);
+    expect(activityListResponseSchema.parse(await res.json()).items).toHaveLength(1);
+  });
+
+  it('hides the history of Trash items and others’ pending uploads from other members', async () => {
+    const member = createUser(ctx.db);
+    addMember(ctx.db, { teamId: team.team.id, userId: member.id });
+    const { key } = createApiKey(ctx.db, { userId: member.id });
+    const ownerKey = createApiKey(ctx.db, { userId: owner.id });
+    const issue = createIssue(ctx.db, { project: project.project, authorId: owner.id });
+    record(web(owner), { entityType: 'issue', entityId: issue.id, action: 'issue.created' });
+    ctx.db.orm.update(s.issue).set({ deletedAt: new Date() }).where(eq(s.issue.id, issue.id)).run();
+    expect((await history(key, 'issue', issue.id)).status).toBe(404);
+    expect((await history(ownerKey.key, 'issue', issue.id)).status).toBe(200);
+
+    const pending = ctx.db.orm
+      .insert(s.attachment)
+      .values({
+        teamId: team.team.id,
+        uploaderId: owner.id,
+        parentType: 'pending',
+        filename: 'secret-plan.txt',
+        mimeType: 'text/plain',
+        size: 1,
+        sha256: 'x',
+        storagePath: 'x',
+      })
+      .returning()
+      .get();
+    record(web(owner), {
+      entityType: 'attachment',
+      entityId: pending.id,
+      action: 'attachment.uploaded',
+    });
+    expect((await history(key, 'attachment', pending.id)).status).toBe(404);
+    expect((await history(ownerKey.key, 'attachment', pending.id)).status).toBe(200);
   });
 });
 

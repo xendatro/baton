@@ -51,5 +51,7 @@ export interface AppEnv {
     clientIp: string | null;
     /** Set by the auth middleware; null on unauthenticated requests. */
     actor: Actor | null;
+    /** Better Auth session id of a `web` actor (null for API keys and anonymous requests). */
+    sessionId: string | null;
   };
 }

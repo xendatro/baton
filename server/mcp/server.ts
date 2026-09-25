@@ -1,7 +1,9 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js';
-import { Hono } from 'hono';
+import { Hono, type Context, type MiddlewareHandler } from 'hono';
+import { bodyLimit } from 'hono/body-limit';
 import type { AppEnv } from '../context';
+import type { Env } from '../env';
 import { requireActor } from '../middleware/actor';
 import { byApiKey, rateLimit } from '../middleware/rateLimit';
 import { VERSION } from '../version';
@@ -18,13 +20,57 @@ Refs are accepted wherever an entity is expected: team slug, project KEY or team
  * McpServer bound to the caller (actor + deps), so no session state is kept between requests.
  * Stateless servers have no server-initiated stream and no sessions to delete, so GET and DELETE
  * answer 405 as the MCP specification allows.
+ *
+ * JSON-RPC batches are refused (they were removed from MCP in 2025-06-18): the per-key rate limit
+ * counts HTTP requests, so a batch would multiply it by the batch size.
  */
 export const mcpRoutes = new Hono<AppEnv>();
 
+/** Room for the JSON-RPC envelope and the other tool arguments around an uploaded file. */
+const ENVELOPE_BYTES = 64 * 1024;
+
+/**
+ * Largest MCP request body: an `upload_attachment` of MAX_UPLOAD_MB sent as base64 (4/3 of the
+ * file) plus the envelope, so MCP uploads get the same size limit as web uploads.
+ */
+export function mcpMaxBodyBytes(env: Pick<Env, 'maxUploadMb'>): number {
+  return Math.ceil((env.maxUploadMb * 1024 * 1024 * 4) / 3) + ENVELOPE_BYTES;
+}
+
+function jsonRpcError(c: Context, status: 400 | 413, code: number, message: string) {
+  return c.json({ jsonrpc: '2.0', error: { code, message }, id: null }, status);
+}
+
+const mcpBodyLimit: MiddlewareHandler<AppEnv> = (c, next) =>
+  bodyLimit({
+    maxSize: mcpMaxBodyBytes(c.var.deps.env),
+    onError: (ctx) =>
+      jsonRpcError(
+        ctx,
+        413,
+        -32000,
+        `Payload too large: files can be at most ${c.var.deps.env.maxUploadMb} MB`,
+      ),
+  })(c, next);
+
 mcpRoutes.use('/mcp', mcpAuth(), rateLimit({ name: 'mcp', key: byApiKey }));
 
-mcpRoutes.post('/mcp', async (c) => {
+mcpRoutes.post('/mcp', mcpBodyLimit, async (c) => {
   const actor = requireActor(c);
+  let message: unknown;
+  try {
+    message = JSON.parse(await c.req.text());
+  } catch {
+    return jsonRpcError(c, 400, -32700, 'Parse error: the body must be one JSON-RPC message');
+  }
+  if (Array.isArray(message)) {
+    return jsonRpcError(
+      c,
+      400,
+      -32600,
+      'Invalid Request: JSON-RPC batches are not supported; send one message per request',
+    );
+  }
   const server = new McpServer(
     { name: 'baton', title: 'Baton', version: VERSION },
     { instructions: INSTRUCTIONS },
@@ -36,7 +82,7 @@ mcpRoutes.post('/mcp', async (c) => {
   });
   await server.connect(transport);
   try {
-    return await transport.handleRequest(c.req.raw);
+    return await transport.handleRequest(c.req.raw, { parsedBody: message });
   } finally {
     await server.close();
   }

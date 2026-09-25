@@ -6,6 +6,7 @@ import {
   SEARCH_ENTITY_TYPES,
 } from '@shared/constants';
 import { errors } from '../../lib/errors';
+import { consumeRateLimit } from '../../middleware/rateLimit';
 import { appPaths } from '../../lib/urls';
 import { listAuditLog, listEntityActivity } from '../../services/activity';
 import {
@@ -45,7 +46,7 @@ const whoami = defineTool({
   name: 'whoami',
   title: 'Who am I',
   description:
-    'The user this API key acts for, the key itself, and the teams (with your permissions) and projects you can access. Call this first to learn team slugs and project keys.',
+    'The user this API key acts for, the key itself, and the teams (with your permissions) and projects you can access. Call this first to learn team slugs and project keys (and the upload size limit).',
   input: z.object({}),
   annotations: { readOnlyHint: true },
   handler: (ctx) => {
@@ -74,6 +75,7 @@ const whoami = defineTool({
         })),
       })),
       unreadNotifications: me.unreadNotifications,
+      limits: { maxUploadMb: ctx.deps.env.maxUploadMb },
     };
   },
 });
@@ -242,7 +244,7 @@ const uploadAttachment = defineTool({
   name: 'upload_attachment',
   title: 'Upload attachment',
   description:
-    'Uploads a file as base64 or plain text. With `item` it is attached to that task or issue; otherwise it stays pending in `team` and can be attached by passing its id in attachmentIds (e.g. add_reply) within 24 hours.',
+    'Uploads a file as base64 or plain text, up to the server upload limit (MAX_UPLOAD_MB, see whoami). With `item` it is attached to that task or issue; otherwise it stays pending in `team` and can be attached by passing its id in attachmentIds (e.g. add_reply) within 24 hours. Counts against the same per-user upload rate limit as web uploads (30 per minute).',
   input: z.object({
     filename: z.string().min(1).max(LIMITS.filename.max).describe('File name, e.g. notes.md'),
     contentBase64: z.string().optional().describe('File content, base64-encoded (binary files)'),
@@ -257,6 +259,7 @@ const uploadAttachment = defineTool({
     if ((input.contentBase64 === undefined) === (input.text === undefined)) {
       throw errors.validation('Pass exactly one of contentBase64 or text');
     }
+    consumeRateLimit(ctx.deps.rateLimiter, 'uploads', ctx.actor.userId);
     let fields;
     if (input.item) {
       const item = itemContext(ctx, input.item);
@@ -336,13 +339,15 @@ const getActivity = defineTool({
   name: 'get_activity',
   title: 'Get activity',
   description:
-    'History of one task or issue (who changed what, oldest first), or — with `team` and VIEW_AUDIT_LOG — the team audit log (newest first, filterable, paginated).',
+    'History of one task, issue, reply or attachment (who changed what, oldest first; every member can read it), or — with VIEW_AUDIT_LOG — the history of any other team entity (entityType + entityId, e.g. project or role) or, with `team`, the team audit log (newest first, filterable, paginated).',
   input: z.object({
     item: itemRef.optional().describe('Task or issue whose history to show (ref or id)'),
     entityType: z
       .enum(ACTIVITY_ENTITY_TYPES)
       .optional()
-      .describe('Other entity type for a history (with entityId), e.g. project or role'),
+      .describe(
+        'Other entity type for a history (with entityId): reply or attachment for any member; project, role and other team entities need VIEW_AUDIT_LOG',
+      ),
     entityId: z.string().optional().describe('Entity id for entityType'),
     team: z.string().optional().describe('Team (slug or id) whose audit log to read'),
     project: z.string().optional().describe('Audit log: only this project (KEY, team/KEY or id)'),

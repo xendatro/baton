@@ -69,6 +69,21 @@ attachmentRoutes.get('/attachments', validateQuery(listAttachmentsQuerySchema), 
   );
 });
 
+/**
+ * CSP of a downloaded file: nothing it contains may run or load anything, even if some other bug
+ * got it included as a script or stylesheet (the app's own CSP allows 'self').
+ */
+const DOWNLOAD_CSP = "default-src 'none'; sandbox";
+
+/**
+ * Gives file downloads their own CSP. Registered in createApp before the security-headers
+ * middleware, so it runs after it and replaces the app-wide policy for these responses.
+ */
+export const attachmentDownloadHeaders: MiddlewareHandler<AppEnv> = async (c, next) => {
+  await next();
+  if (c.req.method === 'GET') c.res.headers.set('Content-Security-Policy', DOWNLOAD_CSP);
+};
+
 /** RFC 6266 `Content-Disposition` with an ASCII fallback and the UTF-8 name. */
 function contentDisposition(type: 'inline' | 'attachment', filename: string): string {
   const fallback = filename.replace(/[^\x20-\x7e]|["\\]/g, '_');
@@ -90,8 +105,10 @@ attachmentRoutes.get(
     );
     const etag = `"${attachment.sha256}"`;
     const headers: Record<string, string> = {
-      // Raster images render inline; everything else (SVG and HTML included) downloads.
-      'Content-Type': attachment.mimeType,
+      // Raster images render inline; everything else (SVG and HTML included) downloads, as an
+      // opaque type so a same-origin <script> or <link rel=stylesheet> can never use it. The
+      // real type stays in the attachment's metadata.
+      'Content-Type': inline ? attachment.mimeType : 'application/octet-stream',
       'Content-Disposition': contentDisposition(
         inline ? 'inline' : 'attachment',
         attachment.filename,

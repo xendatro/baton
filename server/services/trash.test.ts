@@ -176,7 +176,7 @@ describe('purge jobs', () => {
         teamId: team.team.id,
         projectId: project.project.id,
         title: oldTask.title,
-        body: '',
+        text: '',
       }),
     );
     ctx.db.orm

@@ -1,6 +1,8 @@
+import { and, eq, gt, isNull, or } from 'drizzle-orm';
 import { isPersonalEvent, type LiveEvent } from '@shared/events';
 import type { AppDeps } from '../context';
 import { queueLiveEvent, type Tx } from '../db';
+import * as s from '../db/schema';
 import { liveEvent } from '../lib/eventBus';
 import { memberTeamIds } from './access';
 
@@ -55,4 +57,50 @@ export function subscribeUserEvents(
     }
     if (visible) listener(event);
   });
+}
+
+/** What an open event stream was authenticated with: an API key, or a web session. */
+export type StreamCredential = { apiKeyId: string } | { sessionId: string };
+
+/**
+ * Is the credential still valid for `userId`? Streams are authenticated once, when they open,
+ * so the SSE route re-checks this before every event and heartbeat: a revoked or expired key,
+ * a signed-out or revoked session and a password reset (which deletes sessions) end the stream.
+ */
+export function isCredentialActive(
+  deps: Pick<AppDeps, 'db'>,
+  userId: string,
+  credential: StreamCredential,
+  now: Date = new Date(),
+): boolean {
+  const { orm } = deps.db;
+  if ('apiKeyId' in credential) {
+    return (
+      orm
+        .select({ id: s.apiKey.id })
+        .from(s.apiKey)
+        .where(
+          and(
+            eq(s.apiKey.id, credential.apiKeyId),
+            eq(s.apiKey.userId, userId),
+            isNull(s.apiKey.revokedAt),
+            or(isNull(s.apiKey.expiresAt), gt(s.apiKey.expiresAt, now)),
+          ),
+        )
+        .get() !== undefined
+    );
+  }
+  return (
+    orm
+      .select({ id: s.session.id })
+      .from(s.session)
+      .where(
+        and(
+          eq(s.session.id, credential.sessionId),
+          eq(s.session.userId, userId),
+          gt(s.session.expiresAt, now),
+        ),
+      )
+      .get() !== undefined
+  );
 }

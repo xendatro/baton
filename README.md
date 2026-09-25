@@ -32,17 +32,17 @@ Open http://localhost:5173. Vite proxies `/api`, `/mcp` and `/healthz` to the se
 
 ## Scripts
 
-| Command                           | What it does                                                                            |
-| --------------------------------- | --------------------------------------------------------------------------------------- |
-| `npm run dev`                     | Server (`node --watch` + tsx, logs via pino-pretty) and Vite dev server together        |
-| `npm run build`                   | `dist/web` (static SPA) and `dist/server` (bundled server + migrations)                 |
-| `npm start`                       | Runs the production build (set `NODE_ENV=production`, `BASE_URL`, `BETTER_AUTH_SECRET`) |
-| `npm test`                        | Vitest: server/shared (node) and web (happy-dom) projects                               |
-| `npm run test:e2e`                | Playwright: builds, starts on :3000 with a temp `DATA_DIR`, runs `e2e/`                 |
-| `npm run lint` / `npm run format` | ESLint / Prettier                                                                       |
-| `npm run typecheck`               | `tsc` for shared (isomorphic check), server, web and config files                       |
-| `npm run db:generate`             | Generates a SQL migration from `server/db/schema.ts`                                    |
-| `npm run db:migrate`              | Applies pending migrations to `DATA_DIR/baton.db`                                       |
+| Command                           | What it does                                                                                          |
+| --------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `npm run dev`                     | Server (`node --watch` + tsx, logs via pino-pretty) and Vite dev server together                      |
+| `npm run build`                   | `dist/web` (static SPA) and `dist/server` (bundled server + migrations)                               |
+| `npm start`                       | Runs the production build (`NODE_ENV` defaults to `production`; set `BASE_URL`, `BETTER_AUTH_SECRET`) |
+| `npm test`                        | Vitest: server/shared (node) and web (happy-dom) projects                                             |
+| `npm run test:e2e`                | Playwright: builds, starts on :3000 with a temp `DATA_DIR`, runs `e2e/`                               |
+| `npm run lint` / `npm run format` | ESLint / Prettier                                                                                     |
+| `npm run typecheck`               | `tsc` for shared (isomorphic check), server, web and config files                                     |
+| `npm run db:generate`             | Generates a SQL migration from `server/db/schema.ts`                                                  |
+| `npm run db:migrate`              | Applies pending migrations to `DATA_DIR/baton.db`                                                     |
 
 `.env.example` documents every environment variable.
 

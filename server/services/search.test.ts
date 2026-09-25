@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { searchResponseSchema } from '@shared/schemas/core';
 import type { Actor } from '../context';
 import * as s from '../db/schema';
+import { markdownToPlainText } from '../lib/markdown';
 import {
   addMember,
   bearer,
@@ -39,7 +40,7 @@ function index(
       teamId: row.teamId,
       projectId: row.projectId,
       title: row.title,
-      body,
+      text: markdownToPlainText(body),
     }),
   );
 }

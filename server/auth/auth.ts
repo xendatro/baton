@@ -1,3 +1,4 @@
+import { and, eq, isNull } from 'drizzle-orm';
 import { betterAuth, type BetterAuthOptions } from 'better-auth';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
 import { APIError, createAuthMiddleware, getSessionFromCtx, isAPIError } from 'better-auth/api';
@@ -61,6 +62,17 @@ function signInMethod(path: string | undefined, providerId: unknown): string {
   }
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function bodyField(body: unknown, key: string): unknown {
+  return isRecord(body) ? body[key] : undefined;
+}
+
+/** An attachment download path: `/api/attachments/<id>/<filename>`. */
+const AVATAR_PATH_PATTERN = /^\/api\/attachments\/([A-Za-z0-9_-]{1,64})\/[^/?#]+$/;
+
 /** Runs synchronous hook code as the promise Better Auth expects (throws become rejections). */
 function settle<T>(fn: () => T): Promise<T> {
   return new Promise((resolve) => resolve(fn()));
@@ -69,15 +81,99 @@ function settle<T>(fn: () => T): Promise<T> {
 export function createAuth(deps: AuthDeps) {
   const { env, db, logger, mailer } = deps;
 
-  /** Writes an account-level row to the user's security log. */
+  /**
+   * Writes an account-level row to the user's security log. Better Auth has already committed the
+   * change it describes (its adapter is async, our transactions are synchronous; see DECISIONS),
+   * so a failure here must not fail the request: it is logged as an error instead.
+   */
   function securityLog(userId: string, action: string, meta: Record<string, unknown> = {}): void {
-    db.write((tx) =>
-      recordActivity(
-        tx,
-        { userId, source: 'web', key: null },
-        { teamId: null, entityType: 'user', entityId: userId, action, meta },
-      ),
-    );
+    try {
+      db.write((tx) =>
+        recordActivity(
+          tx,
+          { userId, source: 'web', key: null },
+          { teamId: null, entityType: 'user', entityId: userId, action, meta },
+        ),
+      );
+    } catch (error) {
+      logger.error({ err: error, userId, action }, 'security log row could not be written');
+    }
+  }
+
+  function isVerifiedEmail(body: unknown): boolean {
+    const email = bodyField(body, 'email');
+    if (typeof email !== 'string') return false;
+    const user = db.orm
+      .select({ emailVerified: schema.user.emailVerified })
+      .from(schema.user)
+      .where(eq(schema.user.email, email.trim().toLowerCase()))
+      .get();
+    return user?.emailVerified === true;
+  }
+
+  /**
+   * Profile fields a client may set through Better Auth (`sign-up/email`, `update-user`): the
+   * display name is trimmed and 1–64 characters; `displayUsername` is only ever the username in
+   * the case the user typed it (it follows username changes); `image` can only be cleared or
+   * point at the user's own uploaded avatar (OAuth avatars are set by the provider callback).
+   */
+  function checkProfileInput(
+    body: unknown,
+    user: { id: string; username?: string | null | undefined } | null,
+  ): void {
+    if (!isRecord(body)) return;
+    if ('name' in body) {
+      const name = typeof body.name === 'string' ? body.name.trim() : '';
+      if (name.length < LIMITS.displayName.min || name.length > LIMITS.displayName.max) {
+        throw new APIError('BAD_REQUEST', {
+          code: 'INVALID_NAME',
+          message: `Names are ${LIMITS.displayName.min}–${LIMITS.displayName.max} characters`,
+        });
+      }
+      body.name = name;
+    }
+    const username = typeof body.username === 'string' ? body.username.trim() : user?.username;
+    if ('displayUsername' in body) {
+      const display = body.displayUsername;
+      if (typeof display !== 'string' || display.trim().toLowerCase() !== username?.toLowerCase()) {
+        throw new APIError('BAD_REQUEST', {
+          code: 'INVALID_DISPLAY_USERNAME',
+          message: 'The display username must match your username',
+        });
+      }
+      body.displayUsername = display.trim();
+    } else if (typeof body.username === 'string') {
+      body.displayUsername = username;
+    }
+    if ('image' in body && body.image !== null && body.image !== undefined) {
+      if (user === null || !isOwnAvatar(body.image, user.id)) {
+        throw new APIError('BAD_REQUEST', {
+          code: 'INVALID_IMAGE',
+          message: 'Upload your avatar from your profile settings',
+        });
+      }
+    }
+  }
+
+  /** `/api/attachments/<id>/<name>` (or its absolute URL) of the user's own live avatar upload. */
+  function isOwnAvatar(image: unknown, userId: string): boolean {
+    if (typeof image !== 'string') return false;
+    const path = image.startsWith(env.baseUrl) ? image.slice(env.baseUrl.length) : image;
+    const id = AVATAR_PATH_PATTERN.exec(path)?.[1];
+    if (!id) return false;
+    const row = db.orm
+      .select({ id: schema.attachment.id })
+      .from(schema.attachment)
+      .where(
+        and(
+          eq(schema.attachment.id, id),
+          eq(schema.attachment.uploaderId, userId),
+          eq(schema.attachment.parentType, 'user_avatar'),
+          isNull(schema.attachment.deletedAt),
+        ),
+      )
+      .get();
+    return row !== undefined;
   }
 
   /** Users created during the current request, so their first account isn't logged as a link. */
@@ -247,24 +343,45 @@ export function createAuth(deps: AuthDeps) {
     ],
 
     hooks: {
-      before: createAuthMiddleware((ctx) =>
-        settle(() => {
-          // Email sign-up collects the username on the form (SPEC §1.1).
-          if (ctx.path === '/sign-up/email') {
-            const body: unknown = ctx.body;
-            const value =
-              typeof body === 'object' && body !== null && 'username' in body
-                ? body.username
-                : null;
+      before: createAuthMiddleware(async (ctx) => {
+        const body: unknown = ctx.body;
+        switch (ctx.path) {
+          case '/sign-up/email': {
+            // Email sign-up collects the username on the form (SPEC §1.1).
+            const value = bodyField(body, 'username');
             if (typeof value !== 'string' || value.trim() === '') {
               throw new APIError('BAD_REQUEST', {
                 code: 'USERNAME_REQUIRED',
                 message: 'Choose a username',
               });
             }
+            checkProfileInput(body, null);
+            return undefined;
           }
-        }),
-      ),
+          case '/update-user': {
+            const session = await getSessionFromCtx(ctx);
+            checkProfileInput(body, session?.user ?? null);
+            return undefined;
+          }
+          case '/email-otp/send-verification-otp':
+            // Verification codes go to unverified addresses only: verify-email signs the user in,
+            // so a code for a verified address would be a password-less login. The answer is the
+            // same either way, so it reveals nothing about the address.
+            if (bodyField(body, 'type') !== 'email-verification' || isVerifiedEmail(body)) {
+              return ctx.json({ success: true });
+            }
+            return undefined;
+          case '/email-otp/verify-email':
+            // Belt and braces for the rule above (e.g. a code sent before the address was verified
+            // some other way): answered like a code that does not exist.
+            if (isVerifiedEmail(body)) {
+              throw new APIError('BAD_REQUEST', { code: 'INVALID_OTP', message: 'Invalid OTP' });
+            }
+            return undefined;
+          default:
+            return undefined;
+        }
+      }),
       after: createAuthMiddleware((ctx) =>
         settle(() => {
           if (isAPIError(ctx.context.returned)) return;
@@ -272,12 +389,9 @@ export function createAuth(deps: AuthDeps) {
           if (!userId) return;
           if (ctx.path === '/change-password') securityLog(userId, 'user.password_changed');
           if (ctx.path === '/unlink-account') {
-            const body: unknown = ctx.body;
-            const providerId =
-              typeof body === 'object' && body !== null && 'providerId' in body
-                ? body.providerId
-                : null;
-            securityLog(userId, 'user.account_unlinked', { provider: providerId });
+            securityLog(userId, 'user.account_unlinked', {
+              provider: bodyField(ctx.body, 'providerId') ?? null,
+            });
           }
         }),
       ),

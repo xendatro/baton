@@ -4,7 +4,6 @@ import { formatIssueRef, formatTaskRef } from '@shared/refs';
 import type { SearchQuery, SearchResponse, SearchResult } from '@shared/schemas/core';
 import type { Actor, AppDeps } from '../context';
 import type { Tx } from '../db';
-import { markdownToPlainText } from '../lib/markdown';
 import { appPaths } from '../lib/urls';
 import { memberTeamIds } from './access';
 
@@ -22,8 +21,11 @@ export interface SearchDocument {
   projectId: string;
   /** Item title; empty for replies (results show the parent's title). */
   title: string;
-  /** Markdown body; indexed as plain text. */
-  body: string;
+  /**
+   * Plain-text body: `markdownToPlainText(markdown)`, computed before the transaction so no
+   * text processing runs while the write lock is held.
+   */
+  text: string;
 }
 
 /** Adds or replaces the document of an entity. */
@@ -31,7 +33,7 @@ export function indexSearch(tx: Tx, doc: SearchDocument): void {
   removeFromSearch(tx, doc.entityType, [doc.entityId]);
   tx.run(sql`insert into search_index (entity_type, entity_id, team_id, project_id, title, body)
     values (${doc.entityType}, ${doc.entityId}, ${doc.teamId}, ${doc.projectId}, ${doc.title},
-      ${markdownToPlainText(doc.body)})`);
+      ${doc.text})`);
 }
 
 /** Removes entities from the index (on purge). */

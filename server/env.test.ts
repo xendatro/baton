@@ -67,6 +67,21 @@ describe('parseEnv', () => {
     expect(() => parseEnv({ NODE_ENV: 'production' })).toThrow(/BASE_URL.*\n.*BETTER_AUTH_SECRET/s);
   });
 
+  // Regression (SEC-10): without NODE_ENV a public deployment silently used the dev secret.
+  it('refuses the development secret for a BASE_URL others can reach', () => {
+    expect(() => parseEnv({ BASE_URL: 'https://baton.example.com', PORT: '3000' })).toThrow(
+      /BETTER_AUTH_SECRET: required when BASE_URL is not a localhost address/,
+    );
+    for (const url of ['http://localhost:3000', 'http://127.0.0.1:5173', 'http://[::1]:3000']) {
+      expect(parseEnv({ BASE_URL: url }).usesDevelopmentSecret).toBe(true);
+    }
+    const env = parseEnv({
+      BASE_URL: 'https://baton.example.com',
+      BETTER_AUTH_SECRET: 's'.repeat(40),
+    });
+    expect(env.usesDevelopmentSecret).toBe(false);
+  });
+
   it('rejects invalid values and half-configured providers', () => {
     expect(() => parseEnv({ PORT: 'eighty' })).toThrow(/PORT/);
     expect(() => parseEnv({ BETTER_AUTH_SECRET: 'short' })).toThrow(/BETTER_AUTH_SECRET/);

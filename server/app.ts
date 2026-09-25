@@ -13,6 +13,7 @@ import { AppError, errors, type ErrorCode } from './lib/errors';
 import { toValidationIssues } from './lib/validate';
 import { mcpRoutes } from './mcp/server';
 import { mountApiRoutes } from './routes';
+import { attachmentDownloadHeaders } from './routes/attachments';
 import { VERSION } from './version';
 
 export interface CreateAppOptions extends AppDeps {
@@ -59,6 +60,7 @@ export function createApp(options: CreateAppOptions): Hono<AppEnv> {
     c.set('deps', deps);
     c.set('logger', log);
     c.set('actor', null);
+    c.set('sessionId', null);
     c.set('clientIp', clientIp(c, env.trustProxy));
     const started = performance.now();
     await next();
@@ -73,6 +75,8 @@ export function createApp(options: CreateAppOptions): Hono<AppEnv> {
   });
 
   // --- Security headers (SPEC §5) ----------------------------------------------------------
+  // Before secureHeaders, so its download CSP replaces the app-wide one on the way out.
+  app.use('/api/attachments/:id/:filename', attachmentDownloadHeaders);
   app.use(
     secureHeaders({
       contentSecurityPolicy: {

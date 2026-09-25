@@ -16,10 +16,20 @@ import { VERSION } from './version';
 const SHUTDOWN_TIMEOUT_MS = 10_000;
 const DRAIN_MS = 2_000;
 
+/**
+ * Replaced by scripts/build-server.mjs with "production": the bundled server (`npm start`) runs as
+ * production unless NODE_ENV says otherwise, so a deployment that forgets NODE_ENV still gets
+ * the production checks (BASE_URL, BETTER_AUTH_SECRET), Secure cookies and HSTS. Undefined when
+ * the server runs from source (development).
+ */
+declare const BATON_BUNDLE_NODE_ENV: string | undefined;
+
 function loadEnv(): Env {
   loadDotEnv();
+  const defaultNodeEnv =
+    typeof BATON_BUNDLE_NODE_ENV === 'string' ? BATON_BUNDLE_NODE_ENV : undefined;
   try {
-    return parseEnv(process.env);
+    return parseEnv({ NODE_ENV: defaultNodeEnv, ...process.env });
   } catch (error) {
     if (error instanceof EnvError) {
       console.error(error.message);
@@ -31,6 +41,12 @@ function loadEnv(): Env {
 
 const env = loadEnv();
 const logger = createLogger(env);
+if (env.usesDevelopmentSecret) {
+  logger.warn(
+    'BETTER_AUTH_SECRET is not set: sessions are signed with the public development secret. ' +
+      'Set it before anyone else can reach this server.',
+  );
+}
 const paths = dataPaths(env.dataDir);
 ensureDataDirs(paths);
 

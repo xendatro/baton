@@ -16,7 +16,15 @@ import { errors } from '../lib/errors';
 import { newId } from '../lib/ids';
 import { likePrefix } from '../lib/sql';
 import { appPaths } from '../lib/urls';
-import { requireMember, requirePermission } from './access';
+import {
+  canRestoreContent,
+  hasPermission,
+  requireMember,
+  requirePermission,
+  type Membership,
+} from './access';
+import { canSeeAttachmentHistory } from './attachments';
+import { trashedItem, trashedReply } from './items';
 import { getUserSummaries } from './users';
 
 /**
@@ -271,9 +279,12 @@ export function toActivityEntries(db: DbExecutor, rows: readonly ActivityRow[]):
 const HISTORY_LIMIT = 1000;
 
 /**
- * Per-item history (`GET /api/activity`), oldest first. Visible to every member of the item's
- * team; account-level rows (the security log) only to their own user. Non-members and unknown
- * items get 404.
+ * Entity history (`GET /api/activity`, MCP `get_activity`), oldest first. Per-item history
+ * (issues, tasks, replies, attachments) is visible to every member of the item's team while the
+ * item is live, and to those who may see it in Trash (its author or `MANAGE_TRASH`) while it is
+ * not. The history of anything else in a team (the team, members, roles, invites, projects,
+ * statuses, labels) is part of the team audit log and needs `VIEW_AUDIT_LOG`. Account-level rows
+ * (the security log) are visible only to their own user. Non-members and unknown items get 404.
  */
 export function listEntityActivity(
   deps: AppDeps,
@@ -301,13 +312,44 @@ export function listEntityActivity(
     entityTeamId(orm, query.entityType, query.entityId) ??
     rows.find((row) => row.teamId !== null)?.teamId;
   if (!teamId) throw errors.notFound('Item');
-  requireMember(orm, actor, teamId, 'Item');
+  const membership = requireMember(orm, actor, teamId, 'Item');
+  requireHistoryAccess(orm, membership, query);
   return {
     items: toActivityEntries(
       orm,
       rows.filter((row) => row.teamId === teamId),
     ),
   };
+}
+
+/** Throws unless the member may see this team entity's history (see `listEntityActivity`). */
+function requireHistoryAccess(
+  db: DbExecutor,
+  membership: Membership,
+  query: EntityActivityQuery,
+): void {
+  if (hasPermission(membership, 'VIEW_AUDIT_LOG')) return;
+  let visible: boolean;
+  switch (query.entityType) {
+    case 'issue':
+    case 'task':
+    case 'reply': {
+      const trashed =
+        query.entityType === 'reply'
+          ? trashedReply(db, query.entityId)
+          : trashedItem(db, query.entityType, query.entityId);
+      visible = !trashed || canRestoreContent(membership, trashed.authorId);
+      break;
+    }
+    case 'attachment':
+      visible = canSeeAttachmentHistory(db, membership, query.entityId);
+      break;
+    default:
+      throw errors.forbidden(
+        "This history is part of the team audit log, which needs the 'View audit log' permission",
+      );
+  }
+  if (!visible) throw errors.notFound('Item');
 }
 
 /**

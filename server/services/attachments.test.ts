@@ -28,6 +28,7 @@ import {
 import {
   attachmentFilePath,
   attachToParent,
+  getAttachmentWithContent,
   restoreAttachment,
   sanitizeFilename,
   sniffType,
@@ -242,11 +243,24 @@ describe('download', () => {
     });
     expect(cached.status).toBe(304);
 
-    for (const item of [svg, html]) {
+    // Regression (SEC-7): executable types were served as text/javascript, text/css or
+    // text/html from our own origin, which CSP 'self' would let a <script src> load.
+    const js = await uploaded(await upload(Buffer.from('alert(1)'), 'x.js', fields));
+    const css = await uploaded(await upload(Buffer.from('body{}'), 'x.css', fields));
+    expect(pngRes.headers.get('content-security-policy')).toBe("default-src 'none'; sandbox");
+    for (const item of [svg, html, js, css]) {
       const res = await ctx.app.request(item.url, { headers: bearer(memberKey) });
       expect(res.headers.get('content-disposition')).toMatch(/^attachment;/);
+      expect(res.headers.get('content-type')).toBe('application/octet-stream');
+      expect(res.headers.get('content-security-policy')).toBe("default-src 'none'; sandbox");
       expect(item.isImage).toBe(false);
     }
+    expect([svg, html, js, css].map((item) => item.mimeType)).toEqual([
+      'image/svg+xml',
+      'text/html',
+      'text/javascript',
+      'text/css',
+    ]);
   });
 
   it('encodes non-ASCII filenames', async () => {
@@ -275,6 +289,56 @@ describe('download', () => {
       headers: bearer(outsider.key),
     });
     expect(list.status).toBe(404);
+  });
+});
+
+// Regression (SEC-6): files of Trash items stayed downloadable by every member.
+describe('files of deleted items', () => {
+  it('are hidden from members who may not see the Trash item', async () => {
+    const ownerKey = createApiKey(ctx.db, { userId: owner.id }).key;
+    const issue = createIssue(ctx.db, { project: project.project, authorId: member.id });
+    const file = await uploaded(
+      await upload(Buffer.from('secret contents'), 'secret.txt', {
+        parentType: 'issue',
+        parentId: issue.id,
+      }),
+    );
+    const other = createUser(ctx.db);
+    addMember(ctx.db, { teamId: team.team.id, userId: other.id });
+    const otherKey = createApiKey(ctx.db, { userId: other.id }).key;
+    expect((await ctx.app.request(file.url, { headers: bearer(otherKey) })).status).toBe(200);
+
+    ctx.db.orm.update(s.issue).set({ deletedAt: new Date() }).where(eq(s.issue.id, issue.id)).run();
+    expect((await ctx.app.request(file.url, { headers: bearer(otherKey) })).status).toBe(404);
+    expect(() => getAttachmentWithContent(ctx.deps, actorOf(other), file.id)).toThrow(/not found/);
+    // The author and MANAGE_TRASH (the owner) can still open it, as they can see the Trash item.
+    expect((await ctx.app.request(file.url, { headers: bearer(memberKey) })).status).toBe(200);
+    expect((await ctx.app.request(file.url, { headers: bearer(ownerKey) })).status).toBe(200);
+  });
+
+  it('covers deleted replies and deleted projects', async () => {
+    const task = createTask(ctx.db, { project: project.project, authorId: member.id });
+    const pending = await uploaded(await upload(Buffer.from('log'), 'log.txt'));
+    const reply = createReply(ctx.deps, actorOf(member), {
+      parentType: 'task',
+      parentId: task.id,
+      body: 'see file',
+      attachmentIds: [pending.id],
+    });
+    const other = createUser(ctx.db);
+    addMember(ctx.db, { teamId: team.team.id, userId: other.id });
+    const read = () => getAttachmentWithContent(ctx.deps, actorOf(other), pending.id);
+    expect(read().text).toBe('log');
+
+    ctx.db.orm.update(s.reply).set({ deletedAt: new Date() }).where(eq(s.reply.id, reply.id)).run();
+    expect(read).toThrow(/not found/);
+    ctx.db.orm.update(s.reply).set({ deletedAt: null }).where(eq(s.reply.id, reply.id)).run();
+    ctx.db.orm
+      .update(s.project)
+      .set({ deletedAt: new Date() })
+      .where(eq(s.project.id, project.project.id))
+      .run();
+    expect(read).toThrow(/not found/);
   });
 });
 

@@ -22,6 +22,7 @@ import {
   type TestContext,
   type UserRow,
 } from '../test/helpers';
+import { mcpMaxBodyBytes } from './server';
 import { coreTools } from './tools/core';
 
 let ctx: TestContext;
@@ -325,5 +326,69 @@ describe('MCP transport security', () => {
     }
     expect((await post({ Authorization: `Bearer ${key}` })).status).toBe(429);
     expect((await post({ Authorization: `Bearer ${other.key}` })).status).toBe(200);
+  });
+
+  const rawPost = (key: string, body: string) =>
+    fetch(`${origin}/mcp`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json, text/event-stream',
+        Authorization: `Bearer ${key}`,
+      },
+      body,
+    });
+
+  // Regression (SEC-2): a 100-message batch used to cost one token of the 300/min key limit.
+  it('refuses JSON-RPC batches and unparseable bodies', async () => {
+    const { key } = createApiKey(ctx.db, { userId: owner.id });
+    const batch = await rawPost(key, JSON.stringify([initialize, { ...initialize, id: 2 }]));
+    expect(batch.status).toBe(400);
+    expect(await batch.json()).toMatchObject({ error: { code: -32600 } });
+    const garbage = await rawPost(key, '{"jsonrpc":');
+    expect(garbage.status).toBe(400);
+    expect(await garbage.json()).toMatchObject({ error: { code: -32700 } });
+  });
+
+  // Regression (SEC-5): the SDK's default 4 MiB body limit capped MCP uploads at ~3 MB.
+  it('accepts uploads up to MAX_UPLOAD_MB and answers 413 above the body limit', async () => {
+    createTeam(ctx.db, { ownerId: owner.id, slug: 'acme' });
+    const { key } = createApiKey(ctx.db, { userId: owner.id });
+    const client = await connect(key);
+    const text = 'x'.repeat(5 * 1024 * 1024);
+    const uploaded = structured<{ size: number }>(
+      await client.callTool({
+        name: 'upload_attachment',
+        arguments: { filename: 'big.txt', text, team: 'acme' },
+      }),
+    );
+    expect(uploaded.size).toBe(text.length);
+
+    const tooLarge = await rawPost(
+      key,
+      JSON.stringify({
+        ...initialize,
+        params: { ...initialize.params, pad: 'x'.repeat(mcpMaxBodyBytes(ctx.env)) },
+      }),
+    );
+    expect(tooLarge.status).toBe(413);
+  });
+
+  it('counts MCP uploads against the per-user uploads bucket', async () => {
+    createTeam(ctx.db, { ownerId: owner.id, slug: 'acme' });
+    const { key } = createApiKey(ctx.db, { userId: owner.id });
+    const client = await connect(key);
+    for (let i = 0; i < RATE_LIMITS.uploadsPerUser; i += 1) {
+      ctx.deps.rateLimiter.consume(`uploads:${owner.id}`, {
+        max: RATE_LIMITS.uploadsPerUser,
+        windowMs: 60_000,
+      });
+    }
+    const result = await client.callTool({
+      name: 'upload_attachment',
+      arguments: { filename: 'a.txt', text: 'hi', team: 'acme' },
+    });
+    expect(result.isError).toBe(true);
+    expect(JSON.stringify(result.content)).toContain('rate_limited');
   });
 });

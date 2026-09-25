@@ -24,7 +24,7 @@ import {
 } from './access';
 import { recordActivity } from './activity';
 import { emitAfterCommit } from './events';
-import { findItem } from './items';
+import { findItem, trashedItem, trashedProject, trashedReply, type TrashEntry } from './items';
 import { getUserSummaries, getViaKeys } from './users';
 
 /**
@@ -472,8 +472,29 @@ export async function uploadAttachmentContent(
 // ---------------------------------------------------------------------------------------------
 
 /**
- * An attachment the actor may read: team members see non-deleted files of their team; pending
- * files only their uploader; avatars (no team) any signed-in user.
+ * Null when the attachment's parent (reply → issue/task → project) is live. Otherwise the first
+ * deleted link of that chain, which is the item in Trash (SPEC §1.12).
+ */
+function trashedParent(db: DbExecutor, row: AttachmentRow): TrashEntry | null {
+  if (!row.parentId) return null;
+  switch (row.parentType) {
+    case 'pending':
+    case 'user_avatar':
+      return null;
+    case 'issue':
+    case 'task':
+      return trashedItem(db, row.parentType, row.parentId);
+    case 'project':
+      return trashedProject(db, row.parentId);
+    case 'reply':
+      return trashedReply(db, row.parentId);
+  }
+}
+
+/**
+ * An attachment the actor may read: team members see non-deleted files of their team whose
+ * parent is live; files of an item in Trash only those who may see that Trash entry (its author,
+ * or `MANAGE_TRASH`); pending files only their uploader; avatars (no team) any signed-in user.
  */
 function readableAttachment(deps: AppDeps, actor: Actor, id: string): AttachmentRow {
   const { orm } = deps.db;
@@ -487,11 +508,33 @@ function readableAttachment(deps: AppDeps, actor: Actor, id: string): Attachment
     if (row.parentType !== 'user_avatar') throw errors.notFound('Attachment');
     return row;
   }
-  requireMember(orm, actor, row.teamId, 'Attachment');
+  const membership = requireMember(orm, actor, row.teamId, 'Attachment');
   if (row.parentType === 'pending' && row.uploaderId !== actor.userId) {
     throw errors.notFound('Attachment');
   }
+  const trashed = trashedParent(orm, row);
+  if (trashed && !canRestoreContent(membership, trashed.authorId)) {
+    throw errors.notFound('Attachment');
+  }
   return row;
+}
+
+/**
+ * May the member see this attachment's history (per-item history)? The same rules as reading the
+ * file, except that the attachment itself may be in Trash (then its uploader or `MANAGE_TRASH`).
+ * Purged attachments are left to the team audit log.
+ */
+export function canSeeAttachmentHistory(
+  db: DbExecutor,
+  membership: Membership,
+  id: string,
+): boolean {
+  const row = db.select().from(s.attachment).where(eq(s.attachment.id, id)).get();
+  if (!row || row.teamId !== membership.teamId) return false;
+  if (row.parentType === 'pending') return row.uploaderId === membership.userId;
+  if (row.deletedAt && !canRestoreContent(membership, row.uploaderId)) return false;
+  const trashed = trashedParent(db, row);
+  return !trashed || canRestoreContent(membership, trashed.authorId);
 }
 
 export interface AttachmentFile {

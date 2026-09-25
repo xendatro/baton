@@ -10,6 +10,13 @@ import { z } from 'zod';
 
 const DEV_AUTH_SECRET = 'baton-development-only-secret-never-use-in-production';
 
+/** Hosts that only this machine can reach: the development secret is tolerated only there. */
+const LOOPBACK_HOSTS: ReadonlySet<string> = new Set(['localhost', '127.0.0.1', '[::1]']);
+
+function isLoopbackUrl(url: string): boolean {
+  return LOOPBACK_HOSTS.has(new URL(url).hostname);
+}
+
 const booleanString = z
   .enum(['true', 'false', '1', '0'])
   .transform((value) => value === 'true' || value === '1');
@@ -49,6 +56,14 @@ const envSchema = z
           message: 'required in production',
         });
       }
+    } else if (!env.BETTER_AUTH_SECRET && env.BASE_URL && !isLoopbackUrl(env.BASE_URL)) {
+      // Whatever NODE_ENV says, a server others can reach never signs sessions with the
+      // publicly known development secret.
+      ctx.addIssue({
+        code: 'custom',
+        path: ['BETTER_AUTH_SECRET'],
+        message: 'required when BASE_URL is not a localhost address',
+      });
     }
     for (const provider of ['GOOGLE', 'GITHUB'] as const) {
       const id = env[`${provider}_CLIENT_ID`];
@@ -80,6 +95,8 @@ export interface Env {
   /** Absolute path. */
   dataDir: string;
   authSecret: string;
+  /** True when BETTER_AUTH_SECRET is unset and the public development secret is in use. */
+  usesDevelopmentSecret: boolean;
   google: OAuthCredentials | null;
   github: OAuthCredentials | null;
   /** Null: emails are logged to the console instead of sent. */
@@ -131,6 +148,7 @@ export function parseEnv(source: Record<string, string | undefined>): Env {
     baseUrl: (env.BASE_URL ?? defaultBaseUrl).replace(/\/+$/, ''),
     dataDir: path.resolve(env.DATA_DIR),
     authSecret: env.BETTER_AUTH_SECRET ?? DEV_AUTH_SECRET,
+    usesDevelopmentSecret: env.BETTER_AUTH_SECRET === undefined,
     google: credentials(env.GOOGLE_CLIENT_ID, env.GOOGLE_CLIENT_SECRET),
     github: credentials(env.GITHUB_CLIENT_ID, env.GITHUB_CLIENT_SECRET),
     smtpUrl: env.SMTP_URL ?? null,

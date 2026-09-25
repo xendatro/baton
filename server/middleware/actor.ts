@@ -52,6 +52,7 @@ export function actorMiddleware(): MiddlewareHandler<AppEnv> {
       });
       if (session) {
         c.set('actor', { userId: session.user.id, source: 'web', key: null });
+        c.set('sessionId', session.session.id);
         user = session.user;
       }
       // Rolling sessions: Better Auth may have extended the session; forward its cookie.

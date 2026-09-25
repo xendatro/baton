@@ -20,6 +20,8 @@ await build({
   target: 'node24',
   packages: 'external',
   sourcemap: true,
+  // The bundle defaults NODE_ENV to production (see loadEnv in server/index.ts).
+  define: { BATON_BUNDLE_NODE_ENV: '"production"' },
   legalComments: 'none',
   logLevel: 'info',
 });

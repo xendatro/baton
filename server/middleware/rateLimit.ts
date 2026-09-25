@@ -2,7 +2,7 @@ import type { Context, MiddlewareHandler } from 'hono';
 import { RATE_LIMITS } from '@shared/constants';
 import type { AppEnv } from '../context';
 import { errors } from '../lib/errors';
-import type { RateLimitRule } from '../lib/rateLimit';
+import type { RateLimiter, RateLimitRule } from '../lib/rateLimit';
 
 /**
  * Rate-limit middlewares (SPEC §5): auth endpoints 10/min per IP, REST writes 120/min per user,
@@ -55,3 +55,17 @@ export const byUser = (c: Context<AppEnv>) => c.var.actor?.userId ?? null;
 
 /** Per-API-key key. */
 export const byApiKey = (c: Context<AppEnv>) => c.var.actor?.key?.id ?? null;
+
+/**
+ * Takes a token from a named bucket outside the HTTP middleware, for limits that apply to one
+ * operation inside a request (an MCP `upload_attachment` counts against the per-user uploads
+ * bucket, like `POST /api/attachments`). Throws `rate_limited` when the bucket is empty.
+ */
+export function consumeRateLimit(limiter: RateLimiter, name: RateLimitName, key: string): void {
+  const decision = limiter.consume(`${name}:${key}`, RATE_LIMIT_RULES[name]);
+  if (!decision.allowed) {
+    throw errors.rateLimited(
+      `Too many requests, try again in ${decision.retryAfterSeconds} seconds`,
+    );
+  }
+}

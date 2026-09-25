@@ -103,6 +103,57 @@ export function findItem(db: DbExecutor, type: ItemType, id: string): ItemInfo |
   return itemResolvers[type].find(db, id);
 }
 
+/**
+ * The Trash entry hiding something (SPEC §1.12): the author of the first deleted link of its
+ * reply → issue/task → project chain. Only that author and `MANAGE_TRASH` may still see what it
+ * hides (`canRestoreContent`). `authorId` is null once the row is purged.
+ */
+export interface TrashEntry {
+  authorId: string | null;
+}
+
+/** Null when the project is live, else its Trash entry. */
+export function trashedProject(db: DbExecutor, id: string): TrashEntry | null {
+  const project = db
+    .select({ createdById: s.project.createdById, deletedAt: s.project.deletedAt })
+    .from(s.project)
+    .where(eq(s.project.id, id))
+    .get();
+  if (!project) return { authorId: null };
+  return project.deletedAt ? { authorId: project.createdById } : null;
+}
+
+/** Null when the issue or task is live, else the Trash entry of it or of its project. */
+export function trashedItem(db: DbExecutor, type: ItemType, id: string): TrashEntry | null {
+  if (findItem(db, type, id)) return null;
+  const table = type === 'issue' ? s.issue : s.task;
+  const item = db
+    .select({ authorId: table.authorId, deletedAt: table.deletedAt, projectId: table.projectId })
+    .from(table)
+    .where(eq(table.id, id))
+    .get();
+  if (!item) return { authorId: null };
+  if (item.deletedAt) return { authorId: item.authorId };
+  return trashedProject(db, item.projectId) ?? { authorId: null };
+}
+
+/** Null when the reply and its item are live, else the Trash entry hiding the reply. */
+export function trashedReply(db: DbExecutor, id: string): TrashEntry | null {
+  const reply = db
+    .select({
+      authorId: s.reply.authorId,
+      deletedAt: s.reply.deletedAt,
+      parentType: s.reply.parentType,
+      parentId: s.reply.parentId,
+    })
+    .from(s.reply)
+    .where(eq(s.reply.id, id))
+    .get();
+  if (!reply) return { authorId: null };
+  if (reply.deletedAt) return { authorId: reply.authorId };
+  return trashedItem(db, reply.parentType, reply.parentId);
+}
+
 const ITEM_NAMES: Record<ItemType, string> = { issue: 'Issue', task: 'Task' };
 
 /**

@@ -1,8 +1,10 @@
 import type { AddressInfo } from 'node:net';
 import { serve, type ServerType } from '@hono/node-server';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { eq } from 'drizzle-orm';
 import { liveEventSchema, type LiveEvent } from '@shared/events';
 import { queueLiveEvent } from '../db';
+import * as s from '../db/schema';
 import {
   addMember,
   bearer,
@@ -10,6 +12,7 @@ import {
   createTeam,
   createTestContext,
   createUser,
+  signIn,
   type TestContext,
   type UserRow,
 } from '../test/helpers';
@@ -191,5 +194,49 @@ describe('GET /api/events (SSE)', () => {
   it('requires authentication', async () => {
     const res = await ctx.app.request('/api/events');
     expect(res.status).toBe(401);
+  });
+
+  /** Reads the stream to its end and returns everything it sent. */
+  async function readToEnd(res: Response): Promise<string> {
+    const reader: ReadableStreamDefaultReader<Uint8Array> | undefined = res.body?.getReader();
+    if (!reader) throw new Error('no body');
+    const decoder = new TextDecoder();
+    let text = '';
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) return text;
+      text += decoder.decode(value, { stream: true });
+    }
+  }
+
+  // Regression (SEC-8): open streams kept delivering events after the credential was revoked.
+  it('ends the stream once its API key is revoked', async () => {
+    const origin = await listen();
+    const { key, apiKey } = createApiKey(ctx.db, { userId: alice.id });
+    const baseline = ctx.deps.events.listenerCount;
+    const res = await fetch(`${origin}/api/events`, { headers: bearer(key) });
+    await vi.waitFor(() => expect(ctx.deps.events.listenerCount).toBe(baseline + 1));
+
+    ctx.db.orm
+      .update(s.apiKey)
+      .set({ revokedAt: new Date() })
+      .where(eq(s.apiKey.id, apiKey.id))
+      .run();
+    emitEvent(ctx.deps, event({ entityId: 'after-revoke' }));
+    expect(await readToEnd(res)).not.toContain('after-revoke');
+    await vi.waitFor(() => expect(ctx.deps.events.listenerCount).toBe(baseline));
+  });
+
+  it('ends the stream once its session is signed out', async () => {
+    const origin = await listen();
+    const cookie = await signIn(ctx, alice);
+    const baseline = ctx.deps.events.listenerCount;
+    const res = await fetch(`${origin}/api/events`, { headers: { Cookie: cookie } });
+    expect(res.status).toBe(200);
+    await vi.waitFor(() => expect(ctx.deps.events.listenerCount).toBe(baseline + 1));
+
+    ctx.db.orm.delete(s.session).where(eq(s.session.userId, alice.id)).run();
+    emitEvent(ctx.deps, event({ entityId: 'after-sign-out' }));
+    expect(await readToEnd(res)).not.toContain('after-sign-out');
   });
 });

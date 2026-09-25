@@ -522,6 +522,13 @@ describe('deleting and restoring projects', () => {
       details: { key: 'API', suggestion: 'API2' },
     });
 
+    // A body is optional: without one the project keeps its key (here: still taken).
+    const bare = await ctx.app.request(`/api/projects/${project.id}/restore`, {
+      method: 'POST',
+      headers: bearer(ownerKey),
+    });
+    expect(bare.status).toBe(409);
+
     const res = await post(`/api/projects/${project.id}/restore`, { key: 'API2' });
     expect(res.status).toBe(200);
     expect(projectSchema.parse(await res.json())).toMatchObject({

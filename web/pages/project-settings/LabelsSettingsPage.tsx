@@ -217,7 +217,7 @@ function Labels({ teamId, projectId }: { teamId: string; projectId: string }) {
 
 function nextColor(existing: readonly LabelEntity[]): string {
   const used = new Set(existing.map((label) => label.color));
-  return (COLOR_PALETTE.find((color) => !used.has(color.hex)) ?? COLOR_PALETTE[0]).hex;
+  return (COLOR_PALETTE.slice(1).find((color) => !used.has(color.hex)) ?? COLOR_PALETTE[0]).hex;
 }
 
 function LabelDialog({

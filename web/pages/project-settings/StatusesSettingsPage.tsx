@@ -359,7 +359,7 @@ function StatusRow({
 
 function suggestColor(existing: readonly Status[]): string {
   const used = new Set(existing.map((status) => status.color));
-  return (COLOR_PALETTE.find((color) => !used.has(color.hex)) ?? COLOR_PALETTE[0]).hex;
+  return (COLOR_PALETTE.slice(1).find((color) => !used.has(color.hex)) ?? COLOR_PALETTE[0]).hex;
 }
 
 function AddStatus({ projectId, existing }: { projectId: string; existing: Status[] }) {

@@ -136,3 +136,42 @@ attributed to the key's owner with `source: 'mcp'` and the key name. Core tools:
 
 Each module documents its own routes here as it lands, in the same table format. One router file
 per area lives in `server/routes/<area>.ts`, and each is mounted from `server/routes/index.ts`.
+
+### Projects (projects module)
+
+Schemas: `shared/schemas/projects.ts`. `Project` = `ProjectSummary` + `{ readme, createdBy, keyAliases, statuses: Status[], labels: Label[] }`;
+`ProjectSummary` = `{ id, teamId, teamSlug, name, key, ref, description, icon, color, counts: { openTasks, doneTasks, openIssues, resolvedIssues }, path, createdAt, updatedAt }`;
+`Status` = `{ id, projectId, name, color, category: 'open'|'done', position, isDefault, taskCount }`;
+`Label` = `{ id, projectId, name, color, description, issueCount, taskCount }`. Counts ignore deleted
+items. Reads need team membership (404 otherwise); writes need the permission in the last column.
+
+| Method & path                                 | Request                                                                                                    | Response                                                                                                | Permission                          |
+| --------------------------------------------- | ---------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- | ----------------------------------- |
+| `GET /api/teams/:teamId/projects`             | –                                                                                                          | `{ items: ProjectSummary[] }` live projects, alphabetical                                               | member                              |
+| `POST /api/teams/:teamId/projects`            | `CreateProjectInput` `{ name, key?, description?, readme?, icon?, color? }` (key derived when omitted)     | `Project` (201), seeded with Open (open, default) and Done                                              | `MANAGE_PROJECTS`                   |
+| `GET /api/teams/:teamId/projects/key-check`   | `?key&projectId?`                                                                                          | `{ key, valid, available, message, suggestion }` (the project's own key counts as available)            | member                              |
+| `GET /api/projects/resolve`                   | `?ref=team-slug/KEY` (or `KEY`, or an id); previous keys resolve too                                       | `ProjectSummary` with the current key (the web redirects old URLs with it)                              | member                              |
+| `GET /api/projects/:projectId`                | –                                                                                                          | `Project`                                                                                               | member                              |
+| `PATCH /api/projects/:projectId`              | `UpdateProjectInput` `{ name?, key?, description?, readme?, icon? (null clears), color?, attachmentIds? }` | `Project`. A new key keeps the old one as an alias; pending uploads linked from the README are attached | `MANAGE_PROJECTS`                   |
+| `DELETE /api/projects/:projectId`             | –                                                                                                          | `{ ok: true }` (to Trash; its contents are hidden)                                                      | `MANAGE_PROJECTS`                   |
+| `POST /api/projects/:projectId/restore`       | `{ key? }` (a new key when another project took the old one: 409 with `details: { key, suggestion }`)      | `Project`                                                                                               | `MANAGE_PROJECTS` or `MANAGE_TRASH` |
+| `GET /api/projects/:projectId/statuses`       | –                                                                                                          | `{ items: Status[] }` in board order                                                                    | member                              |
+| `POST /api/projects/:projectId/statuses`      | `{ name, color?, category = 'open', isDefault? }`                                                          | `Status` (201), appended at the end                                                                     | `MANAGE_STATUSES`                   |
+| `PUT /api/projects/:projectId/statuses/order` | `{ statusIds }` (every status of the project exactly once)                                                 | `{ items: Status[] }`                                                                                   | `MANAGE_STATUSES`                   |
+| `PATCH /api/statuses/:statusId`               | `{ name?, color?, category?, isDefault?: true }` (a category change sets/clears its tasks' `completedAt`)  | `Status`                                                                                                | `MANAGE_STATUSES`                   |
+| `DELETE /api/statuses/:statusId`              | `?moveTo=<statusId>` (required; its tasks move there, and the default flag if it had it)                   | `{ ok: true, movedTasks }`; 409 for the last status                                                     | `MANAGE_STATUSES`                   |
+| `GET /api/projects/:projectId/labels`         | –                                                                                                          | `{ items: Label[] }` alphabetical                                                                       | member                              |
+| `POST /api/projects/:projectId/labels`        | `{ name, color?, description? }` (names are unique per project, ignoring case: 409)                        | `Label` (201)                                                                                           | `MANAGE_LABELS`                     |
+| `PATCH /api/labels/:labelId`                  | `{ name?, color?, description? }`                                                                          | `Label`                                                                                                 | `MANAGE_LABELS`                     |
+| `DELETE /api/labels/:labelId`                 | –                                                                                                          | `{ ok: true, removedFrom: { issues, tasks } }` (removed from every item)                                | `MANAGE_LABELS`                     |
+
+Live events: `project.created|updated|deleted|restored`, `status.changed` (also for reorders, with
+`entityId` = the project id), `label.changed`. Audit actions: `project.created|updated|deleted|restored`,
+`project.statuses_reordered` (`changes.statusOrder`), `status.created|updated|deleted`
+(`meta.tasksAffected`, `meta.movedTasks`, `meta.movedTo`, `meta.newDefault`),
+`label.created|updated|deleted` (`meta.removedFromIssues`, `meta.removedFromTasks`). Trash: the
+`project` handler is registered, so the admin module's restore works for projects. MCP tools:
+`list_projects`, `get_project`, `create_project`, `update_project`, `delete_project`,
+`restore_project`, `list_statuses`, `create_status`, `update_status`, `reorder_statuses`,
+`delete_status`, `list_labels`, `create_label`, `update_label`, `delete_label` (statuses and labels
+by name or id within a project ref).

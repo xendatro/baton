@@ -86,6 +86,7 @@ describe('palette search', () => {
     expect(task).toHaveTextContent('WEB-12');
     expect(task).toHaveTextContent('Web app');
     expect(within(task).getAllByText('crash', { selector: 'mark' }).length).toBeGreaterThan(0);
+    expect(within(palette).queryByText('No results.')).toBeNull();
     for (const group of ['Tasks', 'Issues', 'Replies']) {
       expect(within(palette).getByText(group)).toBeInTheDocument();
     }

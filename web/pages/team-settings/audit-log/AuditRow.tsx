@@ -23,7 +23,7 @@ const SOURCE_LABELS = { web: 'Web', mcp: 'MCP', api: 'API', system: 'System' } a
 function Part({ part, url }: { part: ActivityPart; url: string | null }) {
   const className = cn(
     part.emphasis && 'font-medium text-foreground',
-    part.code && 'font-mono text-[0.8125rem] text-foreground',
+    part.code && 'font-mono text-[0.8125rem] whitespace-nowrap text-foreground',
     part.tone === 'added' && 'text-emerald-700 dark:text-emerald-400',
     part.tone === 'removed' && 'text-red-700 dark:text-red-400',
   );
@@ -143,7 +143,7 @@ export function AuditRow({ entry }: AuditRowProps) {
         <time
           dateTime={entry.createdAt}
           title={formatDateTime(entry.createdAt)}
-          className="hidden w-16 shrink-0 pt-0.5 text-xs text-muted-foreground tabular-nums sm:block"
+          className="hidden w-16 shrink-0 text-xs leading-6 text-muted-foreground tabular-nums sm:block"
         >
           {format(new Date(entry.createdAt), 'p')}
         </time>

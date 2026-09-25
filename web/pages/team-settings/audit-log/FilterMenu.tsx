@@ -92,7 +92,11 @@ export function FilterMenu({
           <ChevronDownIcon aria-hidden="true" className="ml-auto text-muted-foreground" />
         </Button>
       </PopoverTrigger>
-      <PopoverContent className="w-72 p-0" align="start">
+      <PopoverContent
+        className="w-72 max-w-[calc(100vw-2rem)] p-0"
+        align="start"
+        collisionPadding={16}
+      >
         <Command filter={commandFilter}>
           <CommandInput
             placeholder={searchPlaceholder ?? `Search ${label.toLowerCase()}…`}

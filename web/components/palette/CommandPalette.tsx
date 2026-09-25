@@ -275,59 +275,64 @@ function PaletteBody() {
         className="h-12"
       />
       <CommandList className="max-h-[min(60vh,26rem)]">
-        <CommandEmpty>No results.</CommandEmpty>
+        {/* cmdk doesn't count force-mounted search results, so its empty state would show beside them. */}
+        {search.some((provider) => provider.loading || provider.results.length > 0) ? null : (
+          <CommandEmpty>No results.</CommandEmpty>
+        )}
         {[...registeredGroups.entries()].map(([group, commands]) => (
           <CommandGroup key={group} heading={group}>
             {commands.map(renderEntry)}
           </CommandGroup>
         ))}
-        {search.map((provider) => (
-          <CommandGroup key={provider.id} heading={provider.group} forceMount>
-            {provider.loading ? (
-              <CommandPrimitive.Loading>
-                <div className="flex items-center gap-2 px-2 py-1.5 text-sm text-muted-foreground">
-                  <Spinner /> Searching…
-                </div>
-              </CommandPrimitive.Loading>
-            ) : null}
-            {provider.results.map((result) => {
-              const Icon = result.icon;
-              return (
-                <CommandItem
-                  key={`${provider.id}.${result.id}`}
-                  value={`${provider.id}.${result.id}`}
-                  keywords={[result.label]}
-                  forceMount
-                  onSelect={() => run(go(result.href))}
-                >
-                  {Icon ? <Icon aria-hidden="true" /> : null}
-                  <span className="min-w-0 flex-1">
-                    <span className="flex min-w-0 items-baseline gap-2">
-                      {result.ref ? (
-                        <span className="shrink-0 font-mono text-xs text-muted-foreground">
-                          {result.ref}
+        {search
+          .filter((provider) => provider.loading || provider.results.length > 0)
+          .map((provider) => (
+            <CommandGroup key={provider.id} heading={provider.group} forceMount>
+              {provider.loading ? (
+                <CommandPrimitive.Loading>
+                  <div className="flex items-center gap-2 px-2 py-1.5 text-sm text-muted-foreground">
+                    <Spinner /> Searching…
+                  </div>
+                </CommandPrimitive.Loading>
+              ) : null}
+              {provider.results.map((result) => {
+                const Icon = result.icon;
+                return (
+                  <CommandItem
+                    key={`${provider.id}.${result.id}`}
+                    value={`${provider.id}.${result.id}`}
+                    keywords={[result.label]}
+                    forceMount
+                    onSelect={() => run(go(result.href))}
+                  >
+                    {Icon ? <Icon aria-hidden="true" /> : null}
+                    <span className="min-w-0 flex-1">
+                      <span className="flex min-w-0 items-baseline gap-2">
+                        {result.ref ? (
+                          <span className="shrink-0 font-mono text-xs text-muted-foreground">
+                            {result.ref}
+                          </span>
+                        ) : null}
+                        <span className="truncate">
+                          <Highlighted text={result.label} terms={result.highlight} />
+                        </span>
+                      </span>
+                      {result.description ? (
+                        <span className="block truncate text-xs text-muted-foreground">
+                          <Highlighted text={result.description} terms={result.highlight} />
                         </span>
                       ) : null}
-                      <span className="truncate">
-                        <Highlighted text={result.label} terms={result.highlight} />
-                      </span>
                     </span>
-                    {result.description ? (
-                      <span className="block truncate text-xs text-muted-foreground">
-                        <Highlighted text={result.description} terms={result.highlight} />
+                    {result.hint ? (
+                      <span className="ml-2 hidden max-w-[35%] shrink-0 truncate text-xs text-muted-foreground sm:block">
+                        {result.hint}
                       </span>
                     ) : null}
-                  </span>
-                  {result.hint ? (
-                    <span className="ml-2 hidden max-w-[35%] shrink-0 truncate text-xs text-muted-foreground sm:block">
-                      {result.hint}
-                    </span>
-                  ) : null}
-                </CommandItem>
-              );
-            })}
-          </CommandGroup>
-        ))}
+                  </CommandItem>
+                );
+              })}
+            </CommandGroup>
+          ))}
         <CommandGroup heading="Go to">{navigation.map(renderEntry)}</CommandGroup>
         {places.length ? (
           <CommandGroup heading="Teams & projects">{places.map(renderEntry)}</CommandGroup>

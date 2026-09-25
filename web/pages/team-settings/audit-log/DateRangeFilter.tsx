@@ -68,7 +68,11 @@ export function DateRangeFilter({ from, to, onChange }: DateRangeFilterProps) {
           <ChevronDownIcon aria-hidden="true" className="text-muted-foreground" />
         </Button>
       </PopoverTrigger>
-      <PopoverContent className="w-auto p-0" align="start">
+      <PopoverContent
+        className="w-auto max-w-[calc(100vw-2rem)] p-0"
+        align="start"
+        collisionPadding={16}
+      >
         <div className="flex flex-col sm:flex-row">
           <div className="flex flex-wrap gap-1 border-b p-2 sm:w-36 sm:flex-col sm:flex-nowrap sm:border-r sm:border-b-0">
             {PRESETS.map((preset) => (

@@ -82,7 +82,9 @@ export function entityNoun(entityType: ActivityEntityType): string {
   return ENTITY_NOUNS[entityType];
 }
 
-export function fieldLabel(field: string): string {
+export function fieldLabel(field: string, entityType?: ActivityEntityType): string {
+  // A reply's body is its text, not a description.
+  if (entityType === 'reply' && field === 'body') return 'text';
   return (
     FIELD_LABELS[field] ??
     field
@@ -118,6 +120,11 @@ export function listDelta(change: FieldChange): { added: string[]; removed: stri
     added: after.filter((item) => !before.includes(item)),
     removed: before.filter((item) => !after.includes(item)),
   };
+}
+
+/** List labels are plural ("labels", "assignees"); one item reads better singular. */
+function countedLabel(label: string, count: number): string {
+  return count === 1 && label.endsWith('s') ? label.slice(0, -1) : label;
 }
 
 function isListChange(change: FieldChange): boolean {
@@ -205,9 +212,12 @@ export function describeChange(
   object: ActivityPart[] = [],
   entityType?: ActivityEntityType,
 ): ActivityPart[] {
-  const label = fieldLabel(field);
+  const label = fieldLabel(field, entityType);
   const { from, to } = change;
   const of = object.length ? [{ text: 'of' }, ...object] : [];
+  if (entityType === 'reply' && TEXT_FIELDS.has(field)) {
+    return [{ text: 'edited' }, ...(object.length ? object : [{ text: 'the reply' }])];
+  }
   if (TEXT_FIELDS.has(field)) return [{ text: `edited the ${label}` }, ...of];
 
   if (isListChange(change)) {
@@ -224,12 +234,18 @@ export function describeChange(
     }
     const parts: ActivityPart[] = [];
     if (added.length) {
-      parts.push({ text: `added ${label}` }, { text: added.join(', '), emphasis: true });
+      parts.push(
+        { text: `added ${countedLabel(label, added.length)}` },
+        { text: added.join(', '), emphasis: true },
+      );
       if (object.length) parts.push({ text: 'to' }, ...object);
     }
     if (removed.length) {
       if (parts.length) parts.push({ text: 'and' });
-      parts.push({ text: `removed ${label}` }, { text: removed.join(', '), emphasis: true });
+      parts.push(
+        { text: `removed ${countedLabel(label, removed.length)}` },
+        { text: removed.join(', '), emphasis: true },
+      );
       if (object.length && !added.length) parts.push({ text: 'from' }, ...object);
     }
     return parts.length ? parts : [{ text: `changed ${label}` }, ...of];
@@ -432,7 +448,7 @@ export type DiffRow =
 /** Every field change of an entry, ready to show as `from → to`. */
 export function diffRows(entry: ActivityEntry): DiffRow[] {
   return Object.entries(entry.changes).map(([field, change]): DiffRow => {
-    const label = fieldLabel(field);
+    const label = fieldLabel(field, entry.entityType);
     if (isListChange(change)) return { field, label, kind: 'list', ...listDelta(change) };
     const kind = TEXT_FIELDS.has(field) ? 'text' : 'value';
     return { field, label, kind, from: formatValue(change.from), to: formatValue(change.to) };

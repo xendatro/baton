@@ -42,7 +42,7 @@ describe('activity wording on the entity’s own page', () => {
 
   it('describes list changes as additions and removals', () => {
     expect(onPage(entry({ changes: { labels: { from: ['Bug'], to: ['Docs', 'Feature'] } } }))).toBe(
-      'added labels Docs, Feature and removed labels Bug',
+      'added labels Docs, Feature and removed label Bug',
     );
   });
 
@@ -66,7 +66,7 @@ describe('activity wording on the entity’s own page', () => {
           },
         }),
       ),
-    ).toBe('changed priority from Low to High, set due date to 2026-10-01 and added labels Bug');
+    ).toBe('changed priority from Low to High, set due date to 2026-10-01 and added label Bug');
   });
 });
 
@@ -88,10 +88,10 @@ describe('activity wording in the audit log', () => {
       ),
     ).toBe('changed priority of API-12 from Low to High and set due date to 2026-10-01');
     expect(inFeed(entry({ changes: { labels: { from: [], to: ['Bug'] } } }))).toBe(
-      'added labels Bug to API-12',
+      'added label Bug to API-12',
     );
     expect(inFeed(entry({ changes: { labels: { from: ['Bug'], to: [] } } }))).toBe(
-      'removed labels Bug from API-12',
+      'removed label Bug from API-12',
     );
   });
 
@@ -127,6 +127,14 @@ describe('activity wording in the audit log', () => {
     const reply = { entityType: 'reply' as const, meta: { parentRef: 'API#4' } };
     expect(inFeed(entry({ ...reply, action: 'reply.created' }))).toBe('replied on API#4');
     expect(inFeed(entry({ ...reply, action: 'reply.edited' }))).toBe('edited a reply on API#4');
+    expect(
+      inFeed(
+        entry({ ...reply, action: 'reply.edited', changes: { body: { from: 'a', to: 'b' } } }),
+      ),
+    ).toBe('edited a reply on API#4');
+    expect(diffRows(entry({ ...reply, changes: { body: { from: 'a', to: 'b' } } }))[0]?.label).toBe(
+      'text',
+    );
     expect(inFeed(entry({ ...reply, action: 'reply.deleted' }))).toBe('deleted a reply on API#4');
     expect(
       inFeed(
@@ -152,7 +160,7 @@ describe('activity wording in the audit log', () => {
           changes: { roles: { from: [], to: ['Admin'] } },
         }),
       ),
-    ).toBe('added roles Admin to @bob');
+    ).toBe('added role Admin to @bob');
     expect(inFeed(entry({ entityType: 'invite', action: 'invite.created', meta: {} }))).toBe(
       'created an invite link',
     );

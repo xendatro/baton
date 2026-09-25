@@ -232,7 +232,7 @@
     @apply pointer-events-none float-left h-0 text-muted-foreground;
   }
   .ProseMirror.markdown .mention {
-    @apply rounded-sm bg-primary/10 px-0.5 font-medium text-primary;
+    @apply rounded-sm bg-primary/10 px-0.5 font-medium text-primary dark:text-indigo-300;
   }
   .ProseMirror.markdown img.ProseMirror-selectednode {
     @apply ring-2 ring-ring;

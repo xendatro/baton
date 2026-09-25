@@ -15,6 +15,7 @@ import { ErrorState } from '@web/components/common/ErrorState';
 import { Kbd } from '@web/components/common/Kbd';
 import { LabelChip } from '@web/components/common/LabelChip';
 import { NotFound } from '@web/components/common/NotFound';
+import { PageContainer } from '@web/components/common/PageContainer';
 import { PageHeader } from '@web/components/common/PageHeader';
 import { PriorityIcon } from '@web/components/common/PriorityIcon';
 import { RelativeTime } from '@web/components/common/RelativeTime';
@@ -87,7 +88,7 @@ function Row({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div className="grid gap-2 sm:grid-cols-[10rem_1fr] sm:items-center">
       <span className="text-xs font-medium text-muted-foreground">{label}</span>
-      <div className="flex min-w-0 flex-wrap items-center gap-3">{children}</div>
+      <div className="flex min-w-0 flex-wrap items-center gap-3 text-sm">{children}</div>
     </div>
   );
 }
@@ -140,7 +141,7 @@ function Gallery() {
   const [confirmOpen, setConfirmOpen] = useState(false);
 
   return (
-    <div className="mx-auto w-full max-w-5xl space-y-10 px-4 py-8 sm:px-6">
+    <PageContainer width="wide" className="max-w-5xl space-y-10">
       <PageHeader
         title="Component gallery"
         description="Development only: every shared component with sample data."
@@ -361,7 +362,7 @@ function Gallery() {
           />
         </Row>
       </Section>
-    </div>
+    </PageContainer>
   );
 }
 

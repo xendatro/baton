@@ -51,7 +51,9 @@ function MentionChip({
   }
   const user = mentionables?.users.find((candidate) => candidate.username === id);
   const chip = (
-    <span className="mention rounded-sm bg-primary/10 px-0.5 font-medium text-primary">{raw}</span>
+    <span className="mention rounded-sm bg-primary/10 px-0.5 font-medium text-primary dark:text-indigo-300">
+      {raw}
+    </span>
   );
   return user ? <UserHoverCard user={user}>{chip}</UserHoverCard> : chip;
 }

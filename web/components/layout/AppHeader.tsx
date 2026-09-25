@@ -15,6 +15,7 @@ import { Separator } from '@web/components/ui/separator';
 import { SidebarTrigger } from '@web/components/ui/sidebar';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@web/components/ui/tooltip';
 import type { LiveConnectionState } from '@web/lib/live';
+import { useDebouncedValue } from '@web/lib/useDebouncedValue';
 import type { Crumb } from './breadcrumbs';
 
 export interface AppHeaderProps {
@@ -24,6 +25,9 @@ export interface AppHeaderProps {
 
 /** Sticky page header: sidebar toggle, breadcrumbs, live-connection warning and search. */
 export function AppHeader({ crumbs, connection }: AppHeaderProps) {
+  // Brief blips reconnect on their own; only a lasting outage is worth showing.
+  const lasting = useDebouncedValue(connection, 4000);
+  const offline = connection === 'reconnecting' && lasting === 'reconnecting';
   return (
     <header className="sticky top-0 z-20 flex h-12 shrink-0 items-center gap-2 border-b bg-background/95 px-3 backdrop-blur supports-[backdrop-filter]:bg-background/80 sm:px-4">
       <SidebarTrigger className="-ml-1" aria-label="Toggle sidebar" />
@@ -49,7 +53,7 @@ export function AppHeader({ crumbs, connection }: AppHeaderProps) {
           })}
         </BreadcrumbList>
       </Breadcrumb>
-      {connection === 'reconnecting' ? (
+      {offline ? (
         <Tooltip>
           <TooltipTrigger asChild>
             <span

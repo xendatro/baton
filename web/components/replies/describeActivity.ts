@@ -41,7 +41,7 @@ const VERBS: Record<string, string> = {
   reopened: 'reopened this',
   claimed: 'claimed this task',
   released: 'released the claim',
-  claim_expired: 'claim expired',
+  claim_expired: 'expired the claim',
   claim_taken_over: 'took over the claim',
   renewed: 'renewed the claim',
   moved: 'moved this',

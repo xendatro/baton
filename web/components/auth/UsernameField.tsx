@@ -40,7 +40,7 @@ export function UsernameField({ value, onChange, check, error, autoFocus }: User
             spellCheck={false}
             maxLength={LIMITS.username.max}
             autoFocus={autoFocus}
-            className="pr-9 pl-7"
+            className="pr-9 pl-6"
           />
           <span className="absolute inset-y-0 right-3 flex items-center" aria-live="polite">
             {check.status === 'checking' ? <Spinner label="Checking availability" /> : null}

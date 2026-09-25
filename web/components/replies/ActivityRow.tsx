@@ -24,7 +24,7 @@ export function ActivityRow({ entry, className }: ActivityRowProps) {
           user={entry.actor.user}
           via={entry.actor.via}
           source={entry.actor.source}
-          className="mr-1 align-bottom"
+          className="align-bottom"
         />
         {parts.map((part, index) => (
           <Fragment key={index}>

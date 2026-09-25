@@ -10,11 +10,20 @@ export interface AvatarUser {
 }
 
 const SIZES = {
-  xs: 'size-4 text-[0.5rem]',
-  sm: 'size-5 text-[0.6rem]',
-  md: 'size-6 text-[0.65rem]',
-  lg: 'size-8 text-xs',
-  xl: 'size-12 text-base',
+  xs: 'size-4',
+  sm: 'size-5',
+  md: 'size-6',
+  lg: 'size-8',
+  xl: 'size-12',
+} as const;
+
+/** Initials text per size (the fallback has its own text size, so it is set there). */
+const TEXT = {
+  xs: 'text-[0.5rem]',
+  sm: 'text-[0.55rem]',
+  md: 'text-[0.6rem]',
+  lg: 'text-xs',
+  xl: 'text-base',
 } as const;
 
 export type AvatarSize = keyof typeof SIZES;
@@ -34,12 +43,12 @@ export function UserAvatar({ user, size = 'md', className }: UserAvatarProps) {
     <Avatar className={cn(SIZES[size], className)} aria-hidden="true" title={label}>
       {user?.image ? <AvatarImage src={user.image} alt="" referrerPolicy="no-referrer" /> : null}
       <AvatarFallback
-        className="font-semibold text-white"
+        className={cn('leading-none font-semibold tracking-tight text-white', TEXT[size])}
         style={{
           backgroundColor: user ? `oklch(0.55 0.13 ${hue})` : 'var(--muted-foreground)',
         }}
       >
-        {user ? initials(user.name, user.username ?? '?') : '?'}
+        {user ? initials(user.name, user.username ?? '?').slice(0, size === 'xs' ? 1 : 2) : '?'}
       </AvatarFallback>
     </Avatar>
   );
@@ -69,6 +78,7 @@ export function AvatarStack({ users, max = 3, size = 'md', className }: AvatarSt
           aria-hidden="true"
           className={cn(
             SIZES[size],
+            TEXT[size],
             'relative inline-flex shrink-0 items-center justify-center rounded-full bg-muted font-medium text-muted-foreground ring-2 ring-background',
           )}
         >

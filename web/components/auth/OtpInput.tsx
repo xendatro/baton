@@ -106,7 +106,7 @@ export function OtpInput({
       role="group"
       aria-label={label}
       aria-describedby={describedBy}
-      className="flex justify-center gap-2"
+      className="flex justify-center gap-1.5 sm:gap-2"
     >
       {digits.map((digit, index) => (
         <input
@@ -140,7 +140,7 @@ export function OtpInput({
           aria-label={`Digit ${index + 1} of ${length}`}
           aria-invalid={invalid || undefined}
           className={cn(
-            'size-11 rounded-md border border-input bg-transparent text-center font-mono text-lg font-semibold shadow-xs transition-[color,box-shadow] outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-destructive/20 sm:size-12 dark:bg-input/30',
+            'size-10 rounded-md border border-input bg-transparent text-center font-mono text-lg font-semibold shadow-xs transition-[color,box-shadow] outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-destructive/20 sm:size-12 dark:bg-input/30',
           )}
         />
       ))}

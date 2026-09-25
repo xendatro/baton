@@ -31,9 +31,7 @@ export function mockApi(routes: Record<string, MockRoute>) {
       );
     }
     return Promise.resolve(
-      typeof route === 'function'
-        ? (route as RouteHandler)({ url, init })
-        : jsonResponse(route),
+      typeof route === 'function' ? (route as RouteHandler)({ url, init }) : jsonResponse(route),
     );
   });
   vi.stubGlobal('fetch', fetchMock);

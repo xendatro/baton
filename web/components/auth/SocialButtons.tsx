@@ -79,7 +79,7 @@ export function SocialButtons({ next, verb = 'Continue with', onError }: SocialB
   };
 
   return (
-    <div className="grid gap-4">
+    <div className="mb-4 grid gap-4">
       <div className={enabled.length > 1 ? 'grid grid-cols-2 gap-2' : 'grid'}>
         {enabled.map((provider) => {
           const { label, icon: Icon } = PROVIDERS[provider];

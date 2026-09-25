@@ -150,6 +150,16 @@ Add a `JobDefinition` (`{ name, schedule, run(deps) }`) to your module's list in
   before first paint, because the CSP allows no inline scripts. Keep the two files in sync.
 - **Accessibility:** everything must be reachable by keyboard, icon buttons need an `aria-label`,
   and color is never the only signal.
+- **Shared web building blocks** (core-web): `web/lib/api.ts` (`api.get/post/…` with a zod
+  `schema`, `ApiError`, auth-error routing, `uploadFile`), `web/lib/auth.ts` (`useSession`,
+  `useMe`, `useConfig`, `authClient`), `web/lib/routeContext.ts` (`useRouteContext()` → the URL's
+  team and project from `me`), `web/lib/permissions.ts` (`useTeamAccess(teamId)`),
+  `web/lib/hotkeys.ts` (`useHotkey('g d', fn, { description, group })`), `web/lib/title.ts`
+  (`useDocumentTitle([page, project])`), `web/lib/live.ts` (`useLiveEventListener`). Components live
+  in `web/components/{common,pickers,editor,markdown,attachments,replies,palette}`. Wrap page
+  content in `PageContainer`. Pages add palette commands with `usePaletteCommands`. App-wide
+  dialogs and handlers go in `web/components/layout/shellExtensions.ts`. See every component with
+  sample data at `/__dev/components` (`npm run dev:web`).
 
 ## Tests
 

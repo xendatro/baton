@@ -31,6 +31,8 @@ export const queryKeys = {
     roles: (teamId: string) => ['teams', teamId, 'roles'] as const,
     invites: (teamId: string) => ['teams', teamId, 'invites'] as const,
     projects: (teamId: string) => ['teams', teamId, 'projects'] as const,
+    /** Team home (team + project cards): under `projects` so project events refresh it. */
+    overview: (teamId: string) => ['teams', teamId, 'projects', 'overview'] as const,
     /** Without `q`: prefix of every mentionables query of the team. */
     mentionables: (teamId: string, q?: string) =>
       q === undefined

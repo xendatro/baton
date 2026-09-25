@@ -55,25 +55,39 @@ interface NavLinkProps {
 
 function NavLink({ to, label, icon: Icon, active, badge, shortcut }: NavLinkProps) {
   const { setOpenMobile } = useSidebar();
+  const count = badge ? (badge > 99 ? '99+' : String(badge)) : null;
   return (
     <SidebarMenuItem>
-      <SidebarMenuButton asChild isActive={active} tooltip={label}>
+      <SidebarMenuButton
+        asChild
+        isActive={active}
+        tooltip={count ? `${label} (${count} unread)` : label}
+        className="relative"
+      >
         <Link
           to={to}
           onClick={() => setOpenMobile(false)}
           aria-current={active ? 'page' : undefined}
         >
           <Icon aria-hidden="true" />
+          {count ? (
+            // The count badge is hidden in the collapsed (icon) sidebar; a dot stands in for it.
+            <span
+              aria-hidden="true"
+              className="absolute top-1 right-1 hidden size-2 rounded-full bg-primary ring-2 ring-sidebar group-data-[collapsible=icon]:block"
+            />
+          ) : null}
           <span>{label}</span>
+          {count ? <span className="sr-only">({count} unread)</span> : null}
           {shortcut ? <span className="sr-only">(shortcut {shortcut})</span> : null}
         </Link>
       </SidebarMenuButton>
-      {badge ? (
+      {count ? (
         <SidebarMenuBadge
           className="rounded-full bg-primary px-1.5 text-primary-foreground peer-hover/menu-button:text-primary-foreground peer-data-[active=true]/menu-button:text-primary-foreground"
-          aria-label={`${badge} unread`}
+          aria-hidden="true"
         >
-          {badge > 99 ? '99+' : badge}
+          {count}
         </SidebarMenuBadge>
       ) : null}
     </SidebarMenuItem>
@@ -165,9 +179,16 @@ export function AppSidebar() {
         <SidebarMenu>
           <SidebarMenuItem>
             <SidebarMenuButton asChild size="lg" tooltip="Baton">
-              <Link to="/" onClick={() => setOpenMobile(false)} aria-label="Baton home">
-                <LogoMark className="size-7" />
-                <span className="text-base font-semibold tracking-tight">Baton</span>
+              <Link
+                to="/"
+                onClick={() => setOpenMobile(false)}
+                aria-label="Baton home"
+                className="group-data-[collapsible=icon]:justify-center"
+              >
+                <LogoMark className="size-7! group-data-[collapsible=icon]:size-6!" />
+                <span className="text-base font-semibold tracking-tight group-data-[collapsible=icon]:hidden">
+                  Baton
+                </span>
               </Link>
             </SidebarMenuButton>
           </SidebarMenuItem>

@@ -8,7 +8,7 @@ import { MarkdownView } from './MarkdownView';
 
 function renderMarkdown(markdown: string, teamId?: string) {
   const client = new QueryClient({ defaultOptions: { queries: { staleTime: Infinity } } });
-  client.setQueryData(queryKeys.teams.mentionables('team1', ''), {
+  client.setQueryData(queryKeys.teams.mentionLookup('team1', 'alice|design'), {
     users: [{ id: 'u1', username: 'alice', name: 'Alice Doe', image: null }],
     roles: [{ id: 'r1', slug: 'design', name: 'Design', color: '#ec4899' }],
   });
@@ -69,6 +69,17 @@ describe('MarkdownView rendering', () => {
     expect(container.querySelector('.mention')?.textContent).toBe('@alice');
     expect(screen.getByTitle('Role: Design')).toHaveTextContent('@Design');
     expect(screen.getByTitle('Role: everyone')).toHaveTextContent('@everyone');
+  });
+
+  // Regression (WEB-11): ids were prefixed twice, so footnote links pointed nowhere.
+  it('links footnote references and back-references to their targets', () => {
+    const { container } = renderMarkdown('Text[^1]\n\n[^1]: Note');
+    const links = [...container.querySelectorAll<HTMLAnchorElement>('a[href^="#"]')];
+    expect(links.length).toBeGreaterThanOrEqual(2);
+    for (const link of links) {
+      const target = decodeURIComponent(link.getAttribute('href') ?? '').slice(1);
+      expect(container.querySelector(`[id="${target}"]`), target).not.toBeNull();
+    }
   });
 
   it('leaves mentions in code and emails alone', () => {

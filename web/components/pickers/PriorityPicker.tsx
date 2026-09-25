@@ -28,8 +28,9 @@ export function PriorityPicker({
   align,
 }: PriorityPickerProps) {
   const [isOpen, setOpen] = useOpenState(open, onOpenChange);
+  const label = PRIORITIES.find((priority) => priority.value === value)?.label ?? 'None';
   const trigger = children ?? (
-    <Button variant="outline" size="sm" disabled={disabled}>
+    <Button variant="outline" size="sm" disabled={disabled} aria-label={`Priority: ${label}`}>
       <PriorityIcon value={value} showLabel />
       <ChevronDownIcon className="opacity-50" aria-hidden="true" />
     </Button>
@@ -47,7 +48,8 @@ export function PriorityPicker({
         {ORDER.map((priority) => (
           <CommandItem
             key={priority.value}
-            value={`${priority.label} ${priority.key} ${priority.value}`}
+            value={priority.key}
+            keywords={[priority.label, String(priority.value)]}
             onSelect={() => {
               onChange(priority.value);
               setOpen(false);

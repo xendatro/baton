@@ -2,12 +2,13 @@ import type { Extensions } from '@tiptap/core';
 import CodeBlockLowlight from '@tiptap/extension-code-block-lowlight';
 import Image from '@tiptap/extension-image';
 import { TaskItem, TaskList } from '@tiptap/extension-list';
-import { TableKit } from '@tiptap/extension-table';
+import { renderTableToMarkdown, Table, TableKit } from '@tiptap/extension-table';
 import { Placeholder } from '@tiptap/extensions';
-import { Markdown } from '@tiptap/markdown';
 import StarterKit from '@tiptap/starter-kit';
 import { common, createLowlight } from 'lowlight';
+import { BatonMarkdown } from './markdownManager';
 import { createMention, type MentionSource } from './mention';
+import { RawBlock, RawInline } from './rawMarkdown';
 import { SlashCommands } from './slashCommands';
 
 /** Syntax highlighting for code blocks: highlight.js's common languages (~35). */
@@ -22,6 +23,27 @@ export interface EditorExtensionOptions {
   /** Offers the slash menu's Image command (uploads must be possible). */
   images?: boolean;
 }
+
+/**
+ * Escapes every `|` in a table cell's markdown (text, code spans and link targets alike), unless
+ * it already is escaped: GFM splits cells on any other pipe, even inside code spans, so a cell
+ * holding x|y or the code a || b would otherwise break the table.
+ */
+export function escapeCellPipes(markdown: string): string {
+  return markdown.replace(/(\\*)\|/g, (match: string, slashes: string) =>
+    slashes.length % 2 === 1 ? match : `${slashes}\\|`,
+  );
+}
+
+/** Tables whose cells escape their pipes (see escapeCellPipes). */
+const BatonTable = Table.extend({
+  renderMarkdown: (node, helpers) =>
+    renderTableToMarkdown(node, {
+      ...helpers,
+      renderChildren: (nodes, separator) =>
+        escapeCellPipes(helpers.renderChildren(nodes, separator)),
+    }),
+});
 
 /**
  * Every extension of the rich-text editor. Markdown is the storage format, so each node here must
@@ -45,9 +67,12 @@ export function createEditorExtensions(options: EditorExtensionOptions = {}): Ex
     Image.configure({ inline: false, allowBase64: false }),
     TaskList,
     TaskItem.configure({ nested: true }),
-    TableKit.configure({ table: { resizable: false } }),
+    TableKit.configure({ table: false }),
+    BatonTable.configure({ resizable: false }),
     createMention(options.mentionSource ?? null),
-    Markdown.configure({ indentation: { style: 'space', size: 2 } }),
+    RawInline,
+    RawBlock,
+    BatonMarkdown.configure({ indentation: { style: 'space', size: 2 } }),
   ];
   if (options.placeholder) {
     extensions.push(Placeholder.configure({ placeholder: options.placeholder }));

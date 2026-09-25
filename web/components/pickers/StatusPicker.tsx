@@ -51,7 +51,8 @@ export function StatusPicker({
         {statuses.map((status) => (
           <CommandItem
             key={status.id}
-            value={`${status.name} ${status.id}`}
+            value={status.id}
+            keywords={[status.name]}
             onSelect={() => {
               onChange(status.id);
               setOpen(false);

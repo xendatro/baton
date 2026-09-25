@@ -60,6 +60,10 @@ function createSeededClient(): QueryClient {
   });
   client.setQueryData(queryKeys.me(), fixtures.me);
   client.setQueryData(queryKeys.teams.mentionables(fixtures.TEAM_ID, ''), fixtures.mentionables);
+  // MarkdownView looks up the mentions of each body; answer every lookup with all fixtures.
+  client.setQueryDefaults(queryKeys.teams.mentionLookup(fixtures.TEAM_ID), {
+    queryFn: () => fixtures.mentionables,
+  });
   for (const q of ['a', 'ad', 'g', 'd', 'de', 'b']) {
     client.setQueryData(queryKeys.teams.mentionables(fixtures.TEAM_ID, q), {
       users: fixtures.users.filter(

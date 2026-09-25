@@ -29,6 +29,7 @@ import {
 } from '@web/components/ui/command';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@web/components/ui/dialog';
 import { useMe, useSignOut } from '@web/lib/auth';
+import { commandFilter } from '@web/lib/commandFilter';
 import { setShortcutsHelpOpen } from '@web/lib/hotkeys';
 import { useShellActionAvailable, runShellAction } from '@web/lib/shellActions';
 import { useTheme } from '@web/lib/theme';
@@ -244,8 +245,8 @@ function PaletteBody() {
     return (
       <CommandItem
         key={entry.id}
-        value={`${entry.label} ${entry.id}`}
-        keywords={entry.keywords}
+        value={entry.id}
+        keywords={[entry.label, ...(entry.keywords ?? [])]}
         onSelect={() => run(entry.perform)}
       >
         {Icon ? <Icon aria-hidden="true" /> : null}
@@ -256,7 +257,15 @@ function PaletteBody() {
   };
 
   return (
-    <Command loop className="[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:text-xs">
+    // Items are scored on their labels only, and weak fuzzy matches are dropped, so the best match
+    // across all groups is the one Enter runs. vimBindings off: Ctrl+K must close the palette
+    // (the global toggle), not move the selection up.
+    <Command
+      loop
+      filter={commandFilter}
+      vimBindings={false}
+      className="[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:text-xs"
+    >
       <CommandInput
         value={query}
         onValueChange={setQuery}
@@ -285,7 +294,8 @@ function PaletteBody() {
               return (
                 <CommandItem
                   key={`${provider.id}.${result.id}`}
-                  value={`${provider.id} ${result.id}`}
+                  value={`${provider.id}.${result.id}`}
+                  keywords={[result.label]}
                   forceMount
                   onSelect={() => run(go(result.href))}
                 >

@@ -46,6 +46,9 @@ export function DatePicker({
       size="sm"
       disabled={disabled}
       className={value ? undefined : 'text-muted-foreground'}
+      aria-label={
+        value ? `${placeholder}: ${formatDueDate(value)}` : `Set ${placeholder.toLowerCase()}`
+      }
     >
       <CalendarIcon aria-hidden="true" />
       {value ? formatDueDate(value) : placeholder}

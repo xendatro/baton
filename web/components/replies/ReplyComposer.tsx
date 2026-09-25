@@ -77,6 +77,7 @@ export function ReplyComposer({
       />
       <AttachmentList
         attachments={attachments}
+        removeMode="draft"
         canDelete={() => true}
         onDelete={(attachment) =>
           setAttachments((current) => current.filter((item) => item.id !== attachment.id))

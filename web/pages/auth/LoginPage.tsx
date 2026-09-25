@@ -65,13 +65,18 @@ function LoginForm() {
       await refreshAuth(queryClient);
       await navigate(next, { replace: true });
     } catch (error) {
-      if (error instanceof AuthRequestError && error.code === 'EMAIL_NOT_VERIFIED' && isEmail) {
+      if (error instanceof AuthRequestError && error.code === 'EMAIL_NOT_VERIFIED') {
+        toast.info('Verify your email to finish signing in.');
+        if (!isEmail) {
+          // Signed in by username: the verify page asks for the address and sends the code.
+          await navigate(`/verify-email?next=${encodeURIComponent(next)}`);
+          return;
+        }
         try {
           await sendVerificationCode(id);
         } catch {
           // The verify page offers a resend.
         }
-        toast.info('Verify your email to finish signing in.');
         await navigate(
           `/verify-email?email=${encodeURIComponent(id.toLowerCase())}&next=${encodeURIComponent(next)}`,
         );

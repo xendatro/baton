@@ -109,7 +109,8 @@ export function LabelPicker({
             return (
               <CommandItem
                 key={label.id}
-                value={`${label.name} ${label.id}`}
+                value={label.id}
+                keywords={[label.name]}
                 onSelect={() => toggle(label.id)}
               >
                 <CheckBox checked={checked} />

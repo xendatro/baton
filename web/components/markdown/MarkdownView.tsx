@@ -110,7 +110,7 @@ export interface MarkdownViewProps {
 }
 
 export function MarkdownView({ markdown, teamId, className }: MarkdownViewProps) {
-  const mentionables = useMentionables(teamId).data;
+  const mentionables = useMentionables(teamId, markdown).data;
 
   const components: Components = {
     a: ({ href = '', children, node: _node, ...props }) => {

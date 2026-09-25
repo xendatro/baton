@@ -1,4 +1,4 @@
-import { DownloadIcon, Trash2Icon } from 'lucide-react';
+import { DownloadIcon, Trash2Icon, XIcon } from 'lucide-react';
 import { useState } from 'react';
 import type { Attachment } from '@shared/schemas/core';
 import { ConfirmDialog } from '@web/components/common/ConfirmDialog';
@@ -13,6 +13,11 @@ export interface AttachmentListProps {
   canDelete?: (attachment: Attachment) => boolean;
   /** Called after the user confirms; may be async (the dialog waits and shows errors). */
   onDelete?: (attachment: Attachment) => void | Promise<void>;
+  /**
+   * `trash` (default): saved files, deleted to Trash after a confirmation. `draft`: files of an
+   * unsent draft, removed from it at once (they were never posted, so nothing goes to Trash).
+   */
+  removeMode?: 'trash' | 'draft';
   className?: string;
 }
 
@@ -21,6 +26,7 @@ export function AttachmentList({
   attachments,
   canDelete,
   onDelete,
+  removeMode = 'trash',
   className,
 }: AttachmentListProps) {
   const [pending, setPending] = useState<Attachment | null>(null);
@@ -75,7 +81,17 @@ export function AttachmentList({
                     <DownloadIcon aria-hidden="true" />
                   </a>
                 </Button>
-                {deletable(attachment) ? (
+                {deletable(attachment) && removeMode === 'draft' ? (
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    aria-label={`Remove ${attachment.filename}`}
+                    title="Remove"
+                    onClick={() => void onDelete?.(attachment)}
+                  >
+                    <XIcon aria-hidden="true" />
+                  </Button>
+                ) : deletable(attachment) ? (
                   <Button
                     variant="ghost"
                     size="icon-sm"

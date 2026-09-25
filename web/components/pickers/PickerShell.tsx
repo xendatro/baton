@@ -2,6 +2,7 @@ import { CheckIcon } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { Command, CommandEmpty, CommandInput, CommandList } from '@web/components/ui/command';
 import { Popover, PopoverContent, PopoverTrigger } from '@web/components/ui/popover';
+import { commandFilter } from '@web/lib/commandFilter';
 import { cn } from '@web/lib/utils';
 
 export interface PickerControlProps {
@@ -28,7 +29,10 @@ export interface PickerShellProps {
   children: ReactNode;
 }
 
-/** Popover with a searchable command list, shared by the pickers. */
+/**
+ * Popover with a searchable command list, shared by the pickers. Items use their id as `value`
+ * and their display text as the first keyword (see `commandFilter`).
+ */
 export function PickerShell({
   open,
   onOpenChange,
@@ -45,7 +49,7 @@ export function PickerShell({
     <Popover open={open} onOpenChange={onOpenChange}>
       <PopoverTrigger asChild>{trigger}</PopoverTrigger>
       <PopoverContent className={cn('w-64 p-0', className)} align={align}>
-        <Command>
+        <Command filter={commandFilter}>
           <CommandInput
             placeholder={searchPlaceholder}
             aria-label={searchPlaceholder}

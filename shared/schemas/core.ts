@@ -359,8 +359,29 @@ export type AuditLogResponse = z.infer<typeof auditLogResponseSchema>;
 // Mentionables: /api/teams/:teamId/mentionables
 // ---------------------------------------------------------------------------------------------
 
+/** Comma-separated names (`alice,bob`): trimmed, lowercased, deduplicated, at most 100. */
+const nameListSchema = z
+  .string()
+  .max(10_000)
+  .transform((value) => [
+    ...new Set(
+      value
+        .split(',')
+        .map((name) => name.trim().toLowerCase())
+        .filter(Boolean),
+    ),
+  ])
+  .pipe(z.array(z.string().max(LIMITS.username.max)).max(LIMITS.bulkIds));
+
 export const mentionablesQuerySchema = z.object({
+  /** Autocomplete: members and mentionable roles matching this text. */
   q: z.string().trim().max(LIMITS.username.max).optional(),
+  /**
+   * Lookup instead of autocomplete (rendering mention chips): exactly these usernames and role
+   * slugs. Roles are looked up whether or not the caller may mention them.
+   */
+  usernames: nameListSchema.optional(),
+  roles: nameListSchema.optional(),
 });
 export type MentionablesQuery = z.infer<typeof mentionablesQuerySchema>;
 

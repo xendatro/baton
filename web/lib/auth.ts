@@ -146,17 +146,39 @@ export async function refreshAuth(queryClient: ReturnType<typeof useQueryClient>
   await queryClient.invalidateQueries({ queryKey: queryKeys.me() });
 }
 
+/** Placeholder origin for resolving `?next=` values; only its equality matters. */
+const NEXT_BASE = 'https://baton.invalid';
+
+const AUTH_PATHS: ReadonlySet<string> = new Set([
+  '/login',
+  '/signup',
+  '/verify-email',
+  '/forgot-password',
+  '/reset-password',
+]);
+
+/** Control characters and whitespace, which URL parsers strip or reinterpret (`/\t/evil`). */
+function hasControlOrSpace(value: string): boolean {
+  for (let i = 0; i < value.length; i += 1) {
+    const code = value.charCodeAt(i);
+    if (code <= 0x20 || code === 0x7f) return true;
+  }
+  return false;
+}
+
 /**
  * Sanitises a `?next=` value: only same-origin app paths are allowed (no protocol-relative or
- * absolute URLs), and auth pages fall back to the dashboard.
+ * absolute URLs, nothing a URL parser would resolve to another origin), and auth pages fall back
+ * to the dashboard. The result is the normalised path, query and hash.
  */
 export function safeNext(next: string | null | undefined): string {
-  if (!next || !next.startsWith('/') || next.startsWith('//') || next.startsWith('/\\')) return '/';
-  const pathname = next.split(/[?#]/)[0] ?? '/';
-  if (
-    ['/login', '/signup', '/verify-email', '/forgot-password', '/reset-password'].includes(pathname)
-  ) {
+  if (!next?.startsWith('/') || hasControlOrSpace(next)) return '/';
+  let url: URL;
+  try {
+    url = new URL(next, NEXT_BASE);
+  } catch {
     return '/';
   }
-  return next;
+  if (url.origin !== NEXT_BASE || AUTH_PATHS.has(url.pathname)) return '/';
+  return `${url.pathname}${url.search}${url.hash}`;
 }

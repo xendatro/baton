@@ -234,6 +234,17 @@
   .ProseMirror.markdown .mention {
     @apply rounded-sm bg-primary/10 px-0.5 font-medium text-primary dark:text-indigo-300;
   }
+  /* Markdown the editor keeps verbatim (raw HTML, footnotes): shown as source. */
+  .ProseMirror.markdown .raw-markdown {
+    @apply rounded-sm bg-muted px-1 font-mono text-[0.85em] text-muted-foreground;
+  }
+  .ProseMirror.markdown .raw-markdown-block {
+    @apply font-mono text-xs whitespace-pre-wrap text-muted-foreground;
+  }
+  .ProseMirror.markdown .raw-markdown.ProseMirror-selectednode,
+  .ProseMirror.markdown .raw-markdown-block.ProseMirror-selectednode {
+    @apply ring-2 ring-ring;
+  }
   .ProseMirror.markdown img.ProseMirror-selectednode {
     @apply ring-2 ring-ring;
   }

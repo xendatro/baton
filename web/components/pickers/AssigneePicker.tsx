@@ -89,7 +89,8 @@ export function AssigneePicker({
             return (
               <CommandItem
                 key={user.id}
-                value={`user ${user.name} ${user.username} ${user.id}`}
+                value={`user.${user.id}`}
+                keywords={[user.name, user.username]}
                 onSelect={() => onChange({ ...value, userIds: toggle(value.userIds, user.id) })}
               >
                 <CheckBox checked={checked} />
@@ -115,7 +116,8 @@ export function AssigneePicker({
             return (
               <CommandItem
                 key={role.id}
-                value={`role ${role.name} ${role.slug} ${role.id}`}
+                value={`role.${role.id}`}
+                keywords={[role.name, role.slug]}
                 onSelect={() => onChange({ ...value, roleIds: toggle(value.roleIds, role.id) })}
               >
                 <CheckBox checked={checked} />

@@ -77,6 +77,14 @@ describe('safeNext', () => {
     expect(safeNext('https://evil.example')).toBe('/');
     expect(safeNext('/login?next=/x')).toBe('/');
     expect(safeNext(null)).toBe('/');
+    // Regression (WEB-5): URL parsers strip tabs and newlines, so these used to reach the
+    // router as external URLs and crash the page.
+    for (const value of ['/\t/evil.example', '/\n/evil.example', '/\r/evil.example', '/ /x']) {
+      expect(safeNext(value)).toBe('/');
+    }
+    expect(safeNext(decodeURIComponent('%2F%09%2Fevil.example'))).toBe('/');
+    expect(safeNext('/%5Cevil.example')).toBe('/%5Cevil.example');
+    expect(safeNext('/t/acme/p/API/tasks?view=list#top')).toBe('/t/acme/p/API/tasks?view=list#top');
   });
 });
 

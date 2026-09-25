@@ -36,6 +36,11 @@ export const queryKeys = {
       q === undefined
         ? (['teams', teamId, 'mentionables'] as const)
         : (['teams', teamId, 'mentionables', q] as const),
+    /** Exact lookup of the mentions in a body (`names`: a stable string of them). */
+    mentionLookup: (teamId: string, names?: string) =>
+      names === undefined
+        ? (['teams', teamId, 'mentionables', 'lookup'] as const)
+        : (['teams', teamId, 'mentionables', 'lookup', names] as const),
     /** Without `params`: prefix of every audit-log query of the team. */
     auditLog: (teamId: string, params?: KeyParams) =>
       params === undefined

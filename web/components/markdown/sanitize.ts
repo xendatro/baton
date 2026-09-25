@@ -3,9 +3,14 @@ import { defaultSchema } from 'rehype-sanitize';
 
 type HastSchema = NonNullable<Parameters<typeof rehypeSanitize>[0]>;
 
-/** GitHub-style sanitization plus the mention spans produced by `remarkMentions`. */
+/**
+ * GitHub-style sanitization plus the mention spans produced by `remarkMentions`. No clobber
+ * prefix: raw HTML never renders, so the only ids are the footnote ids remark-rehype already
+ * prefixes with `user-content-` (with a second prefix, footnote links pointed nowhere).
+ */
 export const sanitizeSchema: HastSchema = {
   ...defaultSchema,
+  clobberPrefix: '',
   tagNames: [...(defaultSchema.tagNames ?? []), 'span'],
   attributes: {
     ...defaultSchema.attributes,

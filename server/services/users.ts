@@ -133,6 +133,9 @@ export function listMentionables(
 ): MentionablesResponse {
   const { orm } = deps.db;
   const membership = requireMember(orm, actor, teamId);
+  if (query.usernames !== undefined || query.roles !== undefined) {
+    return lookupMentionables(orm, teamId, query.usernames ?? [], query.roles ?? []);
+  }
   const q = (query.q ?? '').trim().toLowerCase().slice(0, LIMITS.username.max);
 
   const users = orm
@@ -159,12 +162,48 @@ export function listMentionables(
     .filter((role) => !q || role.slug.includes(q) || role.name.toLowerCase().includes(q))
     .sort((a, b) => b.position - a.position)
     .slice(0, MENTIONABLE_LIMIT)
-    .map((role): RoleSummary => ({
-      id: role.id,
-      slug: role.slug,
-      name: role.name,
-      color: role.color,
-    }));
+    .map(toRoleSummary);
 
+  return { users: users.map(toUserSummary), roles };
+}
+
+function toRoleSummary(role: typeof s.role.$inferSelect): RoleSummary {
+  return { id: role.id, slug: role.slug, name: role.name, color: role.color };
+}
+
+/**
+ * The members and roles named in a body, so mention chips can show names, hover cards and role
+ * colors however large the team is. Every member can see every role, so roles are not filtered
+ * by mentionability here.
+ */
+function lookupMentionables(
+  db: DbExecutor,
+  teamId: string,
+  usernames: readonly string[],
+  roleSlugs: readonly string[],
+): MentionablesResponse {
+  const users = usernames.length
+    ? db
+        .select({
+          id: s.user.id,
+          username: s.user.username,
+          name: s.user.name,
+          image: s.user.image,
+        })
+        .from(s.teamMember)
+        .innerJoin(s.user, eq(s.user.id, s.teamMember.userId))
+        .where(and(eq(s.teamMember.teamId, teamId), inArray(s.user.username, [...usernames])))
+        .orderBy(asc(s.user.username))
+        .all()
+    : [];
+  const roles = roleSlugs.length
+    ? db
+        .select()
+        .from(s.role)
+        .where(and(eq(s.role.teamId, teamId), inArray(s.role.slug, [...roleSlugs])))
+        .all()
+        .sort((a, b) => b.position - a.position)
+        .map(toRoleSummary)
+    : [];
   return { users: users.map(toUserSummary), roles };
 }

@@ -227,6 +227,19 @@ describe('GET /api/me and mentionables', () => {
     expect((await get('bo')).users.map((u) => u.username)).toEqual(['boss']);
     expect((await get('%25')).users).toEqual([]);
 
+    // Regression (WEB-14): chips resolved against the first 20 candidates only. A lookup names
+    // them exactly, including roles the caller may not mention.
+    const lookup = mentionablesResponseSchema.parse(
+      await (
+        await ctx.app.request(
+          `/api/teams/${acme.team.id}/mentionables?usernames=Boss,nobody&roles=hidden,devs`,
+          { headers: bearer(key) },
+        )
+      ).json(),
+    );
+    expect(lookup.users.map((u) => u.username)).toEqual(['boss']);
+    expect(lookup.roles.map((r) => r.slug).sort()).toEqual(['devs', 'hidden']);
+
     const ownerKey = createApiKey(ctx.db, { userId: owner.id }).key;
     const asOwner = await get('', ownerKey);
     expect(asOwner.roles.map((r) => r.slug).sort()).toEqual([

@@ -78,6 +78,19 @@ function isAuthPath(path: string): boolean {
   return path === '/api/auth' || path.startsWith('/api/auth/');
 }
 
+/**
+ * Better Auth endpoints that only read, although they are POSTs: the sign-up and onboarding forms
+ * check username availability as the user types, which must not use up the 10/min/IP budget for
+ * signing up and in. Better Auth's own limit (100/min/IP) still applies to them.
+ */
+const AUTH_READ_PATHS: ReadonlySet<string> = new Set(['/api/auth/is-username-available']);
+
+/** The per-IP auth limit, skipping the read-only endpoints above. */
+function authRateLimit(): MiddlewareHandler<AppEnv> {
+  const limit = rateLimit({ name: 'auth', key: byClientIp, writesOnly: true });
+  return (c, next) => (AUTH_READ_PATHS.has(c.req.path) ? next() : limit(c, next));
+}
+
 function exceptAuth(middleware: MiddlewareHandler<AppEnv>): MiddlewareHandler<AppEnv> {
   return (c, next) => (isAuthPath(c.req.path) ? next() : middleware(c, next));
 }
@@ -88,7 +101,7 @@ function exceptAuth(middleware: MiddlewareHandler<AppEnv>): MiddlewareHandler<Ap
  * username guards), enforces CSRF for cookie requests and rate limits writes per user.
  */
 export function mountApiRoutes(api: Hono<AppEnv>): void {
-  api.use('/auth/*', rateLimit({ name: 'auth', key: byClientIp, writesOnly: true }));
+  api.use('/auth/*', authRateLimit());
   api.use('*', exceptAuth(actorMiddleware()));
   api.use('*', exceptAuth(csrfMiddleware()));
   api.use('*', exceptAuth(rateLimit({ name: 'writes', key: byUser, writesOnly: true })));

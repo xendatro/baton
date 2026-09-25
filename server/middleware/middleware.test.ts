@@ -179,13 +179,28 @@ describe('rate limits', () => {
     const statuses: number[] = [];
     for (let i = 0; i <= RATE_LIMITS.authPerIp; i += 1) {
       const res = await ctx.app.request(
-        '/api/auth/is-username-available',
-        json('POST', { username: `name${i}` }, { Origin: ctx.env.baseUrl }),
+        '/api/auth/sign-out',
+        json('POST', {}, { Origin: ctx.env.baseUrl }),
       );
       statuses.push(res.status);
     }
     expect(statuses.slice(0, RATE_LIMITS.authPerIp).every((status) => status !== 429)).toBe(true);
     expect(statuses.at(-1)).toBe(429);
+  });
+
+  it('does not count username availability checks against the auth limit', async () => {
+    for (let i = 0; i <= RATE_LIMITS.authPerIp; i += 1) {
+      const res = await ctx.app.request(
+        '/api/auth/is-username-available',
+        json('POST', { username: `name${i}` }, { Origin: ctx.env.baseUrl }),
+      );
+      expect(res.status).toBe(200);
+    }
+    const signOut = await ctx.app.request(
+      '/api/auth/sign-out',
+      json('POST', {}, { Origin: ctx.env.baseUrl }),
+    );
+    expect(signOut.status).not.toBe(429);
   });
 });
 

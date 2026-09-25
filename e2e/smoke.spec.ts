@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from './support/fixtures.ts';
 
 test('health endpoint reports ok', async ({ request }) => {
   const response = await request.get('/healthz');
@@ -20,8 +20,8 @@ test('SPA serves the login page without CSP or console errors', async ({ page })
 });
 
 test('signed-out visitors are sent to the login page with a return path', async ({ page }) => {
-  await page.goto('/settings');
-  await expect(page).toHaveURL(/\/login\?next=%2Fsettings%2Fprofile$/);
+  await page.goto('/settings/api-keys');
+  await expect(page).toHaveURL(/\/login\?next=%2Fsettings%2Fapi-keys$/);
   await expect(page.getByRole('heading', { name: 'Log in to Baton' })).toBeVisible();
 });
 

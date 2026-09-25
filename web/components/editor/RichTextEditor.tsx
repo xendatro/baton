@@ -4,7 +4,11 @@ import { EditorContent, useEditor } from '@tiptap/react';
 import { useEffect, useImperativeHandle, useMemo, useRef, type Ref } from 'react';
 import { toast } from 'sonner';
 import type { Attachment } from '@shared/schemas/core';
-import { isInlineImage, uploadAttachment } from '@web/components/attachments/upload';
+import {
+  INLINE_IMAGE_TYPES,
+  isInlineImage,
+  uploadAttachment,
+} from '@web/components/attachments/upload';
 import { errorMessage } from '@web/lib/api';
 import { useConfig } from '@web/lib/auth';
 import { cn } from '@web/lib/utils';
@@ -238,7 +242,7 @@ export function RichTextEditor({
         <input
           ref={fileInput}
           type="file"
-          accept="image/png,image/jpeg,image/gif,image/webp,image/avif"
+          accept={[...INLINE_IMAGE_TYPES].join(',')}
           multiple
           hidden
           tabIndex={-1}

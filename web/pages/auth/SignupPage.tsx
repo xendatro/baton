@@ -10,7 +10,7 @@ import {
 import { fieldErrors } from '@web/lib/forms';
 import { AuthLayout } from '@web/components/auth/AuthLayout';
 import { FormError, FormField } from '@web/components/auth/FormField';
-import { sendVerificationCode } from '@web/components/auth/otp';
+import { markCodeSent } from '@web/components/auth/otp';
 import { PasswordInput } from '@web/components/auth/PasswordInput';
 import { PasswordStrengthMeter } from '@web/components/auth/PasswordStrengthMeter';
 import { SocialButtons } from '@web/components/auth/SocialButtons';
@@ -66,11 +66,8 @@ function SignupForm() {
     const { name, username, email, password } = parsed.data;
     try {
       unwrapAuth(await authClient.signUp.email({ name, username, email, password }));
-      try {
-        await sendVerificationCode(email);
-      } catch {
-        // The verify page offers a resend.
-      }
+      // The server emails the first code as part of sign-up; start the resend cooldown for it.
+      markCodeSent('email-verification', email);
       await navigate(
         `/verify-email?email=${encodeURIComponent(email)}&next=${encodeURIComponent(next)}`,
         { replace: true },

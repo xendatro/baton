@@ -3,13 +3,12 @@ import { attachmentSchema, type Attachment } from '@shared/schemas/core';
 import { ApiError, uploadFile } from '@web/lib/api';
 import { formatBytes } from '@web/lib/format';
 
-/** Raster image types the server renders inline (never SVG). */
-const INLINE_IMAGE_TYPES = new Set([
+/** Raster image types the server serves inline (docs/API.md: PNG, JPEG, GIF, WebP; never SVG). */
+export const INLINE_IMAGE_TYPES: ReadonlySet<string> = new Set([
   'image/png',
   'image/jpeg',
   'image/gif',
   'image/webp',
-  'image/avif',
 ]);
 
 export function isInlineImage(file: { type: string }): boolean {

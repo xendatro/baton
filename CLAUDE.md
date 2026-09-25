@@ -169,4 +169,8 @@ Add a `JobDefinition` (`{ name, schedule, run(deps) }`) to your module's list in
   `createProject` (seeds Open/Done), `createApiKey`) plus `bearer(key)` and `json(method, body)`
   cover most setup.
 - Web: Vitest with happy-dom and Testing Library (`*.test.tsx` under `web/`).
-- E2E: Playwright specs in `e2e/`.
+- E2E: Playwright specs in `e2e/` run the production build (`npx playwright install chromium`
+  once). Import `test`/`expect` from `e2e/support/fixtures.ts` (a unique client IP per test, so auth
+  rate limits don't collide), and use its helpers: `newUser()`, `createVerifiedUser(request)`,
+  `signedInUser(page)`, `readCode(email, kind)` (codes from `DATA_DIR/mailbox/`),
+  `typeCode(page, code)` and `withDatabase(fn)` for states the API can't produce.

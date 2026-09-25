@@ -16,8 +16,13 @@ function renderAt(path: string) {
   return router;
 }
 
-/** Lazy route modules are transformed on first import, which can be slow in a cold run. */
+/**
+ * Lazy route modules are transformed on first import, which can be slow in a cold run (right after
+ * `npm ci`, or with every other test file competing for the CPU). The test timeout must outlast the
+ * `findBy*` timeout, or a slow first import fails the test at the default 5 s.
+ */
 const LAZY = { timeout: 15_000 };
+const LAZY_TEST = { timeout: 20_000 };
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -60,7 +65,7 @@ const SPEC_PATHS = [
   '/settings/security',
 ];
 
-describe('router', () => {
+describe('router', LAZY_TEST, () => {
   it.each(SPEC_PATHS)('declares %s', (path) => {
     const matches = matchRoutes(routes, path);
     expect(matches, path).not.toBeNull();

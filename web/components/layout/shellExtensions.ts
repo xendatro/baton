@@ -16,4 +16,6 @@ export const shellExtensions: ReadonlyArray<LazyExoticComponent<ComponentType>> 
   lazy(() => import('@web/pages/projects/NewProjectDialog')),
   // admin: full-text search in the command palette
   lazy(() => import('@web/pages/admin/PaletteSearch')),
+  // account: saves theme changes to the profile, settings palette commands
+  lazy(() => import('@web/pages/settings/AccountShellExtension')),
 ];

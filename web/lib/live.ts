@@ -110,6 +110,10 @@ export const LIVE_INVALIDATIONS: Readonly<Record<LiveEventType, Invalidation>> =
     ...parentKey(e, queryKeys.activity),
     ...teamKeys(e, (teamId) => queryKeys.teams.auditLog(teamId)),
     queryKeys.work.dashboard(),
+    // Account-level rows (team null) are the user's security log: sign-ins, sessions, keys.
+    ...(e.teamId === null
+      ? [queryKeys.account.securityLog(), queryKeys.account.sessions(), queryKeys.apiKeys()]
+      : []),
   ],
   'notification.created': () => [queryKeys.notifications.all()],
   'me.updated': () => [queryKeys.me(), queryKeys.account.all()],

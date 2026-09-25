@@ -1,11 +1,12 @@
-import type { QueryClient, QueryKey } from '@tanstack/react-query';
-import type { LiveEvent, LiveEventType } from '@shared/events';
+import { useQueryClient, type QueryClient, type QueryKey } from '@tanstack/react-query';
+import { useEffect, useRef, useState } from 'react';
+import { liveEventSchema, type LiveEvent, type LiveEventType } from '@shared/events';
 import { queryKeys } from './queryKeys';
 
 /**
  * Live event → query invalidation map (SPEC §5). Every event type must be listed (the Record type
  * enforces it). Invalidation matches by key prefix, so broad keys refresh everything below them.
- * The SSE connection that feeds `invalidateForEvent` lives with the app shell.
+ * `connectLiveEvents` / `useLiveEvents` (below) hold the SSE connection that feeds it.
  */
 export type Invalidation = (event: LiveEvent) => QueryKey[];
 
@@ -124,4 +125,140 @@ export async function invalidateForEvent(
       queryClient.invalidateQueries({ queryKey }),
     ),
   );
+}
+
+// ---------------------------------------------------------------------------------------------
+// SSE connection (`GET /api/events`)
+// ---------------------------------------------------------------------------------------------
+
+/** `EventSource.CLOSED`, spelled out so fakes in tests need no global. */
+const EVENT_SOURCE_CLOSED = 2;
+
+export type LiveEventListener = (event: LiveEvent) => void;
+export type LiveConnectionState = 'connecting' | 'open' | 'reconnecting';
+
+const eventListeners = new Set<LiveEventListener>();
+
+/** Listens to every live event (after its invalidations are queued). Returns the unsubscribe. */
+export function subscribeLiveEvents(listener: LiveEventListener): () => void {
+  eventListeners.add(listener);
+  return () => {
+    eventListeners.delete(listener);
+  };
+}
+
+/** `subscribeLiveEvents` for the lifetime of a component; the latest `listener` is always used. */
+export function useLiveEventListener(listener: LiveEventListener): void {
+  const latest = useRef(listener);
+  useEffect(() => {
+    latest.current = listener;
+  });
+  useEffect(() => subscribeLiveEvents((event) => latest.current(event)), []);
+}
+
+/** Reconnect delays: 1 s doubling to 30 s, with ±20 % jitter so clients don't reconnect in step. */
+export function reconnectDelay(attempt: number, random: () => number = Math.random): number {
+  const base = Math.min(30_000, 1_000 * 2 ** Math.max(0, attempt));
+  return Math.round(base * (0.8 + random() * 0.4));
+}
+
+export interface LiveConnectionOptions {
+  queryClient: QueryClient;
+  url?: string;
+  /** Test seam: the EventSource constructor. */
+  createEventSource?: (url: string) => EventSource;
+  onStateChange?: (state: LiveConnectionState) => void;
+}
+
+/**
+ * Opens one EventSource and keeps it open: every message is validated, mapped to query
+ * invalidations and handed to the listeners. When the browser gives up on the stream (HTTP errors
+ * close it for good) it reconnects with backoff. After a reconnect every query is invalidated,
+ * since events may have been missed while offline. Returns the close function.
+ */
+export function connectLiveEvents(options: LiveConnectionOptions): () => void {
+  const {
+    queryClient,
+    url = '/api/events',
+    createEventSource = (target) => new EventSource(target, { withCredentials: true }),
+    onStateChange,
+  } = options;
+  let source: EventSource | null = null;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  let attempt = 0;
+  let hasConnected = false;
+  let closed = false;
+
+  const setState = (state: LiveConnectionState) => onStateChange?.(state);
+
+  const handleMessage = (message: MessageEvent<unknown>) => {
+    if (typeof message.data !== 'string') return;
+    let payload: unknown;
+    try {
+      payload = JSON.parse(message.data);
+    } catch {
+      return;
+    }
+    const parsed = liveEventSchema.safeParse(payload);
+    if (!parsed.success) return;
+    void invalidateForEvent(queryClient, parsed.data);
+    for (const listener of eventListeners) listener(parsed.data);
+  };
+
+  const scheduleReconnect = () => {
+    if (closed || timer !== null) return;
+    setState('reconnecting');
+    timer = setTimeout(() => {
+      timer = null;
+      open();
+    }, reconnectDelay(attempt));
+    attempt += 1;
+  };
+
+  function open() {
+    if (closed) return;
+    setState(hasConnected ? 'reconnecting' : 'connecting');
+    const current = createEventSource(url);
+    source = current;
+    current.onopen = () => {
+      attempt = 0;
+      setState('open');
+      if (hasConnected) void queryClient.invalidateQueries();
+      hasConnected = true;
+    };
+    current.onmessage = handleMessage;
+    current.onerror = () => {
+      // CONNECTING: the browser is retrying on its own (network blip). CLOSED: it gave up.
+      if (current.readyState === EVENT_SOURCE_CLOSED) {
+        current.close();
+        if (source === current) source = null;
+        scheduleReconnect();
+      } else {
+        setState('reconnecting');
+      }
+    };
+  }
+
+  open();
+
+  return () => {
+    closed = true;
+    if (timer !== null) clearTimeout(timer);
+    source?.close();
+    source = null;
+  };
+}
+
+/**
+ * Keeps one live connection open while `enabled` (the app shell mounts this once, for signed-in
+ * users). Returns the connection state for an offline indicator.
+ */
+export function useLiveEvents(enabled = true): LiveConnectionState {
+  const queryClient = useQueryClient();
+  const [state, setState] = useState<LiveConnectionState>('connecting');
+  useEffect(() => {
+    if (!enabled) return;
+    return connectLiveEvents({ queryClient, onStateChange: setState });
+  }, [enabled, queryClient]);
+  return state;
 }

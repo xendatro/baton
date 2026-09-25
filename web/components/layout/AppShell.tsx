@@ -1,5 +1,111 @@
-import { Outlet } from 'react-router';
+import { Suspense, useState } from 'react';
+import { Outlet, useLocation, useNavigate } from 'react-router';
+import { ErrorBoundary } from '@web/components/common/ErrorBoundary';
+import { CommandPalette } from '@web/components/palette/CommandPalette';
+import { setPaletteOpen, usePaletteOpen } from '@web/components/palette/registry';
+import { SidebarInset, SidebarProvider } from '@web/components/ui/sidebar';
+import { useMe } from '@web/lib/auth';
+import { setShortcutsHelpOpen, useHotkey } from '@web/lib/hotkeys';
+import { useLiveEvents } from '@web/lib/live';
+import { useRouteContext } from '@web/lib/routeContext';
+import { useSyncProfileTheme } from '@web/lib/theme';
+import { useDocumentTitle } from '@web/lib/title';
+import { AppHeader } from './AppHeader';
+import { AppSidebar } from './AppSidebar';
+import { buildCrumbs, titleParts } from './breadcrumbs';
+import { RequireAuth, RequireOnboarded } from './guards';
+import { shellExtensions } from './shellExtensions';
+import { ShortcutsDialog } from './ShortcutsDialog';
+import { useLiveNotificationToasts } from './useLiveNotificationToasts';
 
+function sidebarInitiallyOpen(): boolean {
+  return !document.cookie.split('; ').includes('sidebar_state=false');
+}
+
+/** Shell-wide shortcuts (SPEC §1.9). Pages add their own with `useHotkey`. */
+function useGlobalHotkeys() {
+  const navigate = useNavigate();
+  const paletteOpen = usePaletteOpen();
+  const { team, project } = useRouteContext();
+  const projectBase = team && project ? `/t/${team.slug}/p/${project.key}` : null;
+
+  useHotkey('mod+k', () => setPaletteOpen(!paletteOpen), {
+    description: 'Open the command palette',
+    allowInInputs: true,
+    allowInDialogs: true,
+  });
+  useHotkey('/', () => setPaletteOpen(true), { description: 'Search' });
+  useHotkey('?', () => setShortcutsHelpOpen(true), { description: 'Show keyboard shortcuts' });
+  useHotkey('g d', () => void navigate('/'), {
+    description: 'Go to dashboard',
+    group: 'Navigation',
+  });
+  useHotkey('g i', () => void navigate('/inbox'), {
+    description: 'Go to inbox',
+    group: 'Navigation',
+  });
+  useHotkey('g m', () => void navigate('/my-tasks'), {
+    description: 'Go to my tasks',
+    group: 'Navigation',
+  });
+  useHotkey('g b', () => void navigate(`${projectBase ?? ''}/tasks`), {
+    description: 'Go to the board',
+    group: 'Project',
+    enabled: projectBase !== null,
+  });
+  useHotkey('g l', () => void navigate(`${projectBase ?? ''}/issues`), {
+    description: 'Go to issues',
+    group: 'Project',
+    enabled: projectBase !== null,
+  });
+}
+
+function Shell() {
+  const location = useLocation();
+  const me = useMe().data;
+  const connection = useLiveEvents(true);
+  const crumbs = buildCrumbs(location.pathname, me);
+  useDocumentTitle(titleParts(crumbs, location.pathname), 0);
+  useSyncProfileTheme(me?.user.theme);
+  useLiveNotificationToasts(me?.user.id);
+  useGlobalHotkeys();
+  const [sidebarOpen] = useState(sidebarInitiallyOpen);
+
+  return (
+    <SidebarProvider defaultOpen={sidebarOpen}>
+      <a
+        href="#main"
+        className="sr-only z-50 rounded-md bg-background px-3 py-2 focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:ring-2 focus:ring-ring"
+      >
+        Skip to content
+      </a>
+      <AppSidebar />
+      <SidebarInset className="min-w-0">
+        <AppHeader crumbs={crumbs} connection={connection} />
+        <div id="main" className="flex min-w-0 flex-1 flex-col" tabIndex={-1}>
+          <ErrorBoundary resetKey={location.pathname}>
+            <Outlet />
+          </ErrorBoundary>
+        </div>
+      </SidebarInset>
+      <CommandPalette />
+      <ShortcutsDialog />
+      <Suspense fallback={null}>
+        {shellExtensions.map((Extension, index) => (
+          <Extension key={index} />
+        ))}
+      </Suspense>
+    </SidebarProvider>
+  );
+}
+
+/** The signed-in app: guards, sidebar, header, palette, shortcuts and the live connection. */
 export default function AppShell() {
-  return <Outlet />;
+  return (
+    <RequireAuth>
+      <RequireOnboarded>
+        <Shell />
+      </RequireOnboarded>
+    </RequireAuth>
+  );
 }

@@ -12,6 +12,9 @@ export type KeyParams = Readonly<
 
 export const queryKeys = {
   config: () => ['config'] as const,
+  /** Better Auth session (`GET /api/auth/get-session`); null when signed out. */
+  session: () => ['session'] as const,
+  usernameAvailable: (username: string) => ['auth', 'username-available', username] as const,
   me: () => ['me'] as const,
   apiKeys: () => ['me', 'api-keys'] as const,
 

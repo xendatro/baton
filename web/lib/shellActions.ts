@@ -15,6 +15,8 @@ import { useEffect, useRef, useSyncExternalStore } from 'react';
 export interface ShellActionPayloads {
   /** Open the "create a team" flow. */
   'team.create': undefined;
+  /** Open the "New project" dialog, in `teamId` (or with a team picker when it is omitted). */
+  'project.create': { teamId?: string };
 }
 
 export type ShellAction = keyof ShellActionPayloads;

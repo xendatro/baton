@@ -31,6 +31,12 @@ export const queryKeys = {
     roles: (teamId: string) => ['teams', teamId, 'roles'] as const,
     invites: (teamId: string) => ['teams', teamId, 'invites'] as const,
     projects: (teamId: string) => ['teams', teamId, 'projects'] as const,
+    /** Is a project key free in the team (new project, or `projectId` changing its key)? */
+    projectKeyCheck: (teamId: string, key: string, projectId?: string) =>
+      ['teams', teamId, 'projects', 'key-check', key, projectId ?? null] as const,
+    /** A project key of the team, possibly a previous one (old URLs redirect). */
+    projectByKey: (teamId: string, key: string) =>
+      ['teams', teamId, 'projects', 'by-key', key] as const,
     /** Without `q`: prefix of every mentionables query of the team. */
     mentionables: (teamId: string, q?: string) =>
       q === undefined

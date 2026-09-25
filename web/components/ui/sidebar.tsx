@@ -5,6 +5,7 @@ import { PanelLeftIcon } from 'lucide-react';
 import { Slot } from 'radix-ui';
 
 import { useIsMobile } from '@web/hooks/use-mobile';
+import { isTypingTarget } from '@web/lib/hotkeys';
 import { Button } from '@web/components/ui/button';
 import { Input } from '@web/components/ui/input';
 import { Separator } from '@web/components/ui/separator';
@@ -94,6 +95,8 @@ function SidebarProvider({
   // Adds a keyboard shortcut to toggle the sidebar.
   React.useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
+      // Ctrl/Cmd+B is bold in text fields and the editor.
+      if (isTypingTarget(event.target)) return;
       if (event.key === SIDEBAR_KEYBOARD_SHORTCUT && (event.metaKey || event.ctrlKey)) {
         event.preventDefault();
         toggleSidebar();

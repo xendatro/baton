@@ -1,5 +1,6 @@
 import type { ComponentType } from 'react';
 import { createBrowserRouter, Navigate, type RouteObject } from 'react-router';
+import { LoadingScreen } from './components/common/Spinner';
 
 /**
  * Every route of the app (SPEC §6). Pages are code-split: each route lazily imports one page
@@ -9,8 +10,12 @@ import { createBrowserRouter, Navigate, type RouteObject } from 'react-router';
 type PageModule = { default: ComponentType };
 
 /** Lazily loaded route component. */
-function page(load: () => Promise<PageModule>): Pick<RouteObject, 'lazy'> {
-  return { lazy: async () => ({ Component: (await load()).default }) };
+function page(load: () => Promise<PageModule>): Pick<RouteObject, 'lazy' | 'HydrateFallback'> {
+  return {
+    lazy: async () => ({ Component: (await load()).default }),
+    // Shown while the first page's module loads.
+    HydrateFallback: LoadingScreen,
+  };
 }
 
 /** Index route that redirects to a sibling path (e.g. /settings → /settings/profile). */
@@ -18,7 +23,14 @@ function redirectTo(to: string): RouteObject {
   return { index: true, element: <Navigate to={to} replace /> };
 }
 
+/** Development-only pages; `import.meta.env.DEV` is false in production builds, so they are dropped. */
+const devRoutes: RouteObject[] = import.meta.env.DEV
+  ? [{ path: '/__dev/components', ...page(() => import('./pages/dev/ComponentsPage')) }]
+  : [];
+
 export const routes: RouteObject[] = [
+  ...devRoutes,
+
   // --- Auth (core) — no app shell --------------------------------------------------------
   { path: '/login', ...page(() => import('./pages/auth/LoginPage')) },
   { path: '/signup', ...page(() => import('./pages/auth/SignupPage')) },

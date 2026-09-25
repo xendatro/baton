@@ -124,3 +124,162 @@
     font-feature-settings: 'cv11', 'ss01';
   }
 }
+
+/*
+ * Rendered and editable markdown (MarkdownView and the Tiptap editor share `.markdown`), compact
+ * GitHub-like typography without a typography plugin.
+ */
+@layer components {
+  .markdown {
+    @apply text-sm leading-relaxed break-words text-foreground;
+  }
+  .markdown > * + * {
+    @apply mt-3;
+  }
+  .markdown h1 {
+    @apply mt-6 text-xl font-semibold tracking-tight first:mt-0;
+  }
+  .markdown h2 {
+    @apply mt-5 text-lg font-semibold tracking-tight first:mt-0;
+  }
+  .markdown h3 {
+    @apply mt-4 text-base font-semibold first:mt-0;
+  }
+  .markdown h4 {
+    @apply mt-4 text-sm font-semibold first:mt-0;
+  }
+  .markdown a {
+    @apply font-medium text-primary underline decoration-primary/40 underline-offset-2 hover:decoration-primary;
+  }
+  .markdown strong {
+    @apply font-semibold;
+  }
+  .markdown ul {
+    @apply list-disc pl-6;
+  }
+  .markdown ol {
+    @apply list-decimal pl-6;
+  }
+  .markdown li + li,
+  .markdown li > ul,
+  .markdown li > ol {
+    @apply mt-1;
+  }
+  .markdown li > p {
+    @apply m-0;
+  }
+  .markdown blockquote {
+    @apply border-l-2 border-border pl-3 text-muted-foreground;
+  }
+  .markdown hr {
+    @apply my-5 border-border;
+  }
+  .markdown :not(pre) > code {
+    @apply rounded bg-muted px-1 py-0.5 font-mono text-[0.85em];
+  }
+  .markdown pre {
+    @apply overflow-x-auto rounded-md border bg-muted/60 p-3 font-mono text-[0.8rem] leading-normal;
+  }
+  .markdown pre code {
+    @apply bg-transparent p-0;
+  }
+  .markdown .table-wrapper,
+  .markdown .tableWrapper {
+    @apply max-w-full overflow-x-auto;
+  }
+  .markdown table {
+    @apply w-full border-collapse text-sm;
+  }
+  .markdown th,
+  .markdown td {
+    @apply border px-2.5 py-1.5 text-left align-top;
+  }
+  .markdown th {
+    @apply bg-muted/60 font-semibold;
+  }
+  .markdown img {
+    @apply max-h-96 max-w-full rounded-md border;
+  }
+
+  /* GFM task lists (MarkdownView) and Tiptap task lists (editor). */
+  .markdown ul.contains-task-list,
+  .markdown ul[data-type='taskList'] {
+    @apply list-none pl-1;
+  }
+  .markdown .task-list-item {
+    @apply flex items-start gap-2;
+  }
+  .markdown .task-checkbox,
+  .markdown ul[data-type='taskList'] input[type='checkbox'] {
+    @apply mt-[0.3em] size-3.5 shrink-0 accent-primary;
+  }
+  .markdown ul[data-type='taskList'] li {
+    @apply flex items-start gap-2;
+  }
+  .markdown ul[data-type='taskList'] li > label {
+    @apply flex shrink-0 select-none;
+  }
+  .markdown ul[data-type='taskList'] li > div {
+    @apply min-w-0 flex-1;
+  }
+  .markdown ul[data-type='taskList'] li[data-checked='true'] > div {
+    @apply text-muted-foreground line-through;
+  }
+
+  /* Editor-only details. */
+  .ProseMirror.markdown p.is-editor-empty:first-child::before {
+    content: attr(data-placeholder);
+    @apply pointer-events-none float-left h-0 text-muted-foreground;
+  }
+  .ProseMirror.markdown .mention {
+    @apply rounded-sm bg-primary/10 px-0.5 font-medium text-primary;
+  }
+  .ProseMirror.markdown img.ProseMirror-selectednode {
+    @apply ring-2 ring-ring;
+  }
+  .ProseMirror.markdown .selectedCell {
+    @apply bg-primary/10;
+  }
+  .ProseMirror.markdown .suggestion {
+    @apply rounded-sm bg-accent;
+  }
+
+  /* highlight.js tokens (GitHub-like), for both themes. */
+  .markdown .hljs-comment,
+  .markdown .hljs-quote {
+    @apply text-zinc-500 italic dark:text-zinc-400;
+  }
+  .markdown .hljs-keyword,
+  .markdown .hljs-selector-tag,
+  .markdown .hljs-built_in,
+  .markdown .hljs-doctag {
+    @apply text-rose-600 dark:text-rose-400;
+  }
+  .markdown .hljs-string,
+  .markdown .hljs-regexp,
+  .markdown .hljs-addition,
+  .markdown .hljs-template-variable {
+    @apply text-emerald-700 dark:text-emerald-400;
+  }
+  .markdown .hljs-number,
+  .markdown .hljs-literal,
+  .markdown .hljs-variable,
+  .markdown .hljs-attr,
+  .markdown .hljs-attribute {
+    @apply text-sky-700 dark:text-sky-400;
+  }
+  .markdown .hljs-title,
+  .markdown .hljs-section,
+  .markdown .hljs-name,
+  .markdown .hljs-type {
+    @apply text-violet-700 dark:text-violet-400;
+  }
+  .markdown .hljs-meta,
+  .markdown .hljs-symbol,
+  .markdown .hljs-bullet {
+    @apply text-amber-700 dark:text-amber-400;
+  }
+  .markdown .hljs-deletion {
+    @apply text-red-600 dark:text-red-400;
+  }
+}

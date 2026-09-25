@@ -1,0 +1,12 @@
+import type { ComponentType, LazyExoticComponent } from 'react';
+
+/**
+ * Components that feature modules mount inside the app shell (registration file, like
+ * web/router.tsx). Use it for app-wide dialogs and handlers, for example the teams module's
+ * "New team" dialog, which registers `useShellActionHandler('team.create', …)` (web/lib/shellActions.ts),
+ * or the account module's `useThemePersister` (web/lib/theme.ts). Each entry is lazily loaded and
+ * rendered once, for signed-in users, inside the router and query providers:
+ *
+ *   export const shellExtensions = [lazy(() => import('@web/pages/teams/NewTeamDialog'))];
+ */
+export const shellExtensions: ReadonlyArray<LazyExoticComponent<ComponentType>> = [];

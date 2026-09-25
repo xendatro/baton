@@ -1,4 +1,4 @@
-import { useCallback, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useRef, useSyncExternalStore } from 'react';
 import { THEMES, type Theme } from '@shared/constants';
 
 /**
@@ -36,8 +36,33 @@ function applyTheme(theme: Theme): void {
   root.style.colorScheme = resolved;
 }
 
-/** Persists and applies a theme, notifying every `useTheme` consumer. */
-export function setTheme(theme: Theme): void {
+/** Saves a theme choice to the user's profile. Registered by the account module. */
+export type ThemePersister = (theme: Theme) => void | Promise<void>;
+
+const persisters = new Set<ThemePersister>();
+
+/**
+ * Registers a callback that saves theme changes made through `setTheme` to the user's profile
+ * (the account module owns that endpoint). Returns the unregister function.
+ */
+export function registerThemePersister(persist: ThemePersister): () => void {
+  persisters.add(persist);
+  return () => {
+    persisters.delete(persist);
+  };
+}
+
+/** Hook form of `registerThemePersister`, active while the calling component is mounted. */
+export function useThemePersister(persist: ThemePersister): void {
+  const latest = useRef(persist);
+  useEffect(() => {
+    latest.current = persist;
+  });
+  useEffect(() => registerThemePersister((theme) => latest.current(theme)), []);
+}
+
+/** Stores and applies a theme locally, without saving it to the profile. */
+export function applyStoredTheme(theme: Theme): void {
   try {
     localStorage.setItem(THEME_STORAGE_KEY, theme);
   } catch {
@@ -45,6 +70,37 @@ export function setTheme(theme: Theme): void {
   }
   applyTheme(theme);
   for (const listener of listeners) listener();
+}
+
+/** Stores, applies and saves a theme to the profile, notifying every `useTheme` consumer. */
+export function setTheme(theme: Theme): void {
+  applyStoredTheme(theme);
+  for (const persist of persisters) void Promise.resolve(persist(theme)).catch(() => undefined);
+}
+
+function hasStoredTheme(): boolean {
+  try {
+    return localStorage.getItem(THEME_STORAGE_KEY) !== null;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Keeps the local theme in step with the profile: a device with no saved choice adopts the
+ * profile's theme, and later profile changes (made on another device) are applied here. The
+ * local choice otherwise wins, so a profile that is not saved yet never overrides it.
+ */
+export function useSyncProfileTheme(profileTheme: Theme | undefined): void {
+  const previous = useRef<Theme | undefined>(undefined);
+  useEffect(() => {
+    if (profileTheme === undefined) return;
+    const last = previous.current;
+    previous.current = profileTheme;
+    if (last === undefined ? !hasStoredTheme() : last !== profileTheme) {
+      if (getStoredTheme() !== profileTheme) applyStoredTheme(profileTheme);
+    }
+  }, [profileTheme]);
 }
 
 function subscribe(listener: () => void): () => void {

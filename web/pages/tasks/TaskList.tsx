@@ -1,8 +1,9 @@
-import { ArrowDownIcon, ArrowUpIcon, BanIcon, ChevronsUpDownIcon } from 'lucide-react';
+import { ArrowDownIcon, ArrowUpIcon, ChevronsUpDownIcon } from 'lucide-react';
 import { Fragment } from 'react';
 import { Link } from 'react-router';
 import type { Status } from '@shared/schemas/projects';
 import type { TaskCard, TaskSort } from '@shared/schemas/tasks';
+import { BlockedBadge } from '@web/components/common/BlockedBadge';
 import { ClaimBadge } from '@web/components/common/ClaimBadge';
 import { DueDate } from '@web/components/common/DueDate';
 import { LabelChip } from '@web/components/common/LabelChip';
@@ -177,15 +178,7 @@ function Row({ task }: { task: TaskCard }) {
           >
             {task.title}
           </Link>
-          {task.blocked ? (
-            <span
-              className="inline-flex items-center gap-1 text-xs font-medium text-red-600 dark:text-red-400"
-              title={task.blockers.length ? `Blocked by ${task.blockers.join(', ')}` : 'Blocked'}
-            >
-              <BanIcon className="size-3.5" aria-hidden="true" />
-              Blocked
-            </span>
-          ) : null}
+          {task.blocked ? <BlockedBadge blockers={task.blockers} /> : null}
           {task.labels.map((label) => (
             <LabelChip key={label.id} label={label} />
           ))}

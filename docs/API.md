@@ -82,7 +82,8 @@ search and the audit log use core services, but their routes belong to admin.
   `MAX_UPLOAD_MB` or beyond the team's `TEAM_STORAGE_QUOTA_MB` get `413 payload_too_large`. The stored
   type is sniffed from the content; the filename is sanitized. Without a parent the upload is
   `pending`: only the uploader can see it, and it must be claimed within 24 h by passing its id in
-  `attachmentIds` (replies) or the feature's equivalent, or it is purged. Uploading straight to a
+  `attachmentIds` (replies) or the feature's equivalent, or by linking it (`/api/attachments/<id>/…`)
+  from the saved text (issue and task bodies, READMEs, replies and reply edits), or it is purged. Uploading straight to a
   parent needs edit rights on it (author / `EDIT_ANY_CONTENT`; tasks also `UPDATE_TASKS`; projects
   `MANAGE_PROJECTS`). `parentType: 'user_avatar'` is rejected here (account settings handle avatars).
 - `GET /api/attachments/:id/:filename`: only PNG, JPEG, GIF and WebP whose bytes match are served
@@ -239,7 +240,7 @@ names), `issue.labels_changed` (`changes.labels` as names), `issue.resolved`, `i
 `lastActivityAt` (the default sort).
 
 Consumed from the tasks module: `POST /api/projects/:projectId/tasks/from-issue` `{ issueId }` → the
-created task (the issue page's "Create task" button reads its `number` and `ref`).
+created `Task` (the issue page's "Create task" button opens its `path`).
 
 MCP tools (issues): `list_issues` (project, state, labels by name, labelMatch, author by username, q,
 sort, limit, cursor), `get_issue` (with every reply, the linked tasks and the last 30 history
@@ -302,7 +303,7 @@ label names, usernames, role names or `@&slug`, `KEY#51` issues) and priorities 
 
 ### Work (My tasks, dashboard; work module)
 
-Schemas: `shared/schemas/work.ts`. `MyTask` = the task summary (`workTaskSchema`: `{ id, ref, number, title, projectId, teamId, status: { id, name, color, category }, priority (0 none … 4 urgent), dueDate, labels: [{ id, name, color }], assignees: { users: UserSummary[], roles: RoleSummary[] }, claim: { user, via: ViaKey | null, claimedAt, expiresAt } | null, blocked, replyCount, updatedAt }`) plus `{ team: { id, slug, name, icon, color }, project: { id, key, name, icon, color }, url, assignment: { direct, roles: RoleSummary[] } }` (why the task is mine). "Open" means an `open`-category status; deleted tasks, deleted projects and deleted teams never appear; `claim` is null once the lease has expired; `blocked` means a live blocker is still in an open-category status. Due-date logic uses `today` (the caller's calendar date, `YYYY-MM-DD`; default: the server's UTC date), since due dates carry no time zone.
+Schemas: `shared/schemas/work.ts`. `MyTask` = the tasks module's `TaskSummary` (`taskSummarySchema` in `shared/schemas/tasks.ts`, see Tasks above) plus `{ team: { id, slug, name, icon, color }, project: { id, key, name, icon, color }, url, assignment: { direct, roles: RoleSummary[] } }` (why the task is mine). "Open" means an `open`-category status; deleted tasks, deleted projects and deleted teams never appear; `claim` is null once the lease has expired; `blocked` means a live blocker is still in an open-category status. Due-date logic uses `today` (the caller's calendar date, `YYYY-MM-DD`; default: the server's UTC date), since due dates carry no time zone.
 
 | Method & path           | Request                                                                                                                                                                                                                          | Response                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

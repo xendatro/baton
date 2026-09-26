@@ -5,7 +5,6 @@ import {
   useQueryClient,
   type QueryClient,
 } from '@tanstack/react-query';
-import { z } from 'zod';
 import { okResponseSchema } from '@shared/schemas/common';
 import { subscriptionResponseSchema } from '@shared/schemas/core';
 import {
@@ -18,6 +17,7 @@ import {
   type LabelMatch,
   type UpdateIssueInput,
 } from '@shared/schemas/issues';
+import { taskSchema } from '@shared/schemas/tasks';
 import { api } from '@web/lib/api';
 import { queryKeys } from '@web/lib/queryKeys';
 
@@ -214,9 +214,8 @@ export function useRestoreIssue() {
 
 /**
  * `POST /api/projects/:projectId/tasks/from-issue` (tasks module): creates a task from the issue
- * (title, a link back, labels) linked with kind `fixes`. Only the new task's number is needed here.
+ * (title, a link back, labels) linked with kind `fixes`, and answers the new task.
  */
-const createdTaskSchema = z.object({ number: z.number().int().positive(), ref: z.string() });
 
 export function useCreateTaskFromIssue(issue: Issue) {
   const queryClient = useQueryClient();
@@ -225,7 +224,7 @@ export function useCreateTaskFromIssue(issue: Issue) {
       api.post(
         `/api/projects/${enc(issue.projectId)}/tasks/from-issue`,
         { issueId: issue.id },
-        { schema: createdTaskSchema },
+        { schema: taskSchema },
       ),
     onSuccess: () =>
       Promise.all([

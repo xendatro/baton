@@ -22,7 +22,7 @@ import {
   requirePermission,
 } from './access';
 import { recordActivity } from './activity';
-import { attachmentsByParent, attachToParent } from './attachments';
+import { attachmentsByParent, attachToParent, referencedPendingUploads } from './attachments';
 import { emitAfterCommit } from './events';
 import { findItem, itemResolvers, requireItem, type ItemInfo } from './items';
 import { notifyMentions, notifyReply, type NotificationTarget } from './notifications';
@@ -197,12 +197,16 @@ export function createReply(
       .get();
     itemResolvers[item.type].adjustReplies(tx, item.id, 1, true);
     itemResolvers[item.type].onThreadWrite?.(tx, actor, item.id);
-    attachToParent(tx, actor, input.attachmentIds ?? [], {
-      type: 'reply',
-      id: reply.id,
-      teamId: item.teamId,
-      projectId: item.projectId,
-    });
+    // Explicit files plus the images pasted into the body (uploaded as pending while typing).
+    attachToParent(
+      tx,
+      actor,
+      [
+        ...(input.attachmentIds ?? []),
+        ...referencedPendingUploads(tx, actor, item.teamId, input.body),
+      ],
+      { type: 'reply', id: reply.id, teamId: item.teamId, projectId: item.projectId },
+    );
     autoSubscribe(tx, [actor.userId], item.type, item.id);
     recordActivity(tx, actor, {
       teamId: item.teamId,
@@ -262,6 +266,12 @@ export function editReply(
       .returning()
       .get();
     itemResolvers[item.type].onThreadWrite?.(tx, actor, item.id);
+    attachToParent(tx, actor, referencedPendingUploads(tx, actor, item.teamId, input.body), {
+      type: 'reply',
+      id,
+      teamId: item.teamId,
+      projectId: item.projectId,
+    });
     recordActivity(tx, actor, {
       teamId: item.teamId,
       projectId: item.projectId,

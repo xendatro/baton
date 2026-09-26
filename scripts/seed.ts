@@ -36,6 +36,7 @@ import { createRole, reorderRoles, teamRoles } from '../server/services/roles';
 import { createStatus, reorderStatuses, updateStatus } from '../server/services/statuses';
 import { createTeam } from '../server/services/teams';
 import { seedIssues } from './seed-issues';
+import { seedTasks, settleNotifications } from './seed-tasks';
 
 const PASSWORD = 'password123';
 
@@ -194,6 +195,7 @@ async function main(): Promise<void> {
 
 async function seed(deps: ReturnType<typeof createAppDeps>): Promise<void> {
   const { db } = deps;
+  const seededSince = new Date();
   const passwordHash = await hashPassword(PASSWORD);
 
   // Users: verified email + password, as if they had signed up and entered their code.
@@ -360,8 +362,14 @@ async function seed(deps: ReturnType<typeof createAppDeps>): Promise<void> {
     key: createApiKey(deps, actor(username), createApiKeyInputSchema.parse({ name: key })).key,
   }));
 
-  // Issues (some opened by agents through the keys above).
+  // Issues (some opened by agents through the keys above), then the tasks that address them.
   seedIssues(deps, actor, { web: web.id, api: api.id });
+  seedTasks(deps, actor, roleId, {
+    web: { id: web.id, teamId: team.id },
+    api: { id: api.id, teamId: team.id },
+    lab: { id: lab.id, teamId: side.id },
+  });
+  settleNotifications(deps, seededSince);
 
   const base = deps.env.baseUrl;
   console.log(`\nSeeded ${deps.db.file}\n`);

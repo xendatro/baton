@@ -4,6 +4,7 @@ import type { ReactElement } from 'react';
 import { createMemoryRouter, RouterProvider, type RouteObject } from 'react-router';
 import { Toaster } from 'sonner';
 import type { MyTask } from '@shared/schemas/work';
+import { TooltipProvider } from '@web/components/ui/tooltip';
 import { createQueryClient } from '@web/lib/queryClient';
 
 /**
@@ -13,7 +14,7 @@ import { createQueryClient } from '@web/lib/queryClient';
 
 /**
  * Renders `element` at `initialEntry` (matching `path`, with optional child routes) in a memory
- * router with a toaster.
+ * router with a toaster, inside the app's tooltip provider.
  */
 export function renderWorkPage(
   element: ReactElement,
@@ -31,7 +32,9 @@ export function renderWorkPage(
   const queryClient = createQueryClient();
   const view = render(
     <QueryClientProvider client={queryClient}>
-      <RouterProvider router={router} />
+      <TooltipProvider>
+        <RouterProvider router={router} />
+      </TooltipProvider>
       <Toaster />
     </QueryClientProvider>,
   );

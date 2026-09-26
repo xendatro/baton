@@ -1,6 +1,7 @@
-import { BanIcon, BotIcon, HandIcon } from 'lucide-react';
+import { BotIcon, HandIcon } from 'lucide-react';
 import { Link } from 'react-router';
 import type { MyTask } from '@shared/schemas/work';
+import { BlockedBadge } from '@web/components/common/BlockedBadge';
 import { ClaimBadge } from '@web/components/common/ClaimBadge';
 import { DueDate } from '@web/components/common/DueDate';
 import { LabelChip } from '@web/components/common/LabelChip';
@@ -54,27 +55,14 @@ export function WorkTaskRow({
             <span className="truncate text-sm font-medium text-foreground group-hover:underline">
               {task.title}
             </span>
-            {task.blocked ? (
-              <span
-                className="hidden shrink-0 items-center gap-1 rounded-full border border-amber-500/40 bg-amber-500/10 px-1.5 text-[0.7rem] font-medium text-amber-800 sm:inline-flex dark:text-amber-300"
-                title="Waiting on another task that is still open"
-              >
-                <BanIcon className="size-3" aria-hidden="true" />
-                Blocked
-              </span>
-            ) : null}
+            {task.blocked ? <BlockedBadge className="hidden sm:inline-flex" /> : null}
           </span>
           {/* Second line on phones; inline context on wider screens. */}
           <span className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground sm:hidden">
             <span className="font-mono">{task.ref}</span>
             <span>{task.status.name}</span>
             {task.dueDate ? <DueDate value={task.dueDate} done={done} /> : null}
-            {task.blocked ? (
-              <span className="inline-flex items-center gap-1 font-medium text-amber-700 dark:text-amber-400">
-                <BanIcon className="size-3" aria-hidden="true" />
-                Blocked
-              </span>
-            ) : null}
+            {task.blocked ? <BlockedBadge /> : null}
             {hint ? <span className="truncate">{hint}</span> : null}
             {showContext ? <span className="truncate">{task.project.name}</span> : null}
             {claimBadge && task.claim ? (

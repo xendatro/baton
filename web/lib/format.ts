@@ -1,4 +1,4 @@
-import { differenceInCalendarDays, format, formatDistanceToNowStrict, parseISO } from 'date-fns';
+import { differenceInCalendarDays, format, formatDistanceStrict, parseISO } from 'date-fns';
 
 /** Display formatting shared by every page. Dates are shown in the viewer's time zone. */
 
@@ -48,7 +48,7 @@ export function formatDateTime(value: Date | string): string {
 export function formatAge(value: Date | string, now: Date = new Date()): string {
   const date = toDate(value);
   if (now.getTime() - date.getTime() < 60_000) return 'now';
-  return formatDistanceToNowStrict(date, { roundingMethod: 'floor' })
+  return formatDistanceStrict(date, now, { roundingMethod: 'floor' })
     .replace(/ seconds?/, 's')
     .replace(/ minutes?/, 'm')
     .replace(/ hours?/, 'h')

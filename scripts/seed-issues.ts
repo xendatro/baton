@@ -102,7 +102,7 @@ const WEB_ISSUES: SeedIssue[] = [
       },
       { by: 'sofia', body: 'Much better, thanks!' },
     ],
-    resolvedBy: 'maya',
+    // Resolved by the task that fixes it (scripts/seed-tasks.ts).
     daysAgo: 9,
   },
   {
@@ -110,7 +110,7 @@ const WEB_ISSUES: SeedIssue[] = [
     title: 'Document the release checklist',
     body: 'Write down the steps we follow for a release, including the smoke test and the backup check.',
     labels: ['Documentation'],
-    resolvedBy: 'ethan',
+    // Resolved by the task that fixes it (scripts/seed-tasks.ts).
     daysAgo: 14,
   },
   {
@@ -157,7 +157,7 @@ const API_ISSUES: SeedIssue[] = [
     title: 'Pagination cursor breaks when two tasks share a timestamp',
     body: 'Page two repeats a row when two tasks were created in the same millisecond. The cursor needs a tie-breaker.',
     labels: ['Bug'],
-    resolvedBy: 'leo',
+    // Resolved by the task that fixes it (scripts/seed-tasks.ts).
     daysAgo: 12,
   },
 ];

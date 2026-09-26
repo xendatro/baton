@@ -24,10 +24,10 @@ import {
   selectTasks,
   taskOrder,
   toMyTasks,
-  utcToday,
   workScope,
   type WorkScope,
 } from './myWork';
+import { utcToday } from './taskViews';
 import { listProjectCards, memberCounts } from './teams';
 
 /**
@@ -61,7 +61,7 @@ function assignedCounts(
     .innerJoin(s.status, eq(s.status.id, s.task.statusId))
     .innerJoin(s.project, eq(s.project.id, s.task.projectId))
     .innerJoin(s.team, eq(s.team.id, s.task.teamId))
-    .where(assignedOpenCondition(db, scope))
+    .where(assignedOpenCondition(scope))
     .get();
   return {
     assigned: Number(row?.assigned ?? 0),
@@ -206,7 +206,7 @@ export function getDashboard(
     };
   }
 
-  const assignedOpen = assignedOpenCondition(orm, scope);
+  const assignedOpen = assignedOpenCondition(scope);
   const list = (where: SQL | undefined, order: SQL[], limit = DASHBOARD_LIST_LIMIT) =>
     toMyTasks(
       orm,

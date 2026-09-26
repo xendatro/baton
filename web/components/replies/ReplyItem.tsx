@@ -138,7 +138,10 @@ export function ReplyItem({ reply }: ReplyItemProps) {
           <MarkdownView markdown={reply.body} teamId={reply.teamId} />
         )}
         <AttachmentList
-          attachments={reply.attachments}
+          // Images shown inline in the body are not listed again.
+          attachments={reply.attachments.filter(
+            (attachment) => !(attachment.isImage && reply.body.includes(attachment.url)),
+          )}
           canDelete={(attachment) => access.canDelete(attachment.uploader?.id)}
           onDelete={async (attachment) => {
             await deleteAttachment.mutateAsync(attachment.id);

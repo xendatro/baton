@@ -1,59 +1,14 @@
 import { z } from 'zod';
-import { PRIORITY_KEYS, PRIORITY_VALUES, STATUS_CATEGORIES } from '../constants';
-import { dueDateSchema, idSchema, timestampSchema } from './common';
-import { activityEntrySchema, roleSummarySchema, userSummarySchema, viaKeySchema } from './core';
+import { PRIORITY_KEYS } from '../constants';
+import { dueDateSchema, idSchema } from './common';
+import { activityEntrySchema, roleSummarySchema } from './core';
+import { TASK_DUE_FILTERS, taskSummarySchema } from './tasks';
 
 /**
  * Wire contracts of the work module (SPEC §1.9): `GET /api/me/tasks` (My tasks) and
- * `GET /api/me/dashboard`, plus the MCP tools `my_tasks` and `dashboard_summary`.
+ * `GET /api/me/dashboard`, plus the MCP tools `my_tasks` and `dashboard_summary`. Tasks use the
+ * tasks module's `taskSummarySchema` (shared/schemas/tasks.ts), extended with where they live.
  */
-
-// ---------------------------------------------------------------------------------------------
-// Task summary
-// ---------------------------------------------------------------------------------------------
-
-/** Task priority as stored: 0 none, 1 low, 2 medium, 3 high, 4 urgent. */
-export const priorityValueSchema = z.literal(PRIORITY_VALUES);
-
-/**
- * A task as lists show it. Same shape as the tasks module's `taskSummarySchema`
- * (shared/schemas/tasks.ts); the work module keeps its own copy so both can be built in parallel.
- */
-export const workTaskSchema = z.object({
-  id: z.string(),
-  /** `KEY-12`. */
-  ref: z.string(),
-  number: z.number().int().positive(),
-  title: z.string(),
-  projectId: z.string(),
-  teamId: z.string(),
-  status: z.object({
-    id: z.string(),
-    name: z.string(),
-    color: z.string(),
-    category: z.enum(STATUS_CATEGORIES),
-  }),
-  priority: priorityValueSchema,
-  /** `YYYY-MM-DD` or null. */
-  dueDate: z.string().nullable(),
-  labels: z.array(z.object({ id: z.string(), name: z.string(), color: z.string() })),
-  assignees: z.object({ users: z.array(userSummarySchema), roles: z.array(roleSummarySchema) }),
-  /** The valid (unexpired) claim, or null. */
-  claim: z
-    .object({
-      user: userSummarySchema,
-      /** The API key holding the claim; null for claims made on the web. */
-      via: viaKeySchema.nullable(),
-      claimedAt: timestampSchema,
-      expiresAt: timestampSchema,
-    })
-    .nullable(),
-  /** Some task it depends on is still in an open-category status. */
-  blocked: z.boolean(),
-  replyCount: z.number().int().nonnegative(),
-  updatedAt: timestampSchema,
-});
-export type WorkTask = z.infer<typeof workTaskSchema>;
 
 export const workTeamRefSchema = z.object({
   id: z.string(),
@@ -82,7 +37,7 @@ export const assignmentReasonSchema = z.object({
 export type AssignmentReason = z.infer<typeof assignmentReasonSchema>;
 
 /** A task with where it lives and why it is mine (My tasks, dashboard lists). */
-export const myTaskSchema = workTaskSchema.extend({
+export const myTaskSchema = taskSummarySchema.extend({
   team: workTeamRefSchema,
   project: workProjectRefSchema,
   /** Relative web-app path of the task page. */
@@ -95,7 +50,8 @@ export type MyTask = z.infer<typeof myTaskSchema>;
 // GET /api/me/tasks
 // ---------------------------------------------------------------------------------------------
 
-export const DUE_FILTERS = ['overdue', 'today', 'week', 'none'] as const;
+/** The due filters of My tasks: the same as the board's (`TASK_DUE_FILTERS`). */
+export const DUE_FILTERS = TASK_DUE_FILTERS;
 export type DueFilter = (typeof DUE_FILTERS)[number];
 
 export const MY_TASKS_SORTS = ['priority', 'due', 'updated', 'created'] as const;

@@ -4,6 +4,7 @@ import {
   ISSUE_LINK_KINDS,
   LIMITS,
   PRIORITY_KEYS,
+  PRIORITY_VALUES,
   STATUS_CATEGORIES,
   priorityByKey,
   type PriorityValue,
@@ -38,7 +39,7 @@ export const TASK_LIMITS = {
 // ---------------------------------------------------------------------------------------------
 
 /** Priority as stored: 0 none, 1 low, 2 medium, 3 high, 4 urgent. */
-export const priorityValueSchema = z.literal([0, 1, 2, 3, 4]);
+export const priorityValueSchema = z.literal(PRIORITY_VALUES);
 
 /** Priority as agents and scripts may write it: a number 0–4 or a name (`high`). */
 export const priorityInputSchema = z.union([

@@ -26,6 +26,7 @@ import {
   type TestContext,
   type UserRow,
 } from '../test/helpers';
+import { uploadAttachment } from './attachments';
 import { createReply, deleteReply, editReply, restoreReply } from './replies';
 import { markNotificationsRead, unreadNotificationCount } from './notifications';
 
@@ -367,6 +368,58 @@ describe('notifications', () => {
     editReply(ctx.deps, actorOf(owner), reply.id, { body: '@mia and @bob' });
     expect(notificationsOf(member)).toHaveLength(1);
     expect(notificationsOf(bob)).toHaveLength(1);
+  });
+
+  it('attaches images pasted into the body when replying and when editing', async () => {
+    const task = createTask(ctx.db, { project: project.project });
+    // A 1×1 PNG, uploaded as pending (as the editor does while typing).
+    const png = Uint8Array.from(
+      Buffer.from(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=',
+        'base64',
+      ),
+    );
+    const upload = (filename: string) =>
+      uploadAttachment(ctx.deps, actorOf(member), {
+        teamId: team.team.id,
+        parentType: 'pending',
+        filename,
+        bytes: png,
+      });
+    const first = await upload('first.png');
+    const second = await upload('second.png');
+    const unused = await upload('unused.png');
+
+    const reply = createReply(ctx.deps, actorOf(member), {
+      parentType: 'task',
+      parentId: task.id,
+      body: `Before: ![first](${first.url})`,
+    });
+    expect(reply.attachments.map((attachment) => attachment.filename)).toEqual(['first.png']);
+    const edited = editReply(ctx.deps, actorOf(member), reply.id, {
+      body: `Before: ![first](${first.url}) after: ![second](${second.url})`,
+    });
+    expect(edited.attachments.map((attachment) => attachment.filename).sort()).toEqual([
+      'first.png',
+      'second.png',
+    ]);
+    const parentOf = (id: string) =>
+      ctx.db.orm.select().from(s.attachment).where(eq(s.attachment.id, id)).get()?.parentType;
+    expect(parentOf(unused.id)).toBe('pending');
+
+    // Someone else's pending upload linked from a reply is not claimed.
+    const owners = await uploadAttachment(ctx.deps, actorOf(owner), {
+      teamId: team.team.id,
+      parentType: 'pending',
+      filename: 'owner.png',
+      bytes: png,
+    });
+    createReply(ctx.deps, actorOf(member), {
+      parentType: 'task',
+      parentId: task.id,
+      body: `![theirs](${owners.url})`,
+    });
+    expect(parentOf(owners.id)).toBe('pending');
   });
 
   it('lists, counts and marks notifications read', async () => {

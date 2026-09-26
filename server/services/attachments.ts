@@ -253,6 +253,39 @@ function resolveParent(db: DbExecutor, parent: AttachmentParent): ResolvedParent
   }
 }
 
+/** `/api/attachments/<id>/…` links in markdown (images and files added in an editor). */
+const ATTACHMENT_URL = /\/api\/attachments\/([A-Za-z0-9_-]{1,64})\//g;
+
+/**
+ * The actor's pending uploads (in the team) that `markdown` links to. Images pasted into an
+ * editor upload as `pending` before the text is saved; the feature service attaches them with the
+ * text (issue and task bodies, READMEs, replies) so the 24-hour purge of unclaimed uploads never
+ * removes an image that is in use. At most `LIMITS.attachmentsPerItem` links are considered.
+ */
+export function referencedPendingUploads(
+  db: DbExecutor,
+  actor: Actor,
+  teamId: string,
+  markdown: string,
+): string[] {
+  const ids = [...new Set([...markdown.matchAll(ATTACHMENT_URL)].map((match) => match[1] ?? ''))];
+  if (ids.length === 0) return [];
+  return db
+    .select({ id: s.attachment.id })
+    .from(s.attachment)
+    .where(
+      and(
+        inArray(s.attachment.id, ids.slice(0, LIMITS.attachmentsPerItem)),
+        eq(s.attachment.parentType, 'pending'),
+        eq(s.attachment.uploaderId, actor.userId),
+        eq(s.attachment.teamId, teamId),
+        isNull(s.attachment.deletedAt),
+      ),
+    )
+    .all()
+    .map((row) => row.id);
+}
+
 /**
  * Claims pending uploads for a parent, inside the feature service's transaction. Only the
  * actor's own pending, non-deleted uploads in the same team qualify; anything else fails the

@@ -34,7 +34,7 @@ import {
   type Membership,
 } from './access';
 import { recordActivity } from './activity';
-import { attachmentsByParent, attachToParent } from './attachments';
+import { attachmentsByParent, attachToParent, referencedPendingUploads } from './attachments';
 import { emitAfterCommit } from './events';
 import { trashedProject } from './items';
 import { notifyMentions, notifyUsers, type NotificationTarget } from './notifications';
@@ -462,36 +462,6 @@ function nextLabelIds(current: readonly string[], labels: IssueLabelsChange): st
   if (labels.set) return [...new Set(labels.set)];
   const remove = new Set(labels.remove ?? []);
   return [...new Set([...current, ...(labels.add ?? [])])].filter((id) => !remove.has(id));
-}
-
-const ATTACHMENT_URL = /\/api\/attachments\/([A-Za-z0-9_-]{1,64})\//g;
-
-/**
- * The actor's pending uploads (in the team) that `markdown` links to: images added in the editor
- * upload before the issue is saved, and would be purged after 24 hours if never attached.
- */
-function referencedPendingUploads(
-  db: DbExecutor,
-  actor: Actor,
-  teamId: string,
-  markdown: string,
-): string[] {
-  const ids = [...new Set([...markdown.matchAll(ATTACHMENT_URL)].map((match) => match[1] ?? ''))];
-  if (ids.length === 0) return [];
-  return db
-    .select({ id: s.attachment.id })
-    .from(s.attachment)
-    .where(
-      and(
-        inArray(s.attachment.id, ids.slice(0, 500)),
-        eq(s.attachment.parentType, 'pending'),
-        eq(s.attachment.uploaderId, actor.userId),
-        eq(s.attachment.teamId, teamId),
-        isNull(s.attachment.deletedAt),
-      ),
-    )
-    .all()
-    .map((row) => row.id);
 }
 
 function attachmentNames(db: DbExecutor, issueId: string): string[] {

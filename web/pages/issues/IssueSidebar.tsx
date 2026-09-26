@@ -19,14 +19,12 @@ export function IssueSidebar({
   issue,
   access,
   canTriage,
-  projectBase,
   labelsOpen,
   onLabelsOpenChange,
 }: {
   issue: Issue;
   access: TeamAccess;
   canTriage: boolean;
-  projectBase: string;
   labelsOpen: boolean;
   onLabelsOpenChange: (open: boolean) => void;
 }) {
@@ -39,7 +37,7 @@ export function IssueSidebar({
         open={labelsOpen}
         onOpenChange={onLabelsOpenChange}
       />
-      <AddressedBySection issue={issue} access={access} projectBase={projectBase} />
+      <AddressedBySection issue={issue} access={access} />
       <SubscriptionSection issue={issue} />
     </div>
   );
@@ -129,15 +127,7 @@ function LabelsSection({
   );
 }
 
-function AddressedBySection({
-  issue,
-  access,
-  projectBase,
-}: {
-  issue: Issue;
-  access: TeamAccess;
-  projectBase: string;
-}) {
+function AddressedBySection({ issue, access }: { issue: Issue; access: TeamAccess }) {
   const navigate = useNavigate();
   const createTask = useCreateTaskFromIssue(issue);
   const canCreateTask = access.has('CREATE_TASKS');
@@ -145,7 +135,7 @@ function AddressedBySection({
     createTask.mutate(undefined, {
       onSuccess: (task) => {
         toast.success(`Task ${task.ref} created`);
-        void navigate(`${projectBase}/tasks/${task.number}`);
+        void navigate(task.path);
       },
     });
   return (

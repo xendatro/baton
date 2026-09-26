@@ -18,9 +18,10 @@ import {
 } from './test/helpers';
 
 /**
- * Wave A contracts end to end, through the real REST routes and MCP tools of several modules:
+ * Cross-module contracts end to end, through the real REST routes and MCP tools of several modules:
  * teams ↔ account (deleted teams, account deletion), teams/projects/issues ↔ admin (Trash handlers,
- * restore_item, audit-log facets), issues ↔ core (replies, search, notifications) and the live
+ * restore_item, audit-log facets), issues ↔ core (replies, search, notifications), issues ↔ tasks ↔
+ * work (create task from issue, auto-resolve, notifications, My tasks and dashboard) and the live
  * events the web client invalidates on.
  */
 
@@ -386,5 +387,170 @@ describe('tasks ↔ admin and teams', () => {
       `/tasks/${task.body.id}`,
     );
     expect(after.body.assignees.users).toEqual([]);
+  });
+});
+
+describe('wave B: issues ↔ tasks ↔ work', () => {
+  it('turns an issue into a task whose completion resolves it and tells its author', async () => {
+    const { team, project } = await setup();
+    const statuses = await call<{ items: Array<{ id: string; name: string }> }>(
+      ownerKey,
+      'GET',
+      `/projects/${project.id}/statuses`,
+    );
+    const done = statuses.body.items.find((status) => status.name === 'Done');
+    const issue = await call<{ id: string; ref: string }>(
+      memberKey,
+      'POST',
+      `/projects/${project.id}/issues`,
+      { title: 'Search ignores accents', body: 'Searching "cafe" misses "café".' },
+    );
+
+    // The issue page's "Create task" button.
+    const task = await call<{ id: string; ref: string; path: string; issues: unknown[] }>(
+      ownerKey,
+      'POST',
+      `/projects/${project.id}/tasks/from-issue`,
+      { issueId: issue.body.id },
+    );
+    expect(task.status).toBe(201);
+    expect(task.body.path).toBe(`/t/${team.slug}/p/${project.key}/tasks/1`);
+    expect(task.body.issues).toEqual([
+      expect.objectContaining({ ref: issue.body.ref, kind: 'fixes', resolved: false }),
+    ]);
+    const linked = await call<{ linkedTasks: Array<{ ref: string; kind: string }> }>(
+      memberKey,
+      'GET',
+      `/issues/${issue.body.id}`,
+    );
+    expect(linked.body.linkedTasks).toEqual([
+      expect.objectContaining({ ref: task.body.ref, kind: 'fixes' }),
+    ]);
+
+    // Moving it to a done status on the board resolves the issue.
+    events.length = 0;
+    const moved = await call(ownerKey, 'POST', `/tasks/${task.body.id}/move`, {
+      statusId: done?.id,
+    });
+    expect(moved.status).toBe(200);
+    const resolved = await call<{
+      resolved: boolean;
+      resolvedBy: { username: string } | null;
+      linkedTasks: Array<{ status: { category: string } }>;
+    }>(memberKey, 'GET', `/issues/${issue.body.id}`);
+    expect(resolved.body).toMatchObject({ resolved: true, resolvedBy: { username: 'ethan' } });
+    expect(resolved.body.linkedTasks[0]?.status.category).toBe('done');
+
+    const inbox = await call<{ items: Array<{ type: string; title: string; viaKeyName: string }> }>(
+      memberKey,
+      'GET',
+      '/notifications',
+    );
+    expect(inbox.body.items[0]).toMatchObject({
+      type: 'issue_resolved',
+      title: `${issue.body.ref}: Search ignores accents`,
+      viaKeyName: 'Claude on laptop',
+    });
+    expect(
+      events.filter((event) => event.type === 'notification.created').map((event) => event.userId),
+    ).toEqual([member.id]);
+    expect(events.map((event) => event.type)).toEqual(
+      expect.arrayContaining(['task.updated', 'issue.updated']),
+    );
+
+    // The issue list's tabs count it as resolved.
+    const list = await call<{ counts: { open: number; resolved: number } }>(
+      ownerKey,
+      'GET',
+      `/projects/${project.id}/issues?state=all`,
+    );
+    expect(list.body.counts).toMatchObject({ open: 0, resolved: 1 });
+  });
+
+  it('notifies mentions, role mentions, assignments and replies, and shows the work on My tasks and the dashboard', async () => {
+    const { team, project } = await setup();
+    const role = await call<{ id: string; slug: string }>(
+      ownerKey,
+      'POST',
+      `/teams/${team.id}/roles`,
+      { name: 'Frontend', mentionable: true },
+    );
+    expect(role.status).toBe(201);
+    expect(
+      (await call(ownerKey, 'PUT', `/teams/${team.id}/members/${member.id}/roles/${role.body.id}`))
+        .status,
+    ).toBe(200);
+
+    // Assigned through a role, with a user mention in the description.
+    events.length = 0;
+    const task = await call<{ id: string; ref: string }>(
+      ownerKey,
+      'POST',
+      `/projects/${project.id}/tasks`,
+      {
+        title: 'Polish the empty states',
+        description: 'Ping @caden when the copy is ready.',
+        assigneeRoleIds: [role.body.id],
+        priority: 3,
+        dueDate: '2020-01-01',
+      },
+    );
+    expect(task.status).toBe(201);
+    // One notification per person per change: the assignment covers the mention.
+    const afterCreate = await call<{ items: Array<{ type: string; entityId: string }> }>(
+      memberKey,
+      'GET',
+      '/notifications',
+    );
+    expect(afterCreate.body.items.map((item) => item.type)).toEqual(['assigned']);
+    expect(events.some((event) => event.type === 'notification.created')).toBe(true);
+
+    // A role mention in an issue, then a reply to the member's subscribed task.
+    await call(ownerKey, 'POST', `/projects/${project.id}/issues`, {
+      title: 'Design review',
+      body: `@&${role.body.slug} please review the new header.`,
+    });
+    await call(memberKey, 'POST', '/replies', {
+      parentType: 'task',
+      parentId: task.body.id,
+      body: 'On it.',
+    });
+    await call(ownerKey, 'POST', '/replies', {
+      parentType: 'task',
+      parentId: task.body.id,
+      body: 'Thanks!',
+    });
+    const inbox = await call<{ items: Array<{ type: string }> }>(
+      memberKey,
+      'GET',
+      '/notifications',
+    );
+    expect(inbox.body.items.map((item) => item.type)).toEqual([
+      'reply',
+      'role_mention',
+      'assigned',
+    ]);
+
+    // The member's agent claims it; My tasks and the dashboard show both facts.
+    const claim = await call(memberKey, 'POST', `/tasks/${task.body.id}/claim`, {});
+    expect(claim.status).toBe(200);
+    const mine = await call<{
+      items: Array<{ ref: string; assignment: { direct: boolean; roles: Array<{ id: string }> } }>;
+    }>(memberKey, 'GET', '/me/tasks?today=2026-09-25');
+    expect(mine.body.items).toEqual([
+      expect.objectContaining({
+        ref: task.body.ref,
+        assignment: { direct: false, roles: [expect.objectContaining({ id: role.body.id })] },
+      }),
+    ]);
+    const dashboard = await call<{
+      counts: { assigned: number; overdue: number; claimed: number };
+      claimed: Array<{ ref: string; claim: { via: { keyName: string } | null } | null }>;
+    }>(memberKey, 'GET', '/me/dashboard?today=2026-09-25');
+    expect(dashboard.body.counts).toMatchObject({ assigned: 1, overdue: 1, claimed: 1 });
+    expect(dashboard.body.claimed[0]).toMatchObject({
+      ref: task.body.ref,
+      claim: { via: { keyName: 'Codex' } },
+    });
   });
 });

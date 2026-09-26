@@ -16,6 +16,7 @@ import { appPaths } from '../lib/urls';
 import { recordActivity } from './activity';
 import { emitAfterCommit } from './events';
 import { notifyUsers, type NotifiedSet } from './notifications';
+import { subscriberIds } from './subscriptions';
 
 /**
  * Task links (SPEC §1.8): "blocked by" dependencies between tasks of one project (cycles are
@@ -507,7 +508,8 @@ export function resolveFixedIssues(
       tx,
       actor,
       'issue_resolved',
-      issue.authorId ? [issue.authorId] : [],
+      // Like resolving on the issue page: its author and everyone subscribed to it.
+      [...(issue.authorId ? [issue.authorId] : []), ...subscriberIds(tx, 'issue', issue.id)],
       {
         teamId: issue.teamId,
         entityType: 'issue',

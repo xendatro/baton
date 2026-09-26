@@ -31,7 +31,7 @@ import {
   type Membership,
 } from './access';
 import { recordActivity } from './activity';
-import { attachToParent } from './attachments';
+import { attachToParent, referencedPendingUploads } from './attachments';
 import { emitAfterCommit } from './events';
 import { labelsOf } from './labels';
 import { notifyMentions } from './notifications';
@@ -414,36 +414,6 @@ export function checkProjectKey(
 // ---------------------------------------------------------------------------------------------
 // README attachments
 // ---------------------------------------------------------------------------------------------
-
-const ATTACHMENT_URL = /\/api\/attachments\/([A-Za-z0-9_-]{1,64})\//g;
-
-/**
- * The actor's pending uploads (in the team) that `markdown` links to: images and files added in
- * the README editor, which upload before the README is saved.
- */
-function referencedPendingUploads(
-  db: DbExecutor,
-  actor: Actor,
-  teamId: string,
-  markdown: string,
-): string[] {
-  const ids = [...new Set([...markdown.matchAll(ATTACHMENT_URL)].map((match) => match[1] ?? ''))];
-  if (ids.length === 0) return [];
-  return db
-    .select({ id: s.attachment.id })
-    .from(s.attachment)
-    .where(
-      and(
-        inArray(s.attachment.id, ids.slice(0, 500)),
-        eq(s.attachment.parentType, 'pending'),
-        eq(s.attachment.uploaderId, actor.userId),
-        eq(s.attachment.teamId, teamId),
-        isNull(s.attachment.deletedAt),
-      ),
-    )
-    .all()
-    .map((row) => row.id);
-}
 
 function readmeTarget(project: ProjectRow, teamSlug: string) {
   return {

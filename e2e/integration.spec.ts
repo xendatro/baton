@@ -7,7 +7,8 @@ import { expect, ORIGIN, signedInUser, test } from './support/fixtures.ts';
  * Flows that cross module boundaries: the team home's "New project" opening the projects
  * module's dialog, the team settings layout hosting the admin module's Audit log and Trash (with
  * permission-based navigation), project and issue restores from Trash (and issue rows in the
- * audit log), and deleted teams restored from account settings.
+ * audit log), deleted teams restored from account settings, and an issue turned into a task whose
+ * completion resolves the issue and notifies its author.
  */
 
 test.use({ colorScheme: 'light' });
@@ -203,4 +204,68 @@ test('a task deleted from its page is counted on the team home and restores from
   await page.getByRole('button', { name: 'Open' }).click();
   await expect(page).toHaveURL(new RegExp(`/t/${team.slug}/p/OPS/tasks/1$`));
   await expect(page.getByRole('heading', { level: 1, name: 'Rotate the keys' })).toBeVisible();
+});
+
+test('an issue becomes a task; finishing the task resolves the issue and tells its author live', async ({
+  page,
+  browser,
+}) => {
+  await signedInUser(page);
+  const team = await createTeam(page, 'Fix Crew');
+  const project = await page.request.post(`/api/teams/${team.id}/projects`, {
+    data: { name: 'Storefront', key: 'SF' },
+    headers: ORIGIN,
+  });
+  const { id: projectId } = (await project.json()) as { id: string };
+  const invite = await page.request.post(`/api/teams/${team.id}/invites`, {
+    data: { expiresIn: '7d', maxUses: null },
+    headers: ORIGIN,
+  });
+  const { code } = (await invite.json()) as { code: string };
+
+  // Someone else reports the bug and watches their inbox.
+  const reporter = await secondUser(browser);
+  expect(
+    (await reporter.request.post(`/api/invites/${code}/accept`, { headers: ORIGIN })).status(),
+  ).toBe(200);
+  const issue = await reporter.request.post(`/api/projects/${projectId}/issues`, {
+    data: { title: 'Coupon codes are case-sensitive', body: '`SAVE10` works, `save10` does not.' },
+    headers: ORIGIN,
+  });
+  expect(issue.status()).toBe(201);
+  const stream = reporter.waitForResponse((response) => response.url().endsWith('/api/events'));
+  await reporter.goto('/inbox');
+  await stream;
+  await expect(reporter.getByRole('heading', { name: 'Inbox' })).toBeVisible();
+
+  // The issue page's "Create task" opens the new task, linked with "fixes".
+  await page.goto(`/t/${team.slug}/p/SF/issues/1`);
+  const issueDetails = page.getByRole('complementary', { name: 'Issue details' });
+  await issueDetails.getByRole('button', { name: 'Create task' }).click();
+  await expect(page).toHaveURL(new RegExp(`/t/${team.slug}/p/SF/tasks/1$`));
+  await expect(
+    page.getByRole('heading', { level: 1, name: 'Coupon codes are case-sensitive' }),
+  ).toBeVisible();
+  const taskDetails = page.getByRole('complementary', { name: 'Task details' });
+  await expect(taskDetails.getByRole('link', { name: /SF#1/ })).toBeVisible();
+
+  // Done: the issue resolves itself.
+  await page.keyboard.press('s');
+  await page.getByRole('option', { name: 'Done' }).click();
+  await expect(taskDetails.getByRole('button', { name: 'Status: Done' })).toBeVisible();
+
+  // The reporter hears about it right away.
+  const rows = reporter.getByTestId('notification');
+  await expect(rows.first()).toContainText('Coupon codes are case-sensitive');
+  await expect(rows.first()).toHaveAttribute('data-unread', 'true');
+  await expect(rows.first()).toContainText(/resolved/i);
+
+  await page.goto(`/t/${team.slug}/p/SF/issues/1`);
+  await expect(page.getByRole('heading', { level: 2, name: /Coupon codes/ })).toBeVisible();
+  await expect(page.locator('#main').getByText('Resolved', { exact: true }).first()).toBeVisible();
+  await expect(
+    issueDetails.getByRole('link', { name: /SF-1\s*Coupon codes are case-sensitive/ }),
+  ).toHaveAttribute('href', `/t/${team.slug}/p/SF/tasks/1`);
+  await expect(issueDetails.getByText('fixes')).toBeVisible();
+  await reporter.context().close();
 });

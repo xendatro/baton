@@ -1,12 +1,12 @@
-import { BanIcon, MessageSquareIcon } from 'lucide-react';
+import { MessageSquareIcon } from 'lucide-react';
 import type { TaskCard as TaskCardData } from '@shared/schemas/tasks';
+import { BlockedBadge } from '@web/components/common/BlockedBadge';
 import { ClaimBadge } from '@web/components/common/ClaimBadge';
 import { DueDate } from '@web/components/common/DueDate';
 import { LabelChip } from '@web/components/common/LabelChip';
 import { PriorityIcon } from '@web/components/common/PriorityIcon';
 import { RoleChip } from '@web/components/common/RoleChip';
 import { AvatarStack } from '@web/components/common/UserAvatar';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@web/components/ui/tooltip';
 import { cn } from '@web/lib/utils';
 
 /**
@@ -22,7 +22,7 @@ export function TaskCardBody({ task }: { task: TaskCardData }) {
     <div className="flex flex-col gap-2">
       <div className="flex items-center gap-2">
         <span className="font-mono text-xs text-muted-foreground tabular-nums">{task.ref}</span>
-        {task.blocked ? <BlockedMark blockers={task.blockers} /> : null}
+        {task.blocked ? <BlockedBadge blockers={task.blockers} /> : null}
         <PriorityIcon value={task.priority} className="ml-auto" />
       </div>
       <p
@@ -86,21 +86,5 @@ export function TaskCardBody({ task }: { task: TaskCardData }) {
         </div>
       ) : null}
     </div>
-  );
-}
-
-function BlockedMark({ blockers }: { blockers: readonly string[] }) {
-  const text = blockers.length ? `Blocked by ${blockers.join(', ')}` : 'Blocked';
-  return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <span className="inline-flex items-center gap-1 text-xs font-medium text-red-600 dark:text-red-400">
-          <BanIcon className="size-3.5" aria-hidden="true" />
-          <span className="sr-only">{text}</span>
-          <span aria-hidden="true">Blocked</span>
-        </span>
-      </TooltipTrigger>
-      <TooltipContent>{text}</TooltipContent>
-    </Tooltip>
   );
 }

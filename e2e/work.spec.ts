@@ -1,34 +1,23 @@
 import { randomBytes } from 'node:crypto';
 import type { APIRequestContext, Page } from '@playwright/test';
-import {
-  createVerifiedUser,
-  expect,
-  ORIGIN,
-  signedInUser,
-  test,
-  withDatabase,
-  type TestUser,
-} from './support/fixtures.ts';
+import { createVerifiedUser, expect, ORIGIN, signedInUser, test } from './support/fixtures.ts';
 
 /**
  * Work module flows: the dashboard (first run with an invite link, stats, lists, live activity,
  * teams), My tasks (grouping, URL filters, search, keyboard navigation) and the inbox (live
- * notifications and toasts, open marks read, mark all read). Teams, projects, invites and replies
- * go through the REST API; tasks are inserted into the database, since the tasks module owns
- * their API.
+ * notifications and toasts, open marks read, mark all read). Teams, projects, roles, invites,
+ * tasks, claims and replies go through the REST API.
  */
 
 test.use({ colorScheme: 'light' });
-
-type Db = Parameters<Parameters<typeof withDatabase>[0]>[0];
 
 interface World {
   userId: string;
   team: { id: string; slug: string; name: string };
   project: { id: string; key: string; name: string; openStatusId: string; doneStatusId: string };
+  /** A role the user has ("Design"), for tasks assigned through a role. */
+  roleId: string;
 }
-
-const rowId = (prefix: string) => `${prefix}${randomBytes(10).toString('hex')}`;
 
 /** `YYYY-MM-DD` in this machine's time zone (the browser's), `days` from today. */
 function localDate(days = 0): string {
@@ -44,20 +33,17 @@ async function post<T>(request: APIRequestContext, url: string, data: unknown): 
   return (await response.json()) as T;
 }
 
-function userIdOf(db: Db, user: TestUser): string {
-  return (db.prepare('select id from user where email = ?').get(user.email) as { id: string }).id;
-}
-
-/** A team with a "Web app" (WEB) project created through the API by `user`. */
-async function createWorld(
-  request: APIRequestContext,
-  user: TestUser,
-  projectName = 'Web app',
-): Promise<World> {
+/**
+ * A team with a "Web app" (WEB) project created through the API by `user`, who also gets a
+ * "Design" role.
+ */
+async function createWorld(request: APIRequestContext, projectName = 'Web app'): Promise<World> {
   const suffix = randomBytes(3).toString('hex');
-  const team = await post<{ id: string; slug: string; name: string }>(request, '/api/teams', {
-    name: `Work ${suffix}`,
-  });
+  const team = await post<{ id: string; slug: string; name: string; ownerId: string }>(
+    request,
+    '/api/teams',
+    { name: `Work ${suffix}` },
+  );
   const project = await post<{
     id: string;
     key: string;
@@ -66,10 +52,19 @@ async function createWorld(
   }>(request, `/api/teams/${team.id}/projects`, { name: projectName, key: 'WEB' });
   const status = (category: 'open' | 'done') =>
     project.statuses.find((candidate) => candidate.category === category)?.id ?? '';
+  const role = await post<{ id: string }>(request, `/api/teams/${team.id}/roles`, {
+    name: 'Design',
+  });
+  const granted = await request.put(
+    `/api/teams/${team.id}/members/${team.ownerId}/roles/${role.id}`,
+    { headers: ORIGIN },
+  );
+  expect(granted.ok()).toBe(true);
   return {
-    userId: withDatabase((db) => userIdOf(db, user)),
+    userId: team.ownerId,
     team,
     project: { ...project, openStatusId: status('open'), doneStatusId: status('done') },
+    roleId: role.id,
   };
 }
 
@@ -80,74 +75,40 @@ interface TaskSeed {
   statusId?: string;
   assignUser?: string;
   assignRole?: string;
-  claim?: { userId: string; keyId: string | null };
+  /** Claimed through this API key (bearer token). */
+  claimWith?: string;
 }
 
-/** Inserts tasks into the world's project (numbered after the existing ones). */
-function insertTasks(world: World, tasks: TaskSeed[]): Array<{ id: string; number: number }> {
-  return withDatabase((db) => {
-    const now = Date.now();
-    const { task_seq: seq } = db
-      .prepare('select task_seq from project where id = ?')
-      .get(world.project.id) as { task_seq: number };
-    const created = tasks.map((task, index) => {
-      const id = rowId('tk');
-      const number = seq + index + 1;
-      db.prepare(
-        `insert into task (id, project_id, team_id, number, title, status_id, priority, due_date, position,
-           author_id, claimed_by_id, claimed_via_key_id, claimed_at, claim_expires_at, last_activity_at,
-           created_at, updated_at)
-         values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      ).run(
-        id,
-        world.project.id,
-        world.team.id,
-        number,
-        task.title,
-        task.statusId ?? world.project.openStatusId,
-        task.priority ?? 0,
-        task.dueDate ?? null,
-        `a${number}`,
-        world.userId,
-        task.claim?.userId ?? null,
-        task.claim?.keyId ?? null,
-        task.claim ? now - 4 * 60_000 : null,
-        task.claim ? now + 26 * 60_000 : null,
-        now,
-        now + index,
-        now + index,
-      );
-      if (task.assignUser) {
-        db.prepare('insert into task_assignee_user (task_id, user_id) values (?, ?)').run(
-          id,
-          task.assignUser,
-        );
-      }
-      if (task.assignRole) {
-        db.prepare('insert into task_assignee_role (task_id, role_id) values (?, ?)').run(
-          id,
-          task.assignRole,
-        );
-      }
-      return { id, number };
-    });
-    db.prepare('update project set task_seq = ? where id = ?').run(
-      seq + tasks.length,
-      world.project.id,
+/** Creates tasks in `projectId` through the tasks API, in order. */
+async function createTasks(
+  request: APIRequestContext,
+  projectId: string,
+  tasks: TaskSeed[],
+): Promise<Array<{ id: string; number: number }>> {
+  const created: Array<{ id: string; number: number }> = [];
+  for (const task of tasks) {
+    const row = await post<{ id: string; number: number }>(
+      request,
+      `/api/projects/${projectId}/tasks`,
+      {
+        title: task.title,
+        priority: task.priority ?? 0,
+        dueDate: task.dueDate ?? null,
+        ...(task.statusId ? { statusId: task.statusId } : {}),
+        assigneeUserIds: task.assignUser ? [task.assignUser] : [],
+        assigneeRoleIds: task.assignRole ? [task.assignRole] : [],
+      },
     );
-    return created;
-  });
-}
-
-function everyoneRoleId(world: World): string {
-  return withDatabase(
-    (db) =>
-      (
-        db
-          .prepare('select id from role where team_id = ? and is_everyone = 1')
-          .get(world.team.id) as { id: string }
-      ).id,
-  );
+    if (task.claimWith) {
+      const claimed = await request.post(`/api/tasks/${row.id}/claim`, {
+        data: {},
+        headers: { Authorization: `Bearer ${task.claimWith}` },
+      });
+      expect(claimed.ok(), await claimed.text()).toBe(true);
+    }
+    created.push(row);
+  }
+  return created;
 }
 
 async function openDashboard(page: Page) {
@@ -171,15 +132,15 @@ test('first run: welcome, then join a team with a pasted invite link', async ({
   page,
   request,
 }) => {
-  const owner = await createVerifiedUser(request);
-  const world = await createWorld(request, owner);
+  await createVerifiedUser(request);
+  const world = await createWorld(request);
   const invite = await post<{ code: string; url: string }>(
     request,
     `/api/teams/${world.team.id}/invites`,
     { expiresIn: '7d', maxUses: null },
   );
 
-  const user = await signedInUser(page);
+  await signedInUser(page);
   await openDashboard(page);
   await expect(page.getByText(new RegExp(`Good (morning|afternoon|evening), E2E`))).toBeVisible();
   await expect(page.getByRole('heading', { name: /^Welcome to Baton/ })).toBeVisible();
@@ -204,18 +165,15 @@ test('first run: welcome, then join a team with a pasted invite link', async ({
   const teams = page.getByRole('region', { name: 'Teams and projects' });
   await expect(teams.getByRole('link', { name: world.team.name })).toBeVisible();
   await expect(teams.getByRole('link', { name: /Web app/ })).toBeVisible();
-  expect(user.username).toBeTruthy();
 });
 
 test('the dashboard shows my work, claims, live activity and my teams', async ({ page }) => {
-  const user = await signedInUser(page);
-  const world = await createWorld(page.request, user);
-  const key = await post<{ apiKey: { id: string; name: string } }>(
-    page.request,
-    '/api/me/api-keys',
-    { name: 'Claude on laptop' },
-  );
-  const [urgent] = insertTasks(world, [
+  await signedInUser(page);
+  const world = await createWorld(page.request);
+  const { key } = await post<{ key: string }>(page.request, '/api/me/api-keys', {
+    name: 'Claude on laptop',
+  });
+  const [urgent] = await createTasks(page.request, world.project.id, [
     { title: 'Ship the release', priority: 4, assignUser: world.userId },
     {
       title: 'Write the postmortem',
@@ -223,13 +181,10 @@ test('the dashboard shows my work, claims, live activity and my teams', async ({
       dueDate: localDate(-2),
       assignUser: world.userId,
     },
-    { title: 'Review the design', dueDate: localDate(2), assignRole: everyoneRoleId(world) },
+    { title: 'Review the design', dueDate: localDate(2), assignRole: world.roleId },
     { title: 'Already done', statusId: world.project.doneStatusId, assignUser: world.userId },
     { title: 'Someone else’s', dueDate: localDate(-1) },
-    {
-      title: 'Refactor the auth flow',
-      claim: { userId: world.userId, keyId: key.apiKey.id },
-    },
+    { title: 'Refactor the auth flow', claimWith: key },
   ]);
 
   await openDashboardLive(page);
@@ -242,7 +197,7 @@ test('the dashboard shows my work, claims, live activity and my teams', async ({
   await expect(assigned.getByRole('listitem')).toHaveCount(3);
   await expect(assigned.getByRole('listitem').first()).toContainText('Ship the release');
   await expect(assigned.getByRole('link', { name: /Review the design/ })).toContainText(
-    'via @everyone',
+    'via Design',
   );
 
   const due = page.getByRole('region', { name: 'Overdue and due soon' });
@@ -275,14 +230,13 @@ test('the dashboard shows my work, claims, live activity and my teams', async ({
 });
 
 test('My tasks groups by project, filters from the URL and the keyboard', async ({ page }) => {
-  const user = await signedInUser(page);
-  const world = await createWorld(page.request, user);
-  const api = await post<{ id: string; statuses: Array<{ id: string; category: string }> }>(
-    page.request,
-    `/api/teams/${world.team.id}/projects`,
-    { name: 'API platform', key: 'API' },
-  );
-  insertTasks(world, [
+  await signedInUser(page);
+  const world = await createWorld(page.request);
+  const api = await post<{ id: string }>(page.request, `/api/teams/${world.team.id}/projects`, {
+    name: 'API platform',
+    key: 'API',
+  });
+  await createTasks(page.request, world.project.id, [
     {
       title: 'Fix the login redirect',
       priority: 3,
@@ -291,18 +245,9 @@ test('My tasks groups by project, filters from the URL and the keyboard', async 
     },
     { title: 'Polish the empty states', priority: 1, assignUser: world.userId },
   ]);
-  insertTasks(
-    {
-      ...world,
-      project: {
-        ...world.project,
-        id: api.id,
-        key: 'API',
-        openStatusId: api.statuses.find((status) => status.category === 'open')?.id ?? '',
-      },
-    },
-    [{ title: 'Rate limit the webhooks', priority: 4, assignRole: everyoneRoleId(world) }],
-  );
+  await createTasks(page.request, api.id, [
+    { title: 'Rate limit the webhooks', priority: 4, assignRole: world.roleId },
+  ]);
 
   await openDashboard(page);
   await page.keyboard.press('g');
@@ -314,7 +259,7 @@ test('My tasks groups by project, filters from the URL and the keyboard', async 
   const team = page.getByRole('region', { name: world.team.name });
   await expect(team.getByRole('heading', { level: 3 })).toHaveText(['API platform', 'Web app']);
   await expect(page.getByRole('link', { name: /Rate limit the webhooks/ })).toContainText(
-    'via @everyone',
+    'via Design',
   );
 
   await page.getByRole('button', { name: 'Filter by due' }).click();
@@ -351,8 +296,10 @@ test('the inbox: live notifications, a toast elsewhere, open marks read, mark al
   request,
 }) => {
   const user = await signedInUser(page);
-  const world = await createWorld(page.request, user);
-  const [task] = insertTasks(world, [{ title: 'Fix the flaky test', assignUser: world.userId }]);
+  const world = await createWorld(page.request);
+  const [task] = await createTasks(page.request, world.project.id, [
+    { title: 'Fix the flaky test', assignUser: world.userId },
+  ]);
   const invite = await post<{ code: string }>(page.request, `/api/teams/${world.team.id}/invites`, {
     expiresIn: '7d',
     maxUses: null,

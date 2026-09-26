@@ -281,7 +281,6 @@ function IssueDetail({
             issue={issue}
             access={access}
             canTriage={canTriage}
-            projectBase={base}
             labelsOpen={labelsOpen}
             onLabelsOpenChange={setLabelsOpen}
           />

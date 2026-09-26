@@ -34,7 +34,7 @@ import {
   type Membership,
 } from './access';
 import { recordActivity } from './activity';
-import { attachToParent } from './attachments';
+import { attachToParent, referencedPendingUploads } from './attachments';
 import { isClaimValid, renewClaimOnWrite } from './claimLease';
 import { emitAfterCommit } from './events';
 import {
@@ -378,36 +378,6 @@ function sortedLabels(refs: readonly NamedRef[]): string[] {
 
 function priorityLabel(value: PriorityValue): string {
   return PRIORITIES[value]?.label ?? 'No priority';
-}
-
-const ATTACHMENT_URL = /\/api\/attachments\/([A-Za-z0-9_-]{1,64})\//g;
-
-/**
- * The actor's pending uploads (in the team) that a description links to: images pasted into the
- * editor upload before the task is saved and are attached with it.
- */
-function referencedPendingUploads(
-  db: DbExecutor,
-  actor: Actor,
-  teamId: string,
-  markdown: string,
-): string[] {
-  const ids = [...new Set([...markdown.matchAll(ATTACHMENT_URL)].map((match) => match[1] ?? ''))];
-  if (ids.length === 0) return [];
-  return db
-    .select({ id: s.attachment.id })
-    .from(s.attachment)
-    .where(
-      and(
-        inArray(s.attachment.id, ids.slice(0, LIMITS.attachmentsPerItem)),
-        eq(s.attachment.parentType, 'pending'),
-        eq(s.attachment.uploaderId, actor.userId),
-        eq(s.attachment.teamId, teamId),
-        isNull(s.attachment.deletedAt),
-      ),
-    )
-    .all()
-    .map((row) => row.id);
 }
 
 const EXCERPT_LENGTH = 140;

@@ -4,7 +4,6 @@ import {
   count,
   desc,
   eq,
-  gt,
   gte,
   inArray,
   isNull,
@@ -15,8 +14,7 @@ import {
   type SQL,
 } from 'drizzle-orm';
 import { priorityByKey, type PriorityValue } from '@shared/constants';
-import { formatTaskRef, parseTaskRef } from '@shared/refs';
-import type { RoleSummary } from '@shared/schemas/core';
+import { parseTaskRef } from '@shared/refs';
 import {
   DUE_SOON_DAYS,
   MY_TASKS_MAX,
@@ -31,9 +29,8 @@ import type { DbExecutor } from '../db';
 import * as s from '../db/schema';
 import { errors } from '../lib/errors';
 import { likeContains } from '../lib/sql';
-import { appPaths } from '../lib/urls';
 import { listMemberships, requireMember, type Membership } from './access';
-import { getUserSummaries, getViaKeys } from './users';
+import { assignedTo, claimValidAt, toTaskCards, toTaskSummary, utcToday } from './taskViews';
 
 /**
  * My tasks (SPEC §1.9): every open task assigned to the caller, directly or through a role they
@@ -44,11 +41,6 @@ import { getUserSummaries, getViaKeys } from './users';
 // ---------------------------------------------------------------------------------------------
 // Dates (due dates are calendar dates without a time zone)
 // ---------------------------------------------------------------------------------------------
-
-/** Today's date as `YYYY-MM-DD` in UTC, the fallback when the caller doesn't say. */
-export function utcToday(now: Date = new Date()): string {
-  return now.toISOString().slice(0, 10);
-}
 
 /** `YYYY-MM-DD` plus `days` calendar days. */
 export function addDays(date: string, days: number): string {
@@ -117,44 +109,18 @@ function liveTaskCondition(scope: WorkScope): SQL | undefined {
   );
 }
 
-/** Tasks assigned to the caller directly or through one of their roles. */
-function assignedToCondition(db: DbExecutor, scope: WorkScope): SQL | undefined {
-  const direct = inArray(
-    s.task.id,
-    db
-      .select({ id: s.taskAssigneeUser.taskId })
-      .from(s.taskAssigneeUser)
-      .where(eq(s.taskAssigneeUser.userId, scope.userId)),
-  );
-  if (scope.roleIds.length === 0) return direct;
-  return or(
-    direct,
-    inArray(
-      s.task.id,
-      db
-        .select({ id: s.taskAssigneeRole.taskId })
-        .from(s.taskAssigneeRole)
-        .where(inArray(s.taskAssigneeRole.roleId, scope.roleIds)),
-    ),
-  );
-}
-
 /** Open tasks assigned to the caller: the base of My tasks and of the dashboard's lists. */
-export function assignedOpenCondition(db: DbExecutor, scope: WorkScope): SQL | undefined {
+export function assignedOpenCondition(scope: WorkScope): SQL | undefined {
   return and(
     liveTaskCondition(scope),
     eq(s.status.category, 'open'),
-    assignedToCondition(db, scope),
+    assignedTo(scope.userId, scope.roleIds),
   );
 }
 
 /** Tasks with a valid claim held by the caller (on the web or through any of their keys). */
 export function claimedByCondition(scope: WorkScope, now: Date): SQL | undefined {
-  return and(
-    liveTaskCondition(scope),
-    eq(s.task.claimedById, scope.userId),
-    gt(s.task.claimExpiresAt, now),
-  );
+  return and(liveTaskCondition(scope), eq(s.task.claimedById, scope.userId), claimValidAt(now));
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -163,12 +129,6 @@ export function claimedByCondition(scope: WorkScope, now: Date): SQL | undefined
 
 const taskColumns = {
   task: s.task,
-  status: {
-    id: s.status.id,
-    name: s.status.name,
-    color: s.status.color,
-    category: s.status.category,
-  },
   project: {
     id: s.project.id,
     key: s.project.key,
@@ -185,7 +145,7 @@ const taskColumns = {
   },
 };
 
-/** `select … from task` joined with its status, project and team. */
+/** `select … from task` joined with its status (for filters), project and team. */
 export function selectTasks(db: DbExecutor) {
   return db
     .select(taskColumns)
@@ -238,20 +198,9 @@ export function taskOrder(sort: MyTasksSort): SQL[] {
   }
 }
 
-/** Groups `[taskId, value]` rows by task id. */
-function groupByTask<T>(rows: ReadonlyArray<{ taskId: string } & T>): Map<string, T[]> {
-  const map = new Map<string, T[]>();
-  for (const { taskId, ...rest } of rows) {
-    const list = map.get(taskId) ?? [];
-    list.push(rest as unknown as T);
-    map.set(taskId, list);
-  }
-  return map;
-}
-
 /**
- * Wire shapes of the given rows: labels, assignees, the valid claim, blocked state and why each
- * task is the caller's. A handful of batched queries, whatever the number of rows.
+ * Wire shapes of the given rows: the tasks module's task summary (`toTaskCards`, a fixed number
+ * of batched queries) plus where each task lives and why it is the caller's.
  */
 export function toMyTasks(
   db: DbExecutor,
@@ -260,123 +209,29 @@ export function toMyTasks(
   now: Date = new Date(),
 ): MyTask[] {
   if (rows.length === 0) return [];
-  const ids = rows.map((row) => row.task.id);
-
-  const labels = groupByTask(
-    db
-      .select({
-        taskId: s.taskLabel.taskId,
-        id: s.label.id,
-        name: s.label.name,
-        color: s.label.color,
-      })
-      .from(s.taskLabel)
-      .innerJoin(s.label, eq(s.label.id, s.taskLabel.labelId))
-      .where(inArray(s.taskLabel.taskId, ids))
-      .orderBy(asc(s.label.name))
-      .all(),
-  );
-
-  const userAssignees = groupByTask(
-    db
-      .select({ taskId: s.taskAssigneeUser.taskId, userId: s.taskAssigneeUser.userId })
-      .from(s.taskAssigneeUser)
-      .where(inArray(s.taskAssigneeUser.taskId, ids))
-      .all(),
-  );
-  const roleAssignees = groupByTask<RoleSummary>(
-    db
-      .select({
-        taskId: s.taskAssigneeRole.taskId,
-        id: s.role.id,
-        slug: s.role.slug,
-        name: s.role.name,
-        color: s.role.color,
-      })
-      .from(s.taskAssigneeRole)
-      .innerJoin(s.role, eq(s.role.id, s.taskAssigneeRole.roleId))
-      .where(inArray(s.taskAssigneeRole.taskId, ids))
-      .orderBy(desc(s.role.position), asc(s.role.name))
-      .all(),
-  );
-
-  // A task is blocked while a live task it depends on is in an open-category status.
-  const blocker = db
-    .select({ id: s.task.id, statusId: s.task.statusId, deletedAt: s.task.deletedAt })
-    .from(s.task)
-    .as('blocker');
-  const blocked = new Set(
-    db
-      .select({ taskId: s.taskDependency.taskId })
-      .from(s.taskDependency)
-      .innerJoin(blocker, eq(blocker.id, s.taskDependency.blockedByTaskId))
-      .innerJoin(s.status, eq(s.status.id, blocker.statusId))
-      .where(
-        and(
-          inArray(s.taskDependency.taskId, ids),
-          isNull(blocker.deletedAt),
-          eq(s.status.category, 'open'),
-        ),
-      )
-      .all()
-      .map((row) => row.taskId),
-  );
-
-  const isClaimed = (task: TaskContextRow['task']) =>
-    task.claimedById !== null &&
-    task.claimedAt !== null &&
-    task.claimExpiresAt !== null &&
-    task.claimExpiresAt.getTime() > now.getTime();
-
-  const users = getUserSummaries(db, [
-    ...[...userAssignees.values()].flat().map((entry) => entry.userId),
-    ...rows.filter((row) => isClaimed(row.task)).map((row) => row.task.claimedById),
-  ]);
-  const keys = getViaKeys(
-    db,
-    rows.filter((row) => isClaimed(row.task)).map((row) => row.task.claimedViaKeyId),
+  const cards = new Map(
+    toTaskCards(
+      db,
+      rows.map((row) => row.task),
+      now,
+    ).map((card) => [card.id, card]),
   );
   const myRoles = new Set(scope.roleIds);
-
-  return rows.map(({ task, status, project, team }) => {
-    const assignedUsers = (userAssignees.get(task.id) ?? [])
-      .map((entry) => users.get(entry.userId))
-      .filter((user) => user !== undefined)
-      .sort((a, b) => a.name.localeCompare(b.name));
-    const assignedRoles = roleAssignees.get(task.id) ?? [];
-    const claimant = isClaimed(task) && task.claimedById ? users.get(task.claimedById) : undefined;
-    return {
-      id: task.id,
-      ref: formatTaskRef(project.key, task.number),
-      number: task.number,
-      title: task.title,
-      projectId: task.projectId,
-      teamId: task.teamId,
-      status,
-      priority: task.priority,
-      dueDate: task.dueDate,
-      labels: labels.get(task.id) ?? [],
-      assignees: { users: assignedUsers, roles: assignedRoles },
-      claim:
-        claimant && task.claimedAt && task.claimExpiresAt
-          ? {
-              user: claimant,
-              via: task.claimedViaKeyId ? (keys.get(task.claimedViaKeyId) ?? null) : null,
-              claimedAt: task.claimedAt.toISOString(),
-              expiresAt: task.claimExpiresAt.toISOString(),
-            }
-          : null,
-      blocked: blocked.has(task.id),
-      replyCount: task.replyCount,
-      updatedAt: task.updatedAt.toISOString(),
-      team,
-      project,
-      url: appPaths.task(team.slug, project.key, task.number),
-      assignment: {
-        direct: assignedUsers.some((user) => user.id === scope.userId),
-        roles: assignedRoles.filter((role) => myRoles.has(role.id)),
+  return rows.flatMap(({ task, project, team }): MyTask[] => {
+    const card = cards.get(task.id);
+    if (!card) return [];
+    return [
+      {
+        ...toTaskSummary(card),
+        team,
+        project,
+        url: card.path,
+        assignment: {
+          direct: card.assignees.users.some((user) => user.id === scope.userId),
+          roles: card.assignees.roles.filter((role) => myRoles.has(role.id)),
+        },
       },
-    };
+    ];
   });
 }
 
@@ -424,7 +279,7 @@ export function listMyTasks(deps: AppDeps, actor: Actor, query: MyTasksQuery): M
 
   const priorities: PriorityValue[] | undefined = query.priority?.map(priorityByKey);
   const where = and(
-    assignedOpenCondition(orm, scope),
+    assignedOpenCondition(scope),
     query.teamId ? eq(s.task.teamId, query.teamId) : undefined,
     query.projectId ? eq(s.task.projectId, query.projectId) : undefined,
     priorities && priorities.length > 0 ? inArray(s.task.priority, priorities) : undefined,

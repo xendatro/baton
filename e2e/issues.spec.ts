@@ -282,20 +282,14 @@ test('members see only what their permissions allow, and the tasks addressing an
   const team = seedTeam(owner, [other.user], ['CREATE_ISSUES', 'REPLY']);
   const project = await createProject(page, team, 'SEC');
   const issue = await createIssue(page, project.id, { title: 'Owner’s issue' });
-  withDatabase((db) => {
-    const status = db
-      .prepare('select id from status where project_id = ? and is_default = 1')
-      .get(project.id) as { id: string };
-    const now = Date.now();
-    db.prepare(
-      `insert into task (id, project_id, team_id, number, title, description, status_id, priority, position, author_id, reply_count, last_activity_at, created_at, updated_at)
-       values (?, ?, ?, 1, 'Add Retry-After everywhere', '', ?, 0, 'a0', ?, 0, ?, ?, ?)`,
-    ).run(`${issue.id}t`, project.id, team.id, status.id, userId(owner.email), now, now, now);
-    db.prepare('update project set task_seq = 1 where id = ?').run(project.id);
-    db.prepare(
-      "insert into task_issue_link (task_id, issue_id, kind, created_at) values (?, ?, 'fixes', ?)",
-    ).run(`${issue.id}t`, issue.id, now);
+  const task = await page.request.post(`/api/projects/${project.id}/tasks`, {
+    data: {
+      title: 'Add Retry-After everywhere',
+      issueLinks: [{ issueId: issue.id, kind: 'fixes' }],
+    },
+    headers: ORIGIN,
   });
+  expect(task.status(), await task.text()).toBe(201);
 
   const memberPage = other.page;
   await memberPage.goto(`/t/${team.slug}/p/SEC/issues/${issue.number}`);

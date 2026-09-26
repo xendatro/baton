@@ -99,7 +99,7 @@ function Tasks({ team, project }: { team: MeTeam; project: MeProject }) {
     {
       id: `tasks.${project.id}.view`,
       label: view === 'board' ? 'Switch to list view' : 'Switch to board view',
-      group: 'Tasks',
+      group: 'Board',
       icon: view === 'board' ? ListIcon : SquareKanbanIcon,
       keywords: ['toggle view', 'board', 'list', 'table'],
       shortcut: 'b',
@@ -108,7 +108,7 @@ function Tasks({ team, project }: { team: MeTeam; project: MeProject }) {
     {
       id: `tasks.${project.id}.mine`,
       label: 'Show tasks assigned to me',
-      group: 'Tasks',
+      group: 'Board',
       icon: UserIcon,
       keywords: ['my tasks', 'filter assignee me'],
       perform: () => setFilters(() => ({ ...EMPTY_FILTERS, assignee: ['me'] })),
@@ -118,7 +118,7 @@ function Tasks({ team, project }: { team: MeTeam; project: MeProject }) {
           {
             id: `tasks.${project.id}.clear`,
             label: 'Clear task filters',
-            group: 'Tasks',
+            group: 'Board',
             icon: FilterXIcon,
             keywords: ['reset filters'],
             perform: () => setFilters(() => EMPTY_FILTERS),

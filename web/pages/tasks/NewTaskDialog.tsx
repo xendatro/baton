@@ -96,7 +96,7 @@ export default function NewTaskDialog() {
           {
             id: 'task.create',
             label: routeChoice ? `New task in ${routeChoice.project.name}…` : 'New task…',
-            group: 'Tasks',
+            group: 'Projects',
             icon: SquarePenIcon,
             keywords: ['create task', 'add task', 'new issue card'],
             ...(routeChoice ? { shortcut: 'c' } : {}),
@@ -373,7 +373,7 @@ function TaskFields({
           <Switch checked={createMore} onCheckedChange={setCreateMore} />
           Create more
         </label>
-        <div className="flex items-center gap-2">
+        <div className="ml-auto flex items-center gap-2">
           <span className="hidden items-center gap-1 text-xs text-muted-foreground sm:inline-flex">
             <Kbd keys="mod+enter" />
           </span>

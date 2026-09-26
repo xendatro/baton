@@ -587,6 +587,8 @@ export function createIssue(
       .returning()
       .get();
     if (labels.length > 0) {
+      // Re-checked under the write lock: a label may have been deleted meanwhile.
+      projectLabels(tx, projectId, input.labelIds ?? []);
       tx.insert(s.issueLabel)
         .values(labels.map((label) => ({ issueId: issue.id, labelId: label.id })))
         .run();
@@ -690,6 +692,8 @@ export function updateIssue(
       .returning()
       .get();
     if (labelChange) {
+      // Re-checked under the write lock: a label may have been deleted meanwhile.
+      projectLabels(tx, issue.projectId, labelChange.ids);
       tx.delete(s.issueLabel).where(eq(s.issueLabel.issueId, issue.id)).run();
       if (labelChange.ids.length > 0) {
         tx.insert(s.issueLabel)

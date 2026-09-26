@@ -14,6 +14,8 @@ export const shellExtensions: ReadonlyArray<LazyExoticComponent<ComponentType>> 
   lazy(() => import('@web/pages/teams/NewTeamDialog')),
   // projects: "New project" dialog (`project.create`) and its palette command
   lazy(() => import('@web/pages/projects/NewProjectDialog')),
+  // issues: `i` and the palette's "New issue" inside a project
+  lazy(() => import('@web/pages/issues/IssuesShellExtension')),
   // admin: full-text search in the command palette
   lazy(() => import('@web/pages/admin/PaletteSearch')),
   // account: saves theme changes to the profile, settings palette commands

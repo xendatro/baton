@@ -6,8 +6,8 @@ import { expect, ORIGIN, signedInUser, test } from './support/fixtures.ts';
 /**
  * Flows that cross module boundaries: the team home's "New project" opening the projects
  * module's dialog, the team settings layout hosting the admin module's Audit log and Trash (with
- * permission-based navigation), project restores from Trash, and deleted teams restored from
- * account settings.
+ * permission-based navigation), project and issue restores from Trash (and issue rows in the
+ * audit log), and deleted teams restored from account settings.
  */
 
 test.use({ colorScheme: 'light' });
@@ -85,6 +85,42 @@ test('the team home creates a project through the projects dialog; Trash restore
   await page.getByRole('button', { name: 'Open' }).click();
   await expect(page).toHaveURL(new RegExp(`/t/${team.slug}/p/MC$`));
   await expect(page.getByRole('heading', { level: 1, name: 'Mission Control' })).toBeVisible();
+});
+
+test('an issue deleted from its page shows in Trash and the audit log, and restores', async ({
+  page,
+}) => {
+  await signedInUser(page);
+  const team = await createTeam(page, 'Issue Triage');
+  const project = await page.request.post(`/api/teams/${team.id}/projects`, {
+    data: { name: 'Help Desk', key: 'HD' },
+    headers: ORIGIN,
+  });
+  const { id: projectId } = (await project.json()) as { id: string };
+  const created = await page.request.post(`/api/projects/${projectId}/issues`, {
+    data: { title: 'Printer on fire' },
+    headers: ORIGIN,
+  });
+  expect(created.status()).toBe(201);
+
+  await page.goto(`/t/${team.slug}/p/HD/issues/1`);
+  await page.getByRole('button', { name: 'Resolve' }).click();
+  await expect(page.getByText('resolved this issue')).toBeVisible();
+  await page.getByRole('button', { name: 'More actions' }).click();
+  await page.getByRole('menuitem', { name: 'Delete issue' }).click();
+  await page.getByRole('alertdialog').getByRole('button', { name: 'Delete issue' }).click();
+  await expect(page).toHaveURL(new RegExp(`/t/${team.slug}/p/HD/issues$`));
+
+  await page.goto(`/t/${team.slug}/settings/audit-log`);
+  await expect(page.getByText('resolved issue HD#1')).toBeVisible();
+  await expect(page.getByText('deleted issue HD#1')).toBeVisible();
+
+  await page.goto(`/t/${team.slug}/settings/trash`);
+  await page.getByRole('button', { name: 'Restore issue Printer on fire' }).click();
+  await expect(page.locator('[data-sonner-toast]').getByText(/Restored HD#1/)).toBeVisible();
+  await page.getByRole('button', { name: 'Open' }).click();
+  await expect(page).toHaveURL(new RegExp(`/t/${team.slug}/p/HD/issues/1$`));
+  await expect(page.getByRole('heading', { level: 2, name: 'Printer on fire #1' })).toBeVisible();
 });
 
 test('members see Trash but not the Audit log, and no New project without the permission', async ({

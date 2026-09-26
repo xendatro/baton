@@ -1,5 +1,9 @@
 import {
-  closestCorners,
+  closestCenter,
+  getFirstCollision,
+  pointerWithin,
+  rectIntersection,
+  type CollisionDetection,
   DndContext,
   DragOverlay,
   KeyboardSensor,
@@ -94,23 +98,58 @@ export function Board({ board, canMove, canCreate, onMove, onQuickAdd, filtered 
   const { ref, height } = useFillViewport();
 
   const describe = (id: UniqueIdentifier) => cards.get(String(id))?.ref ?? 'task';
-  const place = (id: UniqueIdentifier | undefined) => {
-    if (id === undefined) return 'nowhere';
+  const place = (id: UniqueIdentifier) => {
     const statusId = columnOfItem(layout, id);
     const column = statusId ? (layout[statusId] ?? []) : [];
     const position = column.indexOf(String(id)) + 1;
-    const name = statusId ? statusNames.get(statusId) : undefined;
-    return name ? `${name}${position > 0 ? `, position ${position} of ${column.length}` : ''}` : '';
+    const name = statusId ? (statusNames.get(statusId) ?? '') : '';
+    return position > 0 ? `${name}, position ${position} of ${column.length}` : name;
+  };
+  /** What the card is over: another card ("RKT-2 in Open") or a column ("the Done column"). */
+  const target = (id: UniqueIdentifier) => {
+    const value = String(id);
+    if (value.startsWith(COLUMN_PREFIX)) {
+      return `the ${statusNames.get(value.slice(COLUMN_PREFIX.length)) ?? ''} column`;
+    }
+    const statusId = columnOfItem(layout, id);
+    return `${describe(id)} in ${statusId ? (statusNames.get(statusId) ?? '') : ''}`;
   };
   const announcements: Announcements = {
     onDragStart: ({ active }) => `Picked up ${describe(active.id)} in ${place(active.id)}.`,
     onDragOver: ({ active, over }) =>
-      over ? `${describe(active.id)} is now in ${place(active.id)}.` : undefined,
+      over && over.id !== active.id
+        ? `${describe(active.id)} is over ${target(over.id)}.`
+        : undefined,
     onDragEnd: ({ active, over }) =>
       over
-        ? `Dropped ${describe(active.id)} in ${place(active.id)}.`
+        ? `Dropped ${describe(active.id)} on ${target(over.id)}.`
         : `Dropped ${describe(active.id)}.`,
     onDragCancel: ({ active }) => `Cancelled moving ${describe(active.id)}.`,
+  };
+
+  /**
+   * Where a dragged card is: the card under it (pointer first, else the largest overlap, which is
+   * what keyboard moves produce) or, over a column's empty space, the column's nearest card.
+   */
+  const collisionDetection: CollisionDetection = (args) => {
+    const pointer = pointerWithin(args);
+    const hits = pointer.length > 0 ? pointer : rectIntersection(args);
+    const overId = getFirstCollision(hits, 'id');
+    if (overId === null) return [];
+    const value = String(overId);
+    if (value.startsWith(COLUMN_PREFIX)) {
+      const items = layout[value.slice(COLUMN_PREFIX.length)] ?? [];
+      if (items.length > 0) {
+        const nearest = closestCenter({
+          ...args,
+          droppableContainers: args.droppableContainers.filter((container) =>
+            items.includes(String(container.id)),
+          ),
+        });
+        return nearest.length > 0 ? nearest.slice(0, 1) : [{ id: overId }];
+      }
+    }
+    return [{ id: overId }];
   };
 
   const onDragStart = ({ active }: DragStartEvent) => {
@@ -161,7 +200,7 @@ export function Board({ board, canMove, canCreate, onMove, onQuickAdd, filtered 
   return (
     <DndContext
       sensors={sensors}
-      collisionDetection={closestCorners}
+      collisionDetection={collisionDetection}
       onDragStart={onDragStart}
       onDragOver={onDragOver}
       onDragEnd={onDragEnd}
@@ -197,9 +236,10 @@ export function Board({ board, canMove, canCreate, onMove, onQuickAdd, filtered 
           />
         ))}
       </div>
+      {/* No rotation or scaling: keyboard moves compare the overlay's rect with the cards'. */}
       <DragOverlay dropAnimation={{ duration: 150, easing: 'ease-out' }}>
         {active ? (
-          <div className="w-[17rem] rotate-1 cursor-grabbing rounded-lg border bg-card p-3 shadow-lg">
+          <div className="w-[17rem] cursor-grabbing rounded-lg border bg-card p-3 shadow-lg ring-2 ring-primary/30">
             <TaskCardBody task={active} />
           </div>
         ) : null}

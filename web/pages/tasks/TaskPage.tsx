@@ -17,7 +17,7 @@ import {
 import { useState, type ComponentProps, type ReactNode } from 'react';
 import { useNavigate, useParams } from 'react-router';
 import { toast } from 'sonner';
-import { LIMITS, type PriorityValue } from '@shared/constants';
+import { LIMITS, PRIORITIES, type PriorityValue } from '@shared/constants';
 import type { Attachment, MeProject, MeTeam } from '@shared/schemas/core';
 import type { Task, UpdateTaskInput } from '@shared/schemas/tasks';
 import { AttachmentList } from '@web/components/attachments/AttachmentList';
@@ -443,7 +443,10 @@ function TaskView({ task, team, project }: { task: Task; team: MeTeam; project: 
                   if (priority !== task.priority) quietly(save({ priority }, { priority }));
                 }}
               >
-                <PropertyButton disabled={!canUpdate} label="Priority">
+                <PropertyButton
+                  disabled={!canUpdate}
+                  label={`Priority: ${PRIORITIES[task.priority]?.label ?? 'No priority'}`}
+                >
                   <PriorityIcon value={task.priority} showLabel />
                 </PropertyButton>
               </PriorityPicker>
@@ -478,7 +481,10 @@ function TaskView({ task, team, project }: { task: Task; team: MeTeam; project: 
                   )
                 }
               >
-                <PropertyButton disabled={!canUpdate} label="Assignees">
+                <PropertyButton
+                  disabled={!canUpdate}
+                  label={`Assignees: ${assigneeNames(task) || 'none'}`}
+                >
                   {task.assignees.users.length || task.assignees.roles.length ? (
                     <span className="flex min-w-0 flex-wrap items-center gap-1.5">
                       {task.assignees.users.map((user) => (
@@ -523,7 +529,10 @@ function TaskView({ task, team, project }: { task: Task; team: MeTeam; project: 
                   )
                 }
               >
-                <PropertyButton disabled={!canUpdate} label="Labels">
+                <PropertyButton
+                  disabled={!canUpdate}
+                  label={`Labels: ${task.labels.map((label) => label.name).join(', ') || 'none'}`}
+                >
                   {task.labels.length ? (
                     <span className="flex flex-wrap gap-1">
                       {task.labels.map((label) => (
@@ -545,7 +554,7 @@ function TaskView({ task, team, project }: { task: Task; team: MeTeam; project: 
                 align="end"
                 onChange={(dueDate) => quietly(save({ dueDate }, { dueDate }))}
               >
-                <PropertyButton disabled={!canUpdate} label="Due date">
+                <PropertyButton disabled={!canUpdate} label={`Due date: ${task.dueDate ?? 'none'}`}>
                   {task.dueDate ? (
                     <DueDate
                       value={task.dueDate}
@@ -710,6 +719,14 @@ function TaskView({ task, team, project }: { task: Task; team: MeTeam; project: 
   );
 }
 
+/** "Mia, Leo, Backend" for accessible names. */
+function assigneeNames(task: Task): string {
+  return [
+    ...task.assignees.users.map((user) => user.name),
+    ...task.assignees.roles.map((role) => role.name),
+  ].join(', ');
+}
+
 function Property({
   label,
   hotkey,
@@ -743,7 +760,7 @@ function PropertyButton({
     <Button
       variant="ghost"
       size="sm"
-      title={label}
+      aria-label={label}
       className="h-auto min-h-8 w-full justify-start px-2 py-1 text-left font-normal whitespace-normal disabled:opacity-100"
       {...props}
     >

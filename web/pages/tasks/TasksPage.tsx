@@ -45,6 +45,7 @@ import {
 } from './filters';
 import { useAssignables, useBoard, useMoveTask, useTaskList } from './queries';
 import { TaskList, TaskListSkeleton } from './TaskList';
+import { useShadowingHotkey } from './useShadowingHotkey';
 
 /**
  * Tasks of a project (`/t/:team/p/:key/tasks`): the board or the list (`b` toggles, remembered per
@@ -90,7 +91,7 @@ function Tasks({ team, project }: { team: MeTeam; project: MeProject }) {
   const newTask = (statusId?: string) =>
     runShellAction('task.create', { projectId: project.id, statusId });
   useHotkey('b', toggleView, { description: 'Toggle board / list', group: 'Project' });
-  useHotkey('/', () => document.getElementById(FILTER_SEARCH_ID)?.focus(), {
+  useShadowingHotkey('/', () => document.getElementById(FILTER_SEARCH_ID)?.focus(), {
     description: 'Filter tasks',
     group: 'Project',
   });

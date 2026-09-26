@@ -241,3 +241,80 @@ describe('live events the web invalidates on', () => {
     );
   });
 });
+
+describe('tasks ↔ admin and teams', () => {
+  it('trashes a task, lists it for its author and restores it by ref over MCP', async () => {
+    const { team, project } = await setup();
+    const task = await call<{ id: string; ref: string }>(
+      memberKey,
+      'POST',
+      `/projects/${project.id}/tasks`,
+      { title: 'Ship the dashboard' },
+    );
+    expect(task.status).toBe(201);
+    expect((await call(memberKey, 'DELETE', `/tasks/${task.body.id}`)).status).toBe(200);
+
+    for (const key of [memberKey, ownerKey]) {
+      const trash = await call<{ items: Array<{ type: string; ref: string | null }> }>(
+        key,
+        'GET',
+        `/teams/${team.id}/trash?type=task`,
+      );
+      expect(trash.body.items).toEqual([
+        expect.objectContaining({ type: 'task', ref: `${project.key}-1` }),
+      ]);
+    }
+
+    const tool = await mcpAs(member);
+    const restored = await tool('restore_item', { item: `${project.key}-1` });
+    expect(restored).toMatchObject({ type: 'task', id: task.body.id });
+    expect(restored.url).toBe(`${ctx.env.baseUrl}/t/${team.slug}/p/${project.key}/tasks/1`);
+
+    const facets = await call<{ actions: string[] }>(
+      ownerKey,
+      'GET',
+      `/teams/${team.id}/audit-log/facets`,
+    );
+    expect(facets.body.actions).toEqual(
+      expect.arrayContaining(['task.created', 'task.deleted', 'task.restored']),
+    );
+  });
+
+  it('points to the project when a task sits in a deleted project', async () => {
+    const { project } = await setup();
+    await call(ownerKey, 'POST', `/projects/${project.id}/tasks`, { title: 'Inside' });
+    await call(ownerKey, 'DELETE', `/projects/${project.id}`);
+    await mcpAs(owner);
+    const client = clients.at(-1);
+    const result = await client?.callTool({
+      name: 'restore_item',
+      arguments: { item: `${project.key}-1` },
+    });
+    expect(result?.isError).toBe(true);
+    expect(JSON.stringify(result?.content)).toMatch(/Restore the project/);
+  });
+
+  it('counts open tasks on the team home and drops a removed member from assignments', async () => {
+    const { team, project } = await setup();
+    const task = await call<{ id: string }>(ownerKey, 'POST', `/projects/${project.id}/tasks`, {
+      title: 'Pair on it',
+      assigneeUserIds: [member.id],
+    });
+    const overview = await call<{ projects: Array<{ openTasks: number }> }>(
+      ownerKey,
+      'GET',
+      `/teams/${team.id}/overview`,
+    );
+    expect(overview.body.projects[0]?.openTasks).toBe(1);
+
+    expect((await call(ownerKey, 'DELETE', `/teams/${team.id}/members/${member.id}`)).status).toBe(
+      200,
+    );
+    const after = await call<{ assignees: { users: unknown[] } }>(
+      ownerKey,
+      'GET',
+      `/tasks/${task.body.id}`,
+    );
+    expect(after.body.assignees.users).toEqual([]);
+  });
+});

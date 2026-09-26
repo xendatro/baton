@@ -135,3 +135,36 @@ test('a deleted team is listed in account settings and restores from there', asy
     page.locator('[data-sidebar="menu-button"]').filter({ hasText: 'Phoenix Crew' }),
   ).toBeVisible();
 });
+
+test('a task deleted from its page is counted on the team home and restores from Trash', async ({
+  page,
+}) => {
+  await signedInUser(page);
+  const team = await createTeam(page, 'Task Force');
+  const project = await page.request.post(`/api/teams/${team.id}/projects`, {
+    data: { name: 'Operations', key: 'OPS' },
+    headers: ORIGIN,
+  });
+  const { id: projectId } = (await project.json()) as { id: string };
+  const created = await page.request.post(`/api/projects/${projectId}/tasks`, {
+    data: { title: 'Rotate the keys' },
+    headers: ORIGIN,
+  });
+  expect(created.status()).toBe(201);
+
+  await page.goto(`/t/${team.slug}`);
+  await expect(page.locator('#main').getByText('1 open task')).toBeVisible();
+
+  await page.goto(`/t/${team.slug}/p/OPS/tasks/1`);
+  await page.getByRole('button', { name: 'Task actions' }).click();
+  await page.getByRole('menuitem', { name: 'Delete task' }).click();
+  await page.getByRole('alertdialog').getByRole('button', { name: 'Delete task' }).click();
+  await expect(page).toHaveURL(new RegExp(`/t/${team.slug}/p/OPS/tasks$`));
+
+  await page.goto(`/t/${team.slug}/settings/trash`);
+  await page.getByRole('button', { name: 'Restore task Rotate the keys' }).click();
+  await expect(page.locator('[data-sonner-toast]', { hasText: 'Restored OPS-1' })).toBeVisible();
+  await page.getByRole('button', { name: 'Open' }).click();
+  await expect(page).toHaveURL(new RegExp(`/t/${team.slug}/p/OPS/tasks/1$`));
+  await expect(page.getByRole('heading', { level: 1, name: 'Rotate the keys' })).toBeVisible();
+});

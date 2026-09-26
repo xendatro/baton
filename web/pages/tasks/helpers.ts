@@ -1,6 +1,5 @@
 import type { UniqueIdentifier } from '@dnd-kit/core';
 import { PRIORITIES } from '@shared/constants';
-import { formatAge } from '@web/lib/format';
 import type { Status } from '@shared/schemas/projects';
 import type { BoardResponse, TaskCard } from '@shared/schemas/tasks';
 import type { ListGroup } from './filters';
@@ -143,8 +142,11 @@ export function leaseLeft(expiresAt: string, now: number): string {
   return rest ? `${hours} h ${rest} min left` : `${hours} h left`;
 }
 
-/** "Claimed just now", "Claimed 12m ago". */
+/** "Claimed just now", "Claimed 12m ago", "Claimed 3h ago", "Claimed 2d ago". */
 export function claimedAgo(claimedAt: string, now: number): string {
-  const age = formatAge(claimedAt, new Date(now));
-  return age === 'now' ? 'Claimed just now' : `Claimed ${age} ago`;
+  const minutes = Math.floor((now - Date.parse(claimedAt)) / 60_000);
+  if (minutes < 1) return 'Claimed just now';
+  if (minutes < 60) return `Claimed ${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  return hours < 24 ? `Claimed ${hours}h ago` : `Claimed ${Math.floor(hours / 24)}d ago`;
 }

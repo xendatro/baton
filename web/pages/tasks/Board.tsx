@@ -89,7 +89,12 @@ export interface BoardProps {
 export function Board({ board, canMove, canCreate, onMove, onQuickAdd, filtered }: BoardProps) {
   const [dragLayout, setDragLayout] = useState<Layout | null>(null);
   const [activeId, setActiveId] = useState<string | null>(null);
-  const layout = dragLayout ?? layoutOf(board);
+  // BAT-7: after a drop the dropped layout stays until the board data changes. The optimistic
+  // move lands a tick later, and meanwhile the card rendered in its old column, so the drop
+  // animation flew a ghost of it back there.
+  const [settling, setSettling] = useState<{ layout: Layout; board: BoardResponse } | null>(null);
+  const layout =
+    dragLayout ?? (settling?.board === board ? settling.layout : null) ?? layoutOf(board);
   const cards = useMemo(
     () => new Map(board.columns.flatMap((column) => column.tasks.map((task) => [task.id, task]))),
     [board],
@@ -169,6 +174,7 @@ export function Board({ board, canMove, canCreate, onMove, onQuickAdd, filtered 
 
   const onDragStart = ({ active }: DragStartEvent) => {
     setActiveId(String(active.id));
+    setSettling(null);
     setDragLayout(layoutOf(board));
   };
 
@@ -207,8 +213,8 @@ export function Board({ board, canMove, canCreate, onMove, onQuickAdd, filtered 
     }
     setActiveId(null);
     setDragLayout(null);
-    if (!over) return;
-    const move = dropTarget(before, after, String(active.id));
+    const move = over ? dropTarget(before, after, String(active.id)) : null;
+    setSettling(move ? { layout: after, board } : null);
     if (move) onMove({ taskId: String(active.id), ...move });
   };
 

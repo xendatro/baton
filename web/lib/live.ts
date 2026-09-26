@@ -317,14 +317,13 @@ export function connectLiveEvents(options: LiveConnectionOptions): () => void {
   async function pollLoop() {
     let cursor: string | null = null;
     let failures = 0;
-    // Events may have been missed while the stream looked open.
-    void queryClient.invalidateQueries();
     while (!closed) {
       try {
         const result = await poll(cursor, polling.signal);
         if (closed) return;
-        if (cursor !== null && result.reset) void queryClient.invalidateQueries();
-        if (failures > 0) void queryClient.invalidateQueries();
+        // Refetch everything once the first cursor is known (events may have been missed while
+        // the stream looked open, or before the cursor), after a reset, and after failures.
+        if (cursor === null || result.reset || failures > 0) void queryClient.invalidateQueries();
         failures = 0;
         cursor = result.cursor;
         setState('open');

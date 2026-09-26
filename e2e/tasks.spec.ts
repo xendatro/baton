@@ -483,3 +483,54 @@ test("shows an agent's reply as the agent via its owner's key", async ({ page, p
   await expect(page.getByText(/via .*’s MSI/)).toBeVisible();
   await page.screenshot({ path: 'test-results/bat-6-inbox.png' });
 });
+
+// BAT-7: after a mouse drop in another column, a ghost of the card flew back to its old column
+// (the card rendered there for a moment before the optimistic move landed).
+test('a card dropped in another column never shows up in its old column again', async ({
+  page,
+}) => {
+  const project = await setup(page);
+  await createTask(page, project, { title: 'Ghostbuster' });
+  await page.goto(`${project.path}/tasks`);
+  const card = column(page, 'Open').getByRole('link', { name: /Ghostbuster/ });
+  await expect(card).toBeVisible();
+  const done = column(page, 'Done');
+
+  // Record whether the card is ever put back into the Open column after the drop.
+  await column(page, 'Open')
+    .locator('ol')
+    .evaluate((list: unknown) => {
+      // No DOM types in e2e/.
+      const page = globalThis as unknown as {
+        dropped?: boolean;
+        ghost?: boolean;
+        MutationObserver: new (callback: () => void) => {
+          observe(target: unknown, options: { childList: boolean; subtree: boolean }): void;
+        };
+      };
+      const element = list as { querySelector(selector: string): unknown };
+      new page.MutationObserver(() => {
+        if (page.dropped && element.querySelector('[data-task-id]')) page.ghost = true;
+      }).observe(list, { childList: true, subtree: true });
+    });
+
+  const from = await card.boundingBox();
+  const to = await done.boundingBox();
+  if (!from || !to) throw new Error('no layout');
+  await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(from.x + from.width / 2 + 20, from.y + from.height / 2, { steps: 4 });
+  await page.mouse.move(to.x + to.width / 2, to.y + 80, { steps: 12 });
+  await expect(done.getByRole('link', { name: /Ghostbuster/ })).toBeVisible();
+  await page.evaluate(() => {
+    (globalThis as unknown as { dropped: boolean }).dropped = true;
+  });
+  await page.mouse.up();
+
+  await expect(done.getByRole('link', { name: /Ghostbuster/ })).toBeVisible();
+  await page.waitForTimeout(600);
+  expect(await page.evaluate(() => (globalThis as unknown as { ghost?: boolean }).ghost)).toBe(
+    undefined,
+  );
+  expect(await boardOrder(page, project)).toMatchObject({ Open: [], Done: ['Ghostbuster'] });
+});

@@ -49,7 +49,9 @@ function readBody(calls: ReadonlyArray<[RequestInfo | URL, RequestInit?]>) {
     .filter(
       ([input, init]) => requestUrl(input) === '/api/notifications/read' && init?.method === 'POST',
     )
-    .map(([, init]) => JSON.parse(String(init?.body)) as unknown);
+    .map(([, init]) =>
+      typeof init?.body === 'string' ? (JSON.parse(init.body) as unknown) : null,
+    );
 }
 
 describe('InboxPage', () => {

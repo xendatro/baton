@@ -56,7 +56,7 @@ export function WorkTaskRow({
             </span>
             {task.blocked ? (
               <span
-                className="inline-flex shrink-0 items-center gap-1 rounded-full border border-amber-500/40 bg-amber-500/10 px-1.5 text-[0.7rem] font-medium text-amber-800 dark:text-amber-300"
+                className="hidden shrink-0 items-center gap-1 rounded-full border border-amber-500/40 bg-amber-500/10 px-1.5 text-[0.7rem] font-medium text-amber-800 sm:inline-flex dark:text-amber-300"
                 title="Waiting on another task that is still open"
               >
                 <BanIcon className="size-3" aria-hidden="true" />
@@ -68,6 +68,13 @@ export function WorkTaskRow({
           <span className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground sm:hidden">
             <span className="font-mono">{task.ref}</span>
             <span>{task.status.name}</span>
+            {task.dueDate ? <DueDate value={task.dueDate} done={done} /> : null}
+            {task.blocked ? (
+              <span className="inline-flex items-center gap-1 font-medium text-amber-700 dark:text-amber-400">
+                <BanIcon className="size-3" aria-hidden="true" />
+                Blocked
+              </span>
+            ) : null}
             {hint ? <span className="truncate">{hint}</span> : null}
             {showContext ? <span className="truncate">{task.project.name}</span> : null}
             {claimBadge && task.claim ? (
@@ -87,7 +94,13 @@ export function WorkTaskRow({
             </span>
           ) : null}
         </span>
-        <span className="hidden shrink-0 items-center gap-1.5 md:flex">
+        <span
+          className={cn(
+            'hidden shrink-0 items-center gap-1.5',
+            // Lists with context (the dashboard) are narrower: the title comes first.
+            claimBadge ? 'hidden' : showContext ? '2xl:flex' : 'md:flex',
+          )}
+        >
           {task.labels.slice(0, LABELS_SHOWN).map((label) => (
             <LabelChip key={label.id} label={label} />
           ))}
@@ -138,9 +151,10 @@ export function WorkTaskRow({
             </span>
           )
         ) : null}
-        {task.dueDate ? (
-          <DueDate value={task.dueDate} done={done} className={cn('mt-0.5 shrink-0 sm:mt-0')} />
-        ) : null}
+        {/* A fixed-width column, so due dates line up from row to row. */}
+        <span className="hidden w-24 shrink-0 justify-end sm:flex">
+          {task.dueDate ? <DueDate value={task.dueDate} done={done} /> : null}
+        </span>
       </Link>
     </li>
   );

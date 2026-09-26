@@ -152,7 +152,7 @@ function NotificationList({
             <Fragment key={notification.id}>
               {header ? (
                 <li
-                  className="border-b bg-muted/40 px-3 py-1.5 text-xs font-medium text-muted-foreground first:rounded-t-lg sm:px-4 [&:not(:first-child)]:border-t"
+                  className="border-b bg-muted/40 px-3 py-1.5 text-xs font-medium text-muted-foreground first:rounded-t-lg sm:px-4"
                   aria-hidden="true"
                 >
                   {day}
@@ -213,13 +213,13 @@ function NotificationRow({ notification, teams, onRead }: NotificationRowProps) 
       <span
         aria-hidden="true"
         className={cn(
-          'mt-3 size-2 shrink-0 rounded-full',
+          'mt-2 size-2 shrink-0 rounded-full sm:mt-3',
           unread ? 'bg-primary' : 'bg-transparent',
         )}
       />
       <span
         className={cn(
-          'mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-full border bg-background',
+          'mt-0.5 hidden size-8 shrink-0 items-center justify-center rounded-full border bg-background sm:flex',
           kind.tone,
         )}
         title={kind.label}
@@ -243,7 +243,7 @@ function NotificationRow({ notification, teams, onRead }: NotificationRowProps) 
           </span>
           <span
             className={cn(
-              'mt-1 block truncate text-sm',
+              'mt-1 line-clamp-2 block text-sm break-words sm:truncate',
               unread ? 'font-semibold text-foreground' : 'font-medium text-foreground/90',
             )}
           >

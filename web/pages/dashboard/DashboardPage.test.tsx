@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ActivityEntry } from '@shared/schemas/core';
 import type { DashboardResponse } from '@shared/schemas/work';
 import { mockApi, testMe } from '@web/test/mockApi';
-import { myTask, renderWorkPage } from '@web/pages/my-tasks/testing';
+import { myTask, renderWorkPage, requestUrl } from '@web/pages/my-tasks/testing';
 import DashboardPage from './DashboardPage';
 
 afterEach(() => {
@@ -166,7 +166,7 @@ describe('DashboardPage', () => {
     expect(router.state.location.pathname).toBe('/join/AbCd123456');
     // No dashboard request without teams.
     expect(
-      fetchMock.mock.calls.some(([input]) => String(input).includes('/api/me/dashboard')),
+      fetchMock.mock.calls.some(([input]) => requestUrl(input).includes('/api/me/dashboard')),
     ).toBe(false);
   });
 

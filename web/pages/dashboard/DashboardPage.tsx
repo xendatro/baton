@@ -141,7 +141,7 @@ function StatCard({ label, value, hint, icon: Icon, to, onClick, tone }: StatCar
       >
         {value}
       </span>
-      <span className="truncate text-xs text-muted-foreground">{hint}</span>
+      <span className="line-clamp-2 text-xs text-muted-foreground">{hint}</span>
     </>
   );
   const className =
@@ -174,7 +174,7 @@ function StatCards({ data }: { data: DashboardResponse }) {
       <StatCard
         label="Assigned to you"
         value={counts.assigned}
-        hint="Open tasks, yours or your roles’"
+        hint="Open, for you or your roles"
         icon={ListTodoIcon}
         to="/my-tasks"
       />
@@ -189,7 +189,7 @@ function StatCards({ data }: { data: DashboardResponse }) {
       <StatCard
         label="Due this week"
         value={counts.dueSoon}
-        hint="Today and the next 6 days"
+        hint="In the next 7 days"
         icon={CalendarClockIcon}
         to="/my-tasks?due=week"
         tone="warning"
@@ -197,7 +197,7 @@ function StatCards({ data }: { data: DashboardResponse }) {
       <StatCard
         label="Claimed"
         value={counts.claimed}
-        hint="By you and your agents"
+        hint="By you or your agents"
         icon={BotIcon}
         onClick={showClaimed}
         tone="success"

@@ -1,4 +1,5 @@
 import type { AppDeps } from '../context';
+import { expireClaims } from '../services/claims';
 import type { JobDefinition } from './types';
 
 /** Name and schedule of the claim sweeper (SPEC §1.8: expired claims are swept every minute). */
@@ -21,9 +22,5 @@ export function claimSweepJob(sweep: ClaimSweeper): JobDefinition {
   };
 }
 
-/**
- * Claim jobs (owner: tasks module). The tasks module registers its sweeper here:
- *
- *   export const claimJobs: JobDefinition[] = [claimSweepJob(expireClaims)];
- */
-export const claimJobs: JobDefinition[] = [];
+/** Claim jobs (owner: tasks module): the sweeper that expires stale claims every minute. */
+export const claimJobs: JobDefinition[] = [claimSweepJob(expireClaims)];

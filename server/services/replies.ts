@@ -196,6 +196,7 @@ export function createReply(
       .returning()
       .get();
     itemResolvers[item.type].adjustReplies(tx, item.id, 1, true);
+    itemResolvers[item.type].onThreadWrite?.(tx, actor, item.id);
     attachToParent(tx, actor, input.attachmentIds ?? [], {
       type: 'reply',
       id: reply.id,
@@ -260,6 +261,7 @@ export function editReply(
       .where(eq(s.reply.id, id))
       .returning()
       .get();
+    itemResolvers[item.type].onThreadWrite?.(tx, actor, item.id);
     recordActivity(tx, actor, {
       teamId: item.teamId,
       projectId: item.projectId,

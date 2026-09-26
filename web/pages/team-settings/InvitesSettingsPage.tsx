@@ -118,6 +118,7 @@ const STATUS_LABELS: Record<Invite['status'], string> = {
   active: 'Active',
   expired: 'Expired',
   used_up: 'Used up',
+  inactive: 'Inactive',
 };
 
 /** "in 7d", "Never", "Expired"; in a sentence (`inline`): "expires in 7d", "never expires". */
@@ -179,7 +180,15 @@ function InviteRow({
           {invite.code}
         </code>
         {!active ? (
-          <Badge variant="outline" className="shrink-0">
+          <Badge
+            variant="outline"
+            className="shrink-0"
+            title={
+              invite.status === 'inactive'
+                ? 'Its creator can no longer create invites, so the link no longer works'
+                : undefined
+            }
+          >
             {STATUS_LABELS[invite.status]}
           </Badge>
         ) : null}

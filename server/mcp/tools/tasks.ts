@@ -84,7 +84,9 @@ const issueLinkField = z.object({
   kind: z
     .enum(ISSUE_LINK_KINDS)
     .default('fixes')
-    .describe('fixes: the issue is resolved when the task is done; relates: just a reference'),
+    .describe(
+      "fixes: the issue is resolved when the task is done (only for the issue's author or with RESOLVE_ISSUES); relates: just a reference",
+    ),
 });
 const leaseField = z
   .number()
@@ -490,7 +492,7 @@ const createFromIssueTool = defineTool({
   name: 'create_task_from_issue',
   title: 'Create task from issue',
   description:
-    "Turns an issue into a task: the issue's title, a link back to the issue plus its body as the description, its labels, and a `fixes` link (finishing the task resolves the issue).",
+    "Turns an issue into a task: the issue's title, a link back to the issue plus its body as the description, its labels, and a `fixes` link (finishing the task resolves the issue; a `relates` link if you may not resolve the issue).",
   input: z.object({
     issue: z.string().min(1).describe('Issue: KEY#51, team-slug/KEY#51, or issue id'),
     project: projectRef.optional().describe("Project for the task (default: the issue's project)"),

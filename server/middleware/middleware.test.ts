@@ -1,6 +1,6 @@
 import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { RATE_LIMITS } from '@shared/constants';
+import { LIMITS, RATE_LIMITS } from '@shared/constants';
 import { apiErrorSchema } from '@shared/schemas/common';
 import {
   apiKeyListResponseSchema,
@@ -13,6 +13,8 @@ import { authenticateApiKey } from '../services/apiKeys';
 import {
   bearer,
   createApiKey,
+  createProject,
+  createTeam,
   createTestContext,
   createUser,
   json,
@@ -20,6 +22,7 @@ import {
   web,
   type TestContext,
 } from '../test/helpers';
+import { AUTH_BODY_MAX_BYTES, JSON_BODY_MAX_BYTES, LARGEST_TEXT_FIELD_BYTES } from './bodyLimit';
 
 let ctx: TestContext;
 
@@ -277,5 +280,103 @@ describe('API keys', () => {
     );
     expect(res.status).toBe(400);
     expect(await errorCode(res)).toBe('validation_failed');
+  });
+});
+
+describe('request bodies (SEC-01)', () => {
+  /** A request body that records whether anything read it. */
+  function watchedBody(bytes: Uint8Array) {
+    const watch = { read: false };
+    const body = new ReadableStream<Uint8Array>(
+      {
+        pull(controller) {
+          watch.read = true;
+          controller.enqueue(bytes);
+          controller.close();
+        },
+      },
+      { highWaterMark: 0 },
+    );
+    return { watch, init: { body, duplex: 'half' } as RequestInit };
+  }
+
+  it('turns anonymous requests away with 401 before reading the body', async () => {
+    const empty = await ctx.app.request('/api/teams', json('POST', {}));
+    expect(empty.status).toBe(401);
+    expect(await errorCode(empty)).toBe('unauthorized');
+
+    const { watch, init } = watchedBody(new TextEncoder().encode('{"body":"x"}'));
+    const res = await ctx.app.request('/api/replies', {
+      ...init,
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    });
+    expect(res.status).toBe(401);
+    expect(watch.read).toBe(false);
+  });
+
+  it('caps JSON bodies, by Content-Length or while they stream in', async () => {
+    const user = createUser(ctx.db);
+    const { key } = createApiKey(ctx.db, { userId: user.id });
+    const oversized = JSON.stringify({ name: 'x'.repeat(JSON_BODY_MAX_BYTES) });
+    const declared = await ctx.app.request('/api/teams', {
+      method: 'POST',
+      headers: {
+        ...bearer(key),
+        'Content-Type': 'application/json',
+        'Content-Length': String(oversized.length),
+      },
+      body: oversized,
+    });
+    expect(declared.status).toBe(413);
+    expect(await errorCode(declared)).toBe('payload_too_large');
+    // No Content-Length: counted while streaming.
+    const streamed = await ctx.app.request(
+      '/api/teams',
+      json('POST', JSON.parse(oversized), bearer(key)),
+    );
+    expect(streamed.status).toBe(413);
+    expect(await errorCode(streamed)).toBe('payload_too_large');
+  });
+
+  it('fits the largest text field (a README) with room to spare', async () => {
+    expect(LARGEST_TEXT_FIELD_BYTES + 64 * 1024).toBeLessThan(JSON_BODY_MAX_BYTES);
+    const owner = createUser(ctx.db);
+    const team = createTeam(ctx.db, { ownerId: owner.id });
+    const { project } = createProject(ctx.db, { teamId: team.team.id });
+    const { key } = createApiKey(ctx.db, { userId: owner.id });
+    // Every character is JSON-escaped to 6 bytes: the worst case.
+    const readme = '\u0001'.repeat(LIMITS.readme.max);
+    const res = await ctx.app.request(
+      `/api/projects/${project.id}`,
+      json('PATCH', { readme }, bearer(key)),
+    );
+    expect(res.status).toBe(200);
+  });
+
+  it('keeps Better Auth bodies small', async () => {
+    const res = await ctx.app.request(
+      '/api/auth/sign-in/email',
+      json('POST', { email: 'a@example.com', password: 'x'.repeat(AUTH_BODY_MAX_BYTES) }),
+    );
+    expect(res.status).toBe(413);
+    expect(await errorCode(res)).toBe('payload_too_large');
+  });
+
+  it('leaves uploads to their own, larger limit', async () => {
+    ctx.close();
+    ctx = createTestContext({ env: { MAX_UPLOAD_MB: '5' } });
+    const owner = createUser(ctx.db);
+    const team = createTeam(ctx.db, { ownerId: owner.id });
+    const { key } = createApiKey(ctx.db, { userId: owner.id });
+    const form = new FormData();
+    form.set('file', new File([new Uint8Array(3 * 1024 * 1024)], 'big.bin'));
+    form.set('teamId', team.team.id);
+    const res = await ctx.app.request('/api/attachments', {
+      method: 'POST',
+      headers: bearer(key),
+      body: form,
+    });
+    expect(res.status).toBe(201);
   });
 });

@@ -332,7 +332,7 @@ describe('profile input through Better Auth', () => {
 
   it('bounds and trims the display name', async () => {
     const { update, stored } = await setupUser();
-    expect((await update({ name: 'x'.repeat(100_000) })).status).toBe(400);
+    expect((await update({ name: 'x'.repeat(10_000) })).status).toBe(400);
     expect((await update({ name: '   ' })).status).toBe(400);
     expect((await update({ name: '  Mia  ' })).status).toBe(200);
     expect(stored()?.name).toBe('Mia');

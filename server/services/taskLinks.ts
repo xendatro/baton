@@ -14,7 +14,9 @@ import { change, type Changes } from '../lib/diff';
 import { errors } from '../lib/errors';
 import { appPaths } from '../lib/urls';
 import { recordActivity } from './activity';
+import type { Membership } from './access';
 import { emitAfterCommit } from './events';
+import { canTriageIssue } from './issues';
 import { notifyUsers, type NotifiedSet } from './notifications';
 import { subscriberIds } from './subscriptions';
 
@@ -381,13 +383,16 @@ function issueTaskLabels(tx: Tx, issueId: string): string[] {
 
 /**
  * Changes the issues `subject` addresses. New issues must be live issues of the same team; an
- * issue already linked takes the new kind. Every issue whose link changed gets an
+ * issue already linked takes the new kind. A `fixes` link resolves the issue once the task is
+ * done, so adding one (or turning a link into one) needs the right to resolve that issue: being
+ * its author or having `RESOLVE_ISSUES` (`canTriageIssue`). Every issue whose link changed gets an
  * `issue.links_changed` audit row (`changes.linkedTasks`) and an `issue.updated` event. Returns
  * the task's audit change (`links`, as "API#3 (fixes)"), or {}.
  */
 export function applyIssueLinksChange(
   tx: Tx,
   actor: Actor,
+  membership: Membership,
   subject: LinkSubject,
   changeSet: IssueLinksChange,
 ): Changes {
@@ -416,6 +421,15 @@ export function applyIssueLinksChange(
     throw errors.validation('Linked issues must be issues of the same team', {
       issueIds: invalid,
     });
+  }
+  for (const id of touched) {
+    const issue = issues.get(id);
+    const becomesFixes = next.get(id) === 'fixes' && current.get(id) !== 'fixes';
+    if (issue && becomesFixes && !canTriageIssue(membership, issue.authorId)) {
+      throw errors.forbidden(
+        `Only the author of ${issueRef(issue)} or members who can resolve issues can link a task that fixes it; link it as "relates" instead`,
+      );
+    }
   }
 
   const labelsOf = (links: ReadonlyMap<string, IssueLinkKind>) =>

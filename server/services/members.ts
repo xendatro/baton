@@ -9,6 +9,7 @@ import { errors } from '../lib/errors';
 import { canModerateMember, getMembership, hasPermission, type Membership } from './access';
 import { recordActivity } from './activity';
 import { emitAfterCommit } from './events';
+import { revokeInvitesOf } from './invites';
 import { requireRole, teamRoles, type RoleRow } from './roles';
 import { requireTeam } from './teams';
 import { toUserSummary } from './users';
@@ -136,10 +137,16 @@ function moderationRefusal(membership: Membership, target: Membership): string |
 
 /**
  * Removes what hangs off a membership in the team that should not outlive it: direct task
- * assignments (claims expire on their own). Roles go with the membership (ON DELETE CASCADE).
- * Returns how many task assignments were removed.
+ * assignments (claims expire on their own) and the invite links they created (revoked, so a
+ * removed member can't rejoin with their own link). Roles go with the membership (ON DELETE
+ * CASCADE). Returns how many task assignments were removed and invites revoked.
  */
-function clearMembership(tx: Tx, teamId: string, userId: string): number {
+function clearMembership(
+  tx: Tx,
+  actor: Actor,
+  teamId: string,
+  userId: string,
+): { unassignedTasks: number; revokedInvites: number } {
   const tasks = tx
     .select({ id: s.task.id })
     .from(s.task)
@@ -155,7 +162,8 @@ function clearMembership(tx: Tx, teamId: string, userId: string): number {
   tx.delete(s.teamMember)
     .where(and(eq(s.teamMember.teamId, teamId), eq(s.teamMember.userId, userId)))
     .run();
-  return tasks.length;
+  const revokedInvites = revokeInvitesOf(tx, actor, teamId, userId);
+  return { unassignedTasks: tasks.length, revokedInvites };
 }
 
 /** Removes a member from the team (`MANAGE_MEMBERS`; never the owner or yourself). */
@@ -176,7 +184,7 @@ export function removeMember(
   const member = loadMember(orm, teamId, userId);
 
   deps.db.write((tx) => {
-    const unassigned = clearMembership(tx, teamId, userId);
+    const cleared = clearMembership(tx, actor, teamId, userId);
     recordActivity(tx, actor, {
       teamId,
       entityType: 'member',
@@ -186,7 +194,7 @@ export function removeMember(
         username: member.user.username,
         name: member.user.name,
         roles: member.roles.map((role) => role.name),
-        unassignedTasks: unassigned,
+        ...cleared,
       },
     });
     emitAfterCommit(tx, {
@@ -209,7 +217,7 @@ export function leaveTeam(deps: AppDeps, actor: Actor, teamId: string): { ok: tr
   }
   const member = loadMember(orm, teamId, actor.userId);
   deps.db.write((tx) => {
-    const unassigned = clearMembership(tx, teamId, actor.userId);
+    const cleared = clearMembership(tx, actor, teamId, actor.userId);
     recordActivity(tx, actor, {
       teamId,
       entityType: 'member',
@@ -219,7 +227,7 @@ export function leaveTeam(deps: AppDeps, actor: Actor, teamId: string): { ok: tr
         username: member.user.username,
         name: member.user.name,
         roles: member.roles.map((role) => role.name),
-        unassignedTasks: unassigned,
+        ...cleared,
       },
     });
     emitAfterCommit(tx, {

@@ -119,10 +119,16 @@ test('the collapsed sidebar shows the logo mark alone and an unread dot', async 
       userId,
       now,
     );
+    // The inbox only shows notifications about live items, so mention a real project README.
+    const projectId = `e2e${randomBytes(8).toString('hex')}`;
+    db.prepare(
+      `insert into project (id, team_id, name, key, color, created_at, updated_at)
+       values (?, ?, 'Unread project', 'UNR', '#6366f1', ?, ?)`,
+    ).run(projectId, teamId, now, now);
     db.prepare(
       `insert into notification (id, user_id, team_id, type, entity_type, entity_id, title, url, created_at)
-       values (?, ?, ?, 'mention', 'task', 'x', 'Ping', '/', ?)`,
-    ).run(`n${randomBytes(8).toString('hex')}`, userId, teamId, now);
+       values (?, ?, ?, 'mention', 'project', ?, 'Ping', '/', ?)`,
+    ).run(`n${randomBytes(8).toString('hex')}`, userId, teamId, projectId, now);
   });
 
   await openDashboard(page);

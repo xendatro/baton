@@ -41,9 +41,11 @@ import {
   notifyAssigned,
   notifyMentions,
   notifyUsers,
+  refreshNotificationText,
   type NotificationTarget,
   type NotifiedSet,
 } from './notifications';
+import { canTriageIssue } from './issues';
 import { requireProject } from './projects';
 import { indexSearch } from './search';
 import { autoSubscribe } from './subscriptions';
@@ -561,7 +563,7 @@ export function createTask(
       applyBlockersChange(tx, subject, { add: input.blockedByTaskIds });
     }
     if (input.issueLinks?.length) {
-      applyIssueLinksChange(tx, actor, subject, { add: input.issueLinks });
+      applyIssueLinksChange(tx, actor, membership, subject, { add: input.issueLinks });
     }
     attachToParent(
       tx,
@@ -618,7 +620,8 @@ export function createTask(
  * Creates a task from an issue (the issue page's "Create task"): the issue's title, a link back
  * to the issue at the top of the description followed by the issue's body, the issue's labels
  * (matched by name in the task's project) and a `fixes` link, so finishing the task resolves the
- * issue. Audited on both: `task.created` (`meta.fromIssue`) and `issue.links_changed`.
+ * issue. Members who may not resolve the issue (not its author, no `RESOLVE_ISSUES`) get a
+ * `relates` link instead. Audited on both: `task.created` (`meta.fromIssue`) and `issue.links_changed`.
  */
 export function createTaskFromIssue(
   deps: AppDeps,
@@ -627,7 +630,7 @@ export function createTaskFromIssue(
   input: CreateTaskFromIssueInput,
 ): Task {
   const { orm } = deps.db;
-  const { team } = requireProject(orm, actor, projectId);
+  const { team, membership } = requireProject(orm, actor, projectId);
   const found = orm
     .select({ issue: s.issue, key: s.project.key })
     .from(s.issue)
@@ -673,7 +676,13 @@ export function createTaskFromIssue(
       title: issue.title,
       description,
       labelIds,
-      issueLinks: [{ issueId: issue.id, kind: 'fixes' }],
+      // `fixes` resolves the issue when the task is done: only for those who may resolve it.
+      issueLinks: [
+        {
+          issueId: issue.id,
+          kind: canTriageIssue(membership, issue.authorId) ? 'fixes' : 'relates',
+        },
+      ],
     },
     { fromIssue: ref },
   );
@@ -881,7 +890,10 @@ export function updateTask(
     const subject = linkSubject(current, project.key);
     if (input.blockedBy) Object.assign(changes, applyBlockersChange(tx, subject, input.blockedBy));
     if (input.issueLinks) {
-      Object.assign(changes, applyIssueLinksChange(tx, actor, subject, input.issueLinks));
+      Object.assign(
+        changes,
+        applyIssueLinksChange(tx, actor, membership, subject, input.issueLinks),
+      );
     }
 
     if (input.statusId !== undefined && input.statusId !== current.statusId) {
@@ -949,6 +961,7 @@ export function updateTask(
       });
     }
     const target = notificationTarget(updated, project, team, updated.description);
+    if (changes.title || changes.description) refreshNotificationText(tx, target);
     if (addedUsers.length || addedRoles.length) {
       autoSubscribe(
         tx,

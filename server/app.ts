@@ -10,6 +10,7 @@ import type { ConfigResponse } from '@shared/schemas/core';
 import type { AppDeps, AppEnv } from './context';
 import { clientIp } from './lib/clientIp';
 import { AppError, errors, type ErrorCode } from './lib/errors';
+import { inviteCodeHint } from './lib/security';
 import { toValidationIssues } from './lib/validate';
 import { mcpRoutes } from './mcp/server';
 import { mountApiRoutes } from './routes';
@@ -30,6 +31,20 @@ const NON_SPA_PREFIXES = ['/api', '/mcp', '/healthz'];
 function isNonSpaPath(requestPath: string): boolean {
   return NON_SPA_PREFIXES.some(
     (prefix) => requestPath === prefix || requestPath.startsWith(`${prefix}/`),
+  );
+}
+
+/** Paths that carry an invite code: the join page and the invite preview/accept endpoints. */
+const INVITE_CODE_PATH = /^(\/api\/invites\/|\/join\/)([^/]+)/;
+
+/**
+ * The request path as the request log records it. Invite codes are working join links, so the
+ * log keeps only a hint of them (`/api/invites/DtYC…/accept`).
+ */
+export function loggedPath(requestPath: string): string {
+  return requestPath.replace(
+    INVITE_CODE_PATH,
+    (_match, prefix: string, code: string) => `${prefix}${inviteCodeHint(code)}`,
   );
 }
 
@@ -66,7 +81,7 @@ export function createApp(options: CreateAppOptions): Hono<AppEnv> {
     await next();
     const entry = {
       method: c.req.method,
-      path: c.req.path,
+      path: loggedPath(c.req.path),
       status: c.res.status,
       ms: Math.round(performance.now() - started),
     };

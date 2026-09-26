@@ -34,7 +34,7 @@ import { recordActivity } from './activity';
 import { attachToParent, referencedPendingUploads } from './attachments';
 import { emitAfterCommit } from './events';
 import { labelsOf } from './labels';
-import { notifyMentions } from './notifications';
+import { notifyMentions, refreshNotificationText } from './notifications';
 import { statusesOf } from './statuses';
 import { getUserSummaries } from './users';
 
@@ -574,6 +574,7 @@ export function updateProject(
       projectId: project.id,
     });
     if (readmeChanged) {
+      refreshNotificationText(tx, readmeTarget(row, team.slug));
       notifyMentions(tx, actor, readmeTarget(row, team.slug), readme, {
         previousBody: project.readme,
       });

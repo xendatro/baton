@@ -1,3 +1,5 @@
+import type { Context } from 'hono';
+import type { BodyData } from 'hono/utils/body';
 import { validator } from 'hono/validator';
 import type { z } from 'zod';
 import { errors } from './errors';
@@ -41,3 +43,15 @@ export const validateParams = <T extends z.ZodType>(schema: T) =>
 
 export const validateForm = <T extends z.ZodType>(schema: T) =>
   validator('form', (value) => parseInput(schema, value));
+
+/**
+ * Reads a multipart/form-data body (`c.req.parseBody()`). A body that isn't valid multipart (no
+ * or a wrong boundary, truncated parts) is a 400 `validation_failed` with `message`, not a 500.
+ */
+export async function parseMultipartBody(c: Context, message: string): Promise<BodyData> {
+  try {
+    return await c.req.parseBody();
+  } catch {
+    throw errors.validation(message);
+  }
+}

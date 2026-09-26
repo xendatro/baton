@@ -14,6 +14,7 @@ import { decodeCursor, encodeCursor, timeIdCursorSchema } from '../lib/cursor';
 import type { Changes } from '../lib/diff';
 import { errors } from '../lib/errors';
 import { newId } from '../lib/ids';
+import { inviteCodeHint } from '../lib/security';
 import { likePrefix } from '../lib/sql';
 import { appPaths } from '../lib/urls';
 import {
@@ -245,6 +246,23 @@ function resolveEntityUrls(
   return urls;
 }
 
+/**
+ * The row's `meta` as readers may see it. Invite codes are working join links, and seeing them
+ * needs `MANAGE_INVITES`, not `VIEW_AUDIT_LOG`: rows store only a hint (`inviteCodeHint`), and
+ * rows written before that are cut down to one here.
+ */
+function readableMeta(row: ActivityRow): Record<string, unknown> {
+  const { meta } = row;
+  const code = row.entityType === 'invite' ? meta.code : undefined;
+  const inviteCode = meta.inviteCode;
+  if (typeof code !== 'string' && typeof inviteCode !== 'string') return meta;
+  return {
+    ...meta,
+    ...(typeof code === 'string' ? { code: inviteCodeHint(code) } : {}),
+    ...(typeof inviteCode === 'string' ? { inviteCode: inviteCodeHint(inviteCode) } : {}),
+  };
+}
+
 /** Hydrates activity rows into wire entries (actor summaries, via-key snapshots, URLs). */
 export function toActivityEntries(db: DbExecutor, rows: readonly ActivityRow[]): ActivityEntry[] {
   const users = getUserSummaries(
@@ -265,7 +283,7 @@ export function toActivityEntries(db: DbExecutor, rows: readonly ActivityRow[]):
     entityId: row.entityId,
     action: row.action,
     changes: row.changes,
-    meta: row.meta,
+    meta: readableMeta(row),
     url: urls.get(entityKey(row.entityType, row.entityId)) ?? null,
     createdAt: row.createdAt.toISOString(),
   }));

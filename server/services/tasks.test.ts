@@ -500,6 +500,92 @@ describe('links', () => {
   });
 });
 
+describe('fixes links need the right to resolve the issue (SEC-02)', () => {
+  function issueRow(id: string) {
+    return ctx.db.orm.select().from(s.issue).where(eq(s.issue.id, id)).get();
+  }
+
+  it('refuses a fixes link from a member who may not resolve the issue, over REST too', async () => {
+    setEveryone(EVERYONE_DEFAULTS.filter((permission) => permission !== 'RESOLVE_ISSUES'));
+    const issue = createIssue(ctx.db, { project: project.project, authorId: owner.id });
+    const key = createApiKey(ctx.db, { userId: mia.id }).key;
+
+    // Created straight in a done status: the issue must not be resolved by the back door.
+    const created = await ctx.app.request(
+      `/api/projects/${project.project.id}/tasks`,
+      json(
+        'POST',
+        {
+          title: 'fix it',
+          statusId: statusId(done),
+          issueLinks: [{ issueId: issue.id, kind: 'fixes' }],
+        },
+        bearer(key),
+      ),
+    );
+    expect(created.status).toBe(403);
+    expect(apiErrorSchema.parse(await created.json()).error.message).toMatch(/relates/);
+    expect(issueRow(issue.id)).toMatchObject({ resolved: false });
+    expect(ctx.db.orm.select().from(s.task).all()).toHaveLength(0);
+
+    // Adding the link, or turning a relates link into fixes, on the member's own task.
+    const own = newTask('mine', { issueLinks: [{ issueId: issue.id, kind: 'relates' }] }, web(mia));
+    const upgrade = await ctx.app.request(
+      `/api/tasks/${own.id}/issues/${issue.id}`,
+      json('PUT', { kind: 'fixes' }, bearer(key)),
+    );
+    expect(upgrade.status).toBe(403);
+    expect(() =>
+      updateTask(ctx.deps, web(mia), own.id, {
+        issueLinks: { set: [{ issueId: issue.id, kind: 'fixes' }] },
+      }),
+    ).toThrow(/relates/);
+    const moved = updateTask(ctx.deps, web(mia), own.id, { statusId: statusId(done) });
+    expect(moved.issues.map((link) => [link.kind, link.resolved])).toEqual([['relates', false]]);
+    expect(issueRow(issue.id)).toMatchObject({ resolved: false, resolvedById: null });
+  });
+
+  it('lets authors and RESOLVE_ISSUES holders link fixes, which others may then finish', () => {
+    setEveryone(EVERYONE_DEFAULTS.filter((permission) => permission !== 'RESOLVE_ISSUES'));
+    const own = createIssue(ctx.db, { project: project.project, authorId: mia.id });
+    const other = createIssue(ctx.db, { project: project.project, authorId: owner.id });
+    // Mia may resolve her own issue, so she may link a task that fixes it.
+    const task = newTask(
+      'fix mine',
+      { issueLinks: [{ issueId: own.id, kind: 'fixes' }] },
+      web(mia),
+    );
+    // The owner (who may resolve anything) links Mia's task to fix the owner's issue.
+    updateTask(ctx.deps, web(owner), task.id, {
+      issueLinks: { add: [{ issueId: other.id, kind: 'fixes' }] },
+    });
+    // Keeping an existing fixes link in a set needs nothing more.
+    updateTask(ctx.deps, web(mia), task.id, {
+      issueLinks: {
+        set: [
+          { issueId: own.id, kind: 'fixes' },
+          { issueId: other.id, kind: 'fixes' },
+        ],
+      },
+    });
+    updateTask(ctx.deps, web(mia), task.id, { statusId: statusId(done) });
+    expect(issueRow(own.id)).toMatchObject({ resolved: true, resolvedById: mia.id });
+    expect(issueRow(other.id)).toMatchObject({ resolved: true, resolvedById: mia.id });
+  });
+
+  it('links a task created from an issue with relates when the member may not resolve it', () => {
+    setEveryone(EVERYONE_DEFAULTS.filter((permission) => permission !== 'RESOLVE_ISSUES'));
+    const issue = createIssue(ctx.db, { project: project.project, authorId: owner.id });
+    const task = createTaskFromIssue(ctx.deps, web(mia), project.project.id, { issueId: issue.id });
+    expect(task.issues.map((link) => link.kind)).toEqual(['relates']);
+    const ownIssue = createIssue(ctx.db, { project: project.project, authorId: mia.id });
+    const fromOwn = createTaskFromIssue(ctx.deps, web(mia), project.project.id, {
+      issueId: ownIssue.id,
+    });
+    expect(fromOwn.issues.map((link) => link.kind)).toEqual(['fixes']);
+  });
+});
+
 describe('creating a task from an issue', () => {
   it('copies the title, links back, copies labels and links it with fixes', async () => {
     const label = ctx.db.orm

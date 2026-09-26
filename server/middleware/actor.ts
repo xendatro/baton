@@ -74,3 +74,14 @@ export function requireActor(c: Context<AppEnv>): Actor {
   if (!actor) throw errors.unauthorized();
   return actor;
 }
+
+/**
+ * 401 for anonymous requests, before any route reads, parses or validates the body (a route's
+ * validators run before its handler's `requireActor`). Runs after `actorMiddleware`.
+ */
+export function signedInMiddleware(): MiddlewareHandler<AppEnv> {
+  return async (c, next) => {
+    requireActor(c);
+    await next();
+  };
+}

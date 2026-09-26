@@ -25,7 +25,12 @@ import { recordActivity } from './activity';
 import { attachmentsByParent, attachToParent, referencedPendingUploads } from './attachments';
 import { emitAfterCommit } from './events';
 import { findItem, itemResolvers, requireItem, type ItemInfo } from './items';
-import { notifyMentions, notifyReply, type NotificationTarget } from './notifications';
+import {
+  notifyMentions,
+  notifyReply,
+  refreshNotificationText,
+  type NotificationTarget,
+} from './notifications';
 import { indexSearch } from './search';
 import { autoSubscribe } from './subscriptions';
 import { getUserSummaries, getViaKeys } from './users';
@@ -289,9 +294,9 @@ export function editReply(
       title: '',
       text: text.plain,
     });
-    notifyMentions(tx, actor, notificationTarget(item, id, next.body), next.body, {
-      previousBody: row.body,
-    });
+    const target = notificationTarget(item, id, next.body);
+    refreshNotificationText(tx, target);
+    notifyMentions(tx, actor, target, next.body, { previousBody: row.body });
     emitAfterCommit(tx, {
       type: 'reply.updated',
       teamId: item.teamId,

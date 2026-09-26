@@ -7,7 +7,7 @@ import { idSchema } from '@shared/schemas/common';
 import { listAttachmentsQuerySchema, uploadAttachmentFieldsSchema } from '@shared/schemas/core';
 import type { AppEnv } from '../context';
 import { errors } from '../lib/errors';
-import { parseInput, validateParams, validateQuery } from '../lib/validate';
+import { parseInput, parseMultipartBody, validateParams, validateQuery } from '../lib/validate';
 import { requireActor } from '../middleware/actor';
 import { byUser, rateLimit } from '../middleware/rateLimit';
 import {
@@ -37,16 +37,18 @@ const uploadSizeLimit: MiddlewareHandler<AppEnv> = (c, next) =>
       ),
   })(c, next);
 
+const UPLOAD_FORMAT_MESSAGE = 'Send the file as multipart/form-data in the "file" field';
+
 attachmentRoutes.post(
   '/attachments',
   rateLimit({ name: 'uploads', key: byUser }),
   uploadSizeLimit,
   async (c) => {
     const actor = requireActor(c);
-    const body = await c.req.parseBody();
+    const body = await parseMultipartBody(c, UPLOAD_FORMAT_MESSAGE);
     const file = body.file;
     if (!(file instanceof File)) {
-      throw errors.validation('Send the file as multipart/form-data in the "file" field');
+      throw errors.validation(UPLOAD_FORMAT_MESSAGE);
     }
     const fields = parseInput(uploadAttachmentFieldsSchema, {
       teamId: body.teamId,

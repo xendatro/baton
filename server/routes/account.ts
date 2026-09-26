@@ -13,7 +13,7 @@ import {
 import { idSchema } from '@shared/schemas/common';
 import type { AppEnv } from '../context';
 import { errors } from '../lib/errors';
-import { validateJson, validateParams } from '../lib/validate';
+import { parseMultipartBody, validateJson, validateParams } from '../lib/validate';
 import { requireActor } from '../middleware/actor';
 import { byUser, rateLimit } from '../middleware/rateLimit';
 import {
@@ -75,16 +75,18 @@ const avatarSizeLimit: MiddlewareHandler<AppEnv> = (c, next) => {
   })(c, next);
 };
 
+const AVATAR_FORMAT_MESSAGE = 'Send the image as multipart/form-data in the "file" field';
+
 accountRoutes.post(
   '/me/avatar',
   rateLimit({ name: 'uploads', key: byUser }),
   avatarSizeLimit,
   async (c) => {
     const actor = requireActor(c);
-    const body = await c.req.parseBody();
+    const body = await parseMultipartBody(c, AVATAR_FORMAT_MESSAGE);
     const file = body.file;
     if (!(file instanceof File)) {
-      throw errors.validation('Send the image as multipart/form-data in the "file" field');
+      throw errors.validation(AVATAR_FORMAT_MESSAGE);
     }
     const profile = await setAvatar(c.var.deps, actor, {
       filename: file.name,

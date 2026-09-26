@@ -165,3 +165,11 @@ Later notes win over the module sections above where they disagree.
 
 - The work module still counts tasks assigned to a team's `@everyone` role as "mine", but the tasks module refuses such assignments, so that path only matters for data written outside the services.
 - Linux `npm ci` and e2e were not run (Windows only), as in earlier waves.
+
+## Security fixes (SEC-01 to SEC-09)
+
+- Every `/api` route except `/api/auth/*` sits behind `signedInMiddleware` (server/middleware/actor.ts) and a 2 MB JSON body cap (server/middleware/bodyLimit.ts); only `GET /api/config`, registered on the app before the API router, is public. A new public endpoint must be registered the same way, and a new upload route must be added to `UPLOAD_PATHS` in server/routes/index.ts with its own `bodyLimit`. Read multipart bodies with `parseMultipartBody` (server/lib/validate.ts), never `c.req.parseBody()` directly.
+- `applyIssueLinksChange` takes the actor's membership: a new `fixes` link needs `canTriageIssue`. Any new way to create links must go through it.
+- Code that ends a membership must call `revokeInvitesOf(tx, actor, teamId, userId)` (server/services/invites.ts) in the same transaction. Audit meta must never hold a full invite code: use `inviteCodeHint`.
+- Notifications about trashed items are filtered when read (`liveSubjectCondition` in server/services/notifications.ts); a new notification subject type needs a case there. Edits of text that notifications quote call `refreshNotificationText(tx, target)`.
+- Pending uploads need a content permission (`PENDING_UPLOAD_PERMISSIONS`) and are capped per member at a tenth of the team quota (`pendingUploadCapBytes`), both in server/services/attachments.ts.

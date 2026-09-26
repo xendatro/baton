@@ -37,7 +37,12 @@ import { recordActivity } from './activity';
 import { attachmentsByParent, attachToParent, referencedPendingUploads } from './attachments';
 import { emitAfterCommit } from './events';
 import { trashedProject } from './items';
-import { notifyMentions, notifyUsers, type NotificationTarget } from './notifications';
+import {
+  notifyMentions,
+  notifyUsers,
+  refreshNotificationText,
+  type NotificationTarget,
+} from './notifications';
 import { requireProject } from './projects';
 import { buildFtsQuery, indexSearch } from './search';
 import { autoSubscribe, subscriberIds } from './subscriptions';
@@ -716,6 +721,7 @@ export function updateIssue(
         text,
       });
     }
+    if (titleChanged || bodyChanged) refreshNotificationText(tx, notificationTarget(next, context));
     if (bodyChanged) {
       notifyMentions(tx, actor, notificationTarget(next, context), body, {
         previousBody: issue.body,

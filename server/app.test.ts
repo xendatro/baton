@@ -7,7 +7,14 @@ import { apiErrorSchema } from '@shared/schemas/common';
 import { configResponseSchema } from '@shared/schemas/core';
 import { errors } from './lib/errors';
 import { validateJson } from './lib/validate';
-import { createTestContext, json, type TestContext } from './test/helpers';
+import {
+  bearer,
+  createApiKey,
+  createTestContext,
+  createUser,
+  json,
+  type TestContext,
+} from './test/helpers';
 import { VERSION } from './version';
 
 let ctx: TestContext | undefined;
@@ -22,6 +29,11 @@ afterEach(() => {
 function setup(options?: Parameters<typeof createTestContext>[0]): TestContext {
   ctx = createTestContext(options);
   return ctx;
+}
+
+/** An API key's Authorization header (every /api endpoint but /api/config needs a signed-in user). */
+function signedIn(context: TestContext): Record<string, string> {
+  return bearer(createApiKey(context.db, { userId: createUser(context.db).id }).key);
 }
 
 async function errorOf(res: Response) {
@@ -66,21 +78,27 @@ describe('GET /api/config', () => {
 });
 
 describe('errors', () => {
-  it('returns a JSON 404 for unknown API routes', async () => {
-    const { app } = setup();
+  it('returns a JSON 404 for unknown API routes (401 before signing in)', async () => {
+    const context = setup();
+    const headers = signedIn(context);
     for (const [method, url] of [
       ['GET', '/api/nope'],
       ['POST', '/api/teams/x/nope'],
       ['GET', '/mcp/nope'],
     ] as const) {
-      const res = await app.request(url, { method });
+      const res = await context.app.request(url, { method, headers });
       expect(res.status, url).toBe(404);
       expect((await errorOf(res)).code).toBe('not_found');
     }
+    const anonymous = await context.app.request('/api/nope');
+    expect(anonymous.status).toBe(401);
+    expect((await errorOf(anonymous)).code).toBe('unauthorized');
   });
 
   it('maps AppError, validation errors and unexpected errors to the error envelope', async () => {
-    const { app } = setup();
+    const context = setup();
+    const { app } = context;
+    const headers = signedIn(context);
     app.get('/api/test/conflict', () => {
       throw errors.conflict('Already taken', { field: 'slug' });
     });
@@ -91,7 +109,7 @@ describe('errors', () => {
       throw new Error('secret internals');
     });
 
-    const conflict = await app.request('/api/test/conflict');
+    const conflict = await app.request('/api/test/conflict', { headers });
     expect(conflict.status).toBe(409);
     expect(await errorOf(conflict)).toEqual({
       code: 'conflict',
@@ -99,7 +117,7 @@ describe('errors', () => {
       details: { field: 'slug' },
     });
 
-    const invalid = await app.request('/api/test/validate', json('POST', { name: 'x' }));
+    const invalid = await app.request('/api/test/validate', json('POST', { name: 'x' }, headers));
     expect(invalid.status).toBe(400);
     const invalidError = await errorOf(invalid);
     expect(invalidError.code).toBe('validation_failed');
@@ -109,16 +127,16 @@ describe('errors', () => {
 
     const malformed = await app.request('/api/test/validate', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...headers },
       body: '{nope',
     });
     expect(malformed.status).toBe(400);
     expect((await errorOf(malformed)).code).toBe('validation_failed');
 
-    const valid = await app.request('/api/test/validate', json('POST', { name: 'ok' }));
+    const valid = await app.request('/api/test/validate', json('POST', { name: 'ok' }, headers));
     expect(await valid.json()).toEqual({ name: 'ok' });
 
-    const crash = await app.request('/api/test/crash');
+    const crash = await app.request('/api/test/crash', { headers });
     expect(crash.status).toBe(500);
     expect(await errorOf(crash)).toEqual({ code: 'internal', message: 'Something went wrong' });
   });
@@ -185,9 +203,13 @@ describe('SPA serving', () => {
 
   it('never falls back to the SPA for API, MCP or health paths', async () => {
     const { app } = setup({ webDir: webBuild() });
-    for (const route of ['/api/unknown', '/mcp/x', '/healthz/x']) {
+    for (const [route, status] of [
+      ['/api/unknown', 401],
+      ['/mcp/x', 404],
+      ['/healthz/x', 404],
+    ] as const) {
       const res = await app.request(route);
-      expect(res.status, route).toBe(404);
+      expect(res.status, route).toBe(status);
       expect(res.headers.get('content-type')).toContain('application/json');
     }
     expect((await app.request('/healthz')).status).toBe(200);

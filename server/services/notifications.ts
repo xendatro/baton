@@ -1,4 +1,4 @@
-import { and, count, desc, eq, inArray, isNull, lt, or } from 'drizzle-orm';
+import { and, count, desc, eq, inArray, isNull, lt, or, sql } from 'drizzle-orm';
 import type { NotificationType } from '@shared/constants';
 import type { Paginated } from '@shared/schemas/common';
 import type {
@@ -196,6 +196,26 @@ export function notifyReply(
   );
 }
 
+/** Notification types whose snippet is an excerpt of the subject's text (body, description). */
+const TEXT_SNIPPET_TYPES = ['mention', 'role_mention', 'assigned', 'reply'] as const;
+
+/**
+ * Brings the notifications already sent about `target` up to date after its text was edited:
+ * every one gets the new title, and those quoting the text (`TEXT_SNIPPET_TYPES`) a new snippet,
+ * so text removed by an edit doesn't live on in inboxes. Call inside the edit's transaction.
+ */
+export function refreshNotificationText(tx: Tx, target: NotificationTarget): void {
+  const about = and(
+    eq(s.notification.entityType, target.entityType),
+    eq(s.notification.entityId, target.entityId),
+  );
+  tx.update(s.notification).set({ title: target.title }).where(about).run();
+  tx.update(s.notification)
+    .set({ snippet: target.snippet ? excerpt(target.snippet, SNIPPET_LENGTH) : '' })
+    .where(and(about, inArray(s.notification.type, [...TEXT_SNIPPET_TYPES])))
+    .run();
+}
+
 // ---------------------------------------------------------------------------------------------
 // Inbox
 // ---------------------------------------------------------------------------------------------
@@ -223,11 +243,35 @@ function toNotifications(db: DbExecutor, rows: readonly NotificationRow[]): Noti
   }));
 }
 
-/** The actor's notifications from teams they still belong to. */
+/**
+ * The notification's subject is live: its issue, task, reply (and that reply's issue or task) or
+ * project is not in Trash, nor is the project it belongs to. Deleted items disappear from lists
+ * (SPEC §1.12), and the stored title and snippet would otherwise keep showing deleted text; the
+ * notification comes back if the item is restored. Subjects of other types are always shown.
+ */
+const liveSubjectCondition = sql`(case ${s.notification.entityType}
+  when 'issue' then exists (
+    select 1 from ${s.issue} i join ${s.project} p on p.id = i.project_id
+    where i.id = ${s.notification.entityId} and i.deleted_at is null and p.deleted_at is null)
+  when 'task' then exists (
+    select 1 from ${s.task} t join ${s.project} p on p.id = t.project_id
+    where t.id = ${s.notification.entityId} and t.deleted_at is null and p.deleted_at is null)
+  when 'reply' then exists (
+    select 1 from ${s.reply} r join ${s.project} p on p.id = r.project_id
+    left join ${s.issue} i on r.parent_type = 'issue' and i.id = r.parent_id
+    left join ${s.task} t on r.parent_type = 'task' and t.id = r.parent_id
+    where r.id = ${s.notification.entityId} and r.deleted_at is null and p.deleted_at is null
+      and ((i.id is not null and i.deleted_at is null) or (t.id is not null and t.deleted_at is null)))
+  when 'project' then exists (
+    select 1 from ${s.project} p where p.id = ${s.notification.entityId} and p.deleted_at is null)
+  else 1 end)`;
+
+/** The actor's notifications from teams they still belong to, about items that aren't deleted. */
 function visibleCondition(db: DbExecutor, actor: Actor) {
   return and(
     eq(s.notification.userId, actor.userId),
     inArray(s.notification.teamId, memberTeamIds(db, actor.userId)),
+    liveSubjectCondition,
   );
 }
 

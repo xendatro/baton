@@ -1,6 +1,11 @@
 import type { Hono, MiddlewareHandler } from 'hono';
 import type { AppEnv } from '../context';
-import { actorMiddleware } from '../middleware/actor';
+import { actorMiddleware, signedInMiddleware } from '../middleware/actor';
+import {
+  AUTH_BODY_MAX_BYTES,
+  JSON_BODY_MAX_BYTES,
+  requestBodyLimit,
+} from '../middleware/bodyLimit';
 import { csrfMiddleware } from '../middleware/csrf';
 import { byClientIp, byUser, rateLimit } from '../middleware/rateLimit';
 import { accountRoutes } from './account';
@@ -95,15 +100,30 @@ function exceptAuth(middleware: MiddlewareHandler<AppEnv>): MiddlewareHandler<Ap
   return (c, next) => (isAuthPath(c.req.path) ? next() : middleware(c, next));
 }
 
+/** Upload routes, which stream multipart bodies under their own (larger) size limits. */
+const UPLOAD_PATHS: ReadonlySet<string> = new Set(['/api/attachments', '/api/me/avatar']);
+
+/** The JSON body limit, except for the upload routes' multipart bodies. */
+function jsonBodyLimit(): MiddlewareHandler<AppEnv> {
+  const limit = requestBodyLimit(JSON_BODY_MAX_BYTES);
+  return (c, next) =>
+    c.req.method === 'POST' && UPLOAD_PATHS.has(c.req.path) ? next() : limit(c, next);
+}
+
 /**
  * Mounts every router under /api behind the shared middleware: auth endpoints are rate limited per
- * IP; everything else resolves the actor (session cookie or API key, plus the verification and
- * username guards), enforces CSRF for cookie requests and rate limits writes per user.
+ * IP and take small bodies only; everything else resolves the actor (session cookie or API key,
+ * plus the verification and username guards), turns anonymous requests away with a 401 before
+ * any body is read, enforces CSRF for cookie requests, rate limits writes per user and caps the
+ * body size. (`GET /api/config`, the one public endpoint, is registered on the app before this.)
  */
 export function mountApiRoutes(api: Hono<AppEnv>): void {
   api.use('/auth/*', authRateLimit());
+  api.use('/auth/*', requestBodyLimit(AUTH_BODY_MAX_BYTES));
   api.use('*', exceptAuth(actorMiddleware()));
+  api.use('*', exceptAuth(signedInMiddleware()));
   api.use('*', exceptAuth(csrfMiddleware()));
   api.use('*', exceptAuth(rateLimit({ name: 'writes', key: byUser, writesOnly: true })));
+  api.use('*', exceptAuth(jsonBodyLimit()));
   for (const router of routers) api.route('/', router);
 }

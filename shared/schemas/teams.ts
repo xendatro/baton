@@ -258,7 +258,8 @@ export const INVITE_EXPIRY_LABELS: Readonly<Record<InviteExpiry, string>> = {
 /** Max-uses choices offered by the web app (null = unlimited). The API accepts any 1–10000. */
 export const INVITE_MAX_USES_OPTIONS = [null, 1, 5, 10, 25, 50, 100] as const;
 
-export const INVITE_STATUSES = ['active', 'expired', 'used_up'] as const;
+/** `inactive`: its creator can no longer invite (lost `CREATE_INVITES`), so the link doesn't work. */
+export const INVITE_STATUSES = ['active', 'expired', 'used_up', 'inactive'] as const;
 export type InviteStatus = (typeof INVITE_STATUSES)[number];
 
 export const inviteSchema = z.object({

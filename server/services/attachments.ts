@@ -5,6 +5,7 @@ import { fileTypeFromBuffer } from 'file-type';
 import mime from 'mime-types';
 import type { AttachmentParentType } from '@shared/constants';
 import { LIMITS } from '@shared/constants';
+import type { Permission } from '@shared/permissions';
 import type { Attachment, UploadAttachmentFields } from '@shared/schemas/core';
 import type { Actor, AppDeps } from '../context';
 import type { DbExecutor, Tx } from '../db';
@@ -362,6 +363,78 @@ function formatMb(bytes: number): string {
   return `${Math.round((bytes / (1024 * 1024)) * 10) / 10} MB`;
 }
 
+const PARENT_NAMES: Readonly<Record<AttachmentParent['type'], string>> = {
+  issue: 'Issue',
+  task: 'Task',
+  reply: 'Reply',
+  project: 'Project',
+};
+
+/**
+ * Permissions that let a member write something a pending upload can end up in (a reply, an
+ * issue, a task, a README, or files and text on other people's items).
+ */
+const PENDING_UPLOAD_PERMISSIONS = [
+  'REPLY',
+  'CREATE_ISSUES',
+  'CREATE_TASKS',
+  'UPDATE_TASKS',
+  'EDIT_ANY_CONTENT',
+  'MANAGE_PROJECTS',
+] as const satisfies readonly Permission[];
+
+/**
+ * Pending uploads (files added in an editor before the text is saved) need a permission that can
+ * create or change content, so a member whose roles grant nothing can't fill the team's storage.
+ */
+function requireCanUploadPending(membership: Membership): void {
+  if (!PENDING_UPLOAD_PERMISSIONS.some((permission) => hasPermission(membership, permission))) {
+    throw errors.forbidden("You don't have permission to upload files in this team");
+  }
+}
+
+/**
+ * Most bytes of pending uploads one member may hold in a team: a tenth of the team's storage
+ * quota (at least one file of MAX_UPLOAD_MB), so nobody's unsaved uploads can take the whole
+ * quota. Pending files are purged after 24 hours or once saved into an item.
+ */
+export function pendingUploadCapBytes(
+  env: Pick<AppDeps['env'], 'maxUploadMb' | 'teamStorageQuotaMb'>,
+): number {
+  const mb = 1024 * 1024;
+  return Math.max(env.maxUploadMb * mb, Math.floor((env.teamStorageQuotaMb * mb) / 10));
+}
+
+function pendingBytes(db: DbExecutor, userId: string, teamId: string): number {
+  const row = db
+    .select({ total: sum(s.attachment.size) })
+    .from(s.attachment)
+    .where(
+      and(
+        eq(s.attachment.teamId, teamId),
+        eq(s.attachment.uploaderId, userId),
+        eq(s.attachment.parentType, 'pending'),
+        isNull(s.attachment.deletedAt),
+      ),
+    )
+    .get();
+  return Number(row?.total ?? 0);
+}
+
+function requirePendingRoom(
+  db: DbExecutor,
+  actor: Actor,
+  teamId: string,
+  bytes: number,
+  capBytes: number,
+): void {
+  if (pendingBytes(db, actor.userId, teamId) + bytes > capBytes) {
+    throw errors.payloadTooLarge(
+      `You have ${formatMb(capBytes)} of unsaved uploads in this team. Save or remove them first; unsaved uploads are deleted after a day.`,
+    );
+  }
+}
+
 /**
  * Stores an uploaded file for a team. Pending by default; with a parent it is attached right away
  * (needs edit rights on the parent). Enforces MAX_UPLOAD_MB and the team storage quota (soft-deleted
@@ -383,9 +456,11 @@ export async function uploadAttachment(
       : { type: input.parentType, id: input.parentId };
   if (parent) {
     const resolved = resolveParent(orm, parent);
-    if (resolved.teamId !== input.teamId)
-      throw errors.validation('The parent belongs to another team');
+    // Another team's item is "not found", exactly like a missing one (never leak existence).
+    if (resolved.teamId !== input.teamId) throw errors.notFound(PARENT_NAMES[parent.type]);
     if (!resolved.canEdit(membership)) throw errors.forbidden("You can't add files to this item");
+  } else {
+    requireCanUploadPending(membership);
   }
 
   const maxBytes = deps.env.maxUploadMb * 1024 * 1024;
@@ -398,6 +473,8 @@ export async function uploadAttachment(
       `This team has used its ${formatMb(quotaBytes)} of storage. Delete files or ask the owner to raise TEAM_STORAGE_QUOTA_MB.`,
     );
   }
+  const pendingCap = pendingUploadCapBytes(deps.env);
+  if (!parent) requirePendingRoom(orm, actor, input.teamId, input.bytes.byteLength, pendingCap);
 
   const id = newId();
   const now = new Date();
@@ -418,6 +495,7 @@ export async function uploadAttachment(
       if (teamStorageUsed(tx, input.teamId) + input.bytes.byteLength > quotaBytes) {
         throw errors.payloadTooLarge(`This team has used its ${formatMb(quotaBytes)} of storage.`);
       }
+      if (!parent) requirePendingRoom(tx, actor, input.teamId, input.bytes.byteLength, pendingCap);
       const inserted = tx
         .insert(s.attachment)
         .values({

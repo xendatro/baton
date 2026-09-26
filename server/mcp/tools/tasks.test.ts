@@ -289,4 +289,46 @@ describe('task MCP tools', () => {
     expect(released.replyCount).toBe(1);
     expect(await callError(client, 'renew_claim', { task: task.ref })).toMatch(/not claimed/);
   });
+
+  it('never resolves an issue for an agent that may not resolve it (SEC-02)', async () => {
+    const everyone = ctx.db.orm
+      .select()
+      .from(s.role)
+      .where(eq(s.role.teamId, teamId))
+      .all()
+      .find((role) => role.isEveryone);
+    ctx.db.orm
+      .update(s.role)
+      .set({ permissions: (everyone?.permissions ?? []).filter((p) => p !== 'RESOLVE_ISSUES') })
+      .where(eq(s.role.id, everyone?.id ?? ''))
+      .run();
+    const issue = createIssue(ctx.db, { project: project.project, authorId: owner.id });
+    const client = await connect(mia);
+
+    expect(
+      await callError(client, 'create_task', {
+        project: 'API',
+        title: 'fix it',
+        status: 'Done',
+        issues: [{ issue: 'API#1' }],
+      }),
+    ).toMatch(/relates/);
+    const task = await call<TaskOut>(client, 'create_task', {
+      project: 'API',
+      title: 'fix it',
+      issues: [{ issue: 'API#1', kind: 'relates' }],
+    });
+    expect(
+      await callError(client, 'update_task', {
+        task: task.ref,
+        issues: { add: [{ issue: 'API#1', kind: 'fixes' }] },
+      }),
+    ).toMatch(/relates/);
+    const fromIssue = await call<TaskOut>(client, 'create_task_from_issue', { issue: 'API#1' });
+    expect(fromIssue.issues).toEqual([expect.objectContaining({ ref: 'API#1', kind: 'relates' })]);
+    await call(client, 'move_task', { task: task.ref, status: 'Done' });
+    await call(client, 'move_task', { task: fromIssue.ref, status: 'Done' });
+    const row = ctx.db.orm.select().from(s.issue).where(eq(s.issue.id, issue.id)).get();
+    expect(row).toMatchObject({ resolved: false, resolvedById: null });
+  });
 });

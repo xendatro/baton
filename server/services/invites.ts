@@ -10,11 +10,11 @@ import {
   type InviteStatus,
 } from '@shared/schemas/teams';
 import type { Actor, AppDeps } from '../context';
-import type { DbExecutor } from '../db';
+import type { DbExecutor, Tx } from '../db';
 import * as s from '../db/schema';
 import { AppError, errors } from '../lib/errors';
 import { newId } from '../lib/ids';
-import { generateInviteCode } from '../lib/security';
+import { generateInviteCode, inviteCodeHint } from '../lib/security';
 import { getMembership, hasPermission, requirePermission } from './access';
 import { recordActivity } from './activity';
 import { emitAfterCommit } from './events';
@@ -29,9 +29,26 @@ import { getUserSummaries, toUserSummary } from './users';
 
 export type InviteRow = typeof s.invite.$inferSelect;
 
-export function inviteStatus(row: InviteRow, now: Date = new Date()): InviteStatus {
+/**
+ * Can the invite's creator still invite people into its team? An invite acts with its creator's
+ * authority: it stops working when they are no longer a member (removed, left, account deleted)
+ * or no longer have `CREATE_INVITES`.
+ */
+export function inviterCanInvite(db: DbExecutor, row: Pick<InviteRow, 'teamId' | 'createdById'>) {
+  if (!row.createdById) return false;
+  const inviter = getMembership(db, row.teamId, row.createdById);
+  return inviter !== null && hasPermission(inviter, 'CREATE_INVITES');
+}
+
+/** `inactive` when the creator can no longer invite (`inviterCanInvite`, passed in). */
+export function inviteStatus(
+  row: InviteRow,
+  now: Date = new Date(),
+  inviterActive = true,
+): InviteStatus {
   if (row.expiresAt && row.expiresAt.getTime() <= now.getTime()) return 'expired';
   if (row.maxUses !== null && row.uses >= row.maxUses) return 'used_up';
+  if (!inviterActive) return 'inactive';
   return 'active';
 }
 
@@ -45,6 +62,16 @@ function toInvites(db: DbExecutor, rows: readonly InviteRow[], now: Date): Invit
     db,
     rows.map((row) => row.createdById),
   );
+  const inviters = new Map<string, boolean>();
+  const inviterActive = (row: InviteRow) => {
+    const key = row.createdById ?? '';
+    let active = inviters.get(key);
+    if (active === undefined) {
+      active = inviterCanInvite(db, row);
+      inviters.set(key, active);
+    }
+    return active;
+  };
   return rows.map((row) => ({
     id: row.id,
     teamId: row.teamId,
@@ -55,7 +82,7 @@ function toInvites(db: DbExecutor, rows: readonly InviteRow[], now: Date): Invit
     uses: row.uses,
     expiresAt: row.expiresAt?.toISOString() ?? null,
     createdAt: row.createdAt.toISOString(),
-    status: inviteStatus(row, now),
+    status: inviteStatus(row, now, inviterActive(row)),
   }));
 }
 
@@ -71,10 +98,14 @@ function inviteError(reason: InviteErrorReason): AppError {
   return new AppError('not_found', 404, INVITE_ERRORS[reason], { reason });
 }
 
-/** Why the invite can't be used right now, or null when it can. */
-function unusableReason(row: InviteRow, now: Date): InviteErrorReason | null {
+/**
+ * Why the invite can't be used right now, or null when it can. An invite whose creator can no
+ * longer invite (`inviterCanInvite`) counts as revoked.
+ */
+function unusableReason(db: DbExecutor, row: InviteRow, now: Date): InviteErrorReason | null {
   if (row.revokedAt) return 'revoked';
-  const status = inviteStatus(row, now);
+  const status = inviteStatus(row, now, inviterCanInvite(db, row));
+  if (status === 'inactive') return 'revoked';
   return status === 'active' ? null : status;
 }
 
@@ -161,7 +192,7 @@ export function createInvite(
       entityId: invite.id,
       action: 'invite.created',
       meta: {
-        code: invite.code,
+        code: inviteCodeHint(invite.code),
         maxUses: invite.maxUses,
         expiresAt: invite.expiresAt?.toISOString() ?? null,
       },
@@ -221,7 +252,11 @@ export function revokeInvite(
       entityType: 'invite',
       entityId: invite.id,
       action: 'invite.revoked',
-      meta: { code: invite.code, uses: invite.uses, createdById: invite.createdById },
+      meta: {
+        code: inviteCodeHint(invite.code),
+        uses: invite.uses,
+        createdById: invite.createdById,
+      },
     });
     emitAfterCommit(tx, {
       type: 'invite.changed',
@@ -232,6 +267,43 @@ export function revokeInvite(
     });
   });
   return { ok: true };
+}
+
+/**
+ * Revokes the invites `userId` created in the team that aren't revoked yet, inside the caller's
+ * write, when they stop being a member (removed, left, account deleted), so their links can't be
+ * used to walk back in. The caller audits the count in its own row. Returns how many were revoked.
+ */
+export function revokeInvitesOf(
+  tx: Tx,
+  actor: Actor,
+  teamId: string,
+  userId: string,
+  now: Date = new Date(),
+): number {
+  const revoked = tx
+    .update(s.invite)
+    .set({ revokedAt: now })
+    .where(
+      and(
+        eq(s.invite.teamId, teamId),
+        eq(s.invite.createdById, userId),
+        isNull(s.invite.revokedAt),
+      ),
+    )
+    .returning({ id: s.invite.id })
+    .all();
+  const [first] = revoked;
+  if (first) {
+    emitAfterCommit(tx, {
+      type: 'invite.changed',
+      teamId,
+      entityType: 'invite',
+      entityId: first.id,
+      actorId: actor.userId,
+    });
+  }
+  return revoked.length;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -253,7 +325,7 @@ export function previewInvite(
   const { invite, team } = findByCode(orm, code);
   const alreadyMember = getMembership(orm, team.id, actor.userId) !== null;
   if (!alreadyMember) {
-    const reason = unusableReason(invite, now);
+    const reason = unusableReason(orm, invite, now);
     if (reason) throw inviteError(reason);
   }
   const inviter = invite.createdById
@@ -303,8 +375,10 @@ export function acceptInvite(deps: AppDeps, actor: Actor, code: string): AcceptI
       .get();
     if (!used) {
       const current = tx.select().from(s.invite).where(eq(s.invite.code, code)).get();
-      throw inviteError((current && unusableReason(current, now)) ?? 'invalid');
+      throw inviteError((current && unusableReason(tx, current, now)) ?? 'invalid');
     }
+    // Checked under the write lock, before the use is committed (the update rolls back).
+    if (!inviterCanInvite(tx, used)) throw inviteError('revoked');
     tx.insert(s.teamMember).values({ teamId: team.id, userId: actor.userId, joinedAt: now }).run();
     const users = getUserSummaries(tx, [actor.userId, used.createdById]);
     recordActivity(tx, actor, {
@@ -316,7 +390,7 @@ export function acceptInvite(deps: AppDeps, actor: Actor, code: string): AcceptI
         username: users.get(actor.userId)?.username ?? null,
         name: users.get(actor.userId)?.name ?? null,
         inviteId: used.id,
-        inviteCode: used.code,
+        inviteCode: inviteCodeHint(used.code),
         invitedBy: used.createdById ? (users.get(used.createdById)?.username ?? null) : null,
       },
     });

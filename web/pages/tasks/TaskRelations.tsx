@@ -24,6 +24,7 @@ import {
   SelectValue,
 } from '@web/components/ui/select';
 import { api } from '@web/lib/api';
+import { useTeamAccess } from '@web/lib/permissions';
 import { queryKeys } from '@web/lib/queryKeys';
 import { useDebouncedValue } from '@web/lib/useDebouncedValue';
 import { cn } from '@web/lib/utils';
@@ -32,7 +33,8 @@ import { useTaskSearch } from './queries';
 /**
  * The task page's links (SPEC §1.8): "Blocked by" and "Blocking" (tasks of the project; a task is
  * blocked while any blocker is open) and the issues it addresses (`fixes` resolves the issue when
- * the task is done, `relates` doesn't).
+ * the task is done, `relates` doesn't). A `fixes` link needs the right to resolve the issue (its
+ * author or RESOLVE_ISSUES), so new links are `relates` for members without RESOLVE_ISSUES.
  */
 
 function Section({
@@ -342,6 +344,9 @@ export interface TaskRelationsProps {
 export function TaskRelations({ task, editable, onChange }: TaskRelationsProps) {
   const blockerIds = new Set([task.id, ...task.blockedBy.map((item) => item.id)]);
   const issueIds = new Set(task.issues.map((issue) => issue.id));
+  const newLinkKind: IssueLinkKind = useTeamAccess(task.teamId).has('RESOLVE_ISSUES')
+    ? 'fixes'
+    : 'relates';
   return (
     <div className="grid grid-cols-1 gap-4">
       <Section
@@ -391,7 +396,9 @@ export function TaskRelations({ task, editable, onChange }: TaskRelationsProps) 
               teamId={task.teamId}
               projectId={task.projectId}
               exclude={issueIds}
-              onPick={(issueId) => onChange({ issueLinks: { add: [{ issueId, kind: 'fixes' }] } })}
+              onPick={(issueId) =>
+                onChange({ issueLinks: { add: [{ issueId, kind: newLinkKind }] } })
+              }
             />
           ) : undefined
         }

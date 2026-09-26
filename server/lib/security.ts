@@ -48,3 +48,17 @@ export function hashApiKey(key: string): string {
 export function generateInviteCode(): string {
   return randomBase62(INVITE_CODE_LENGTH);
 }
+
+/** Characters of an invite code kept by `inviteCodeHint`. */
+const INVITE_CODE_HINT_LENGTH = 4;
+
+/**
+ * A non-secret stand-in for an invite code (`DtYC…`), for places that must not reveal a working
+ * join link: audit rows (readable with `VIEW_AUDIT_LOG`, which doesn't include seeing invites)
+ * and request logs. Idempotent.
+ */
+export function inviteCodeHint(code: string): string {
+  return code.length > INVITE_CODE_HINT_LENGTH
+    ? `${code.slice(0, INVITE_CODE_HINT_LENGTH)}…`
+    : code;
+}

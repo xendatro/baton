@@ -16,6 +16,7 @@ import {
   createApiKey,
   createIssue,
   createProject,
+  createRole,
   createTask,
   createTeam,
   createTestContext,
@@ -147,8 +148,9 @@ describe('upload', () => {
     expect(apiErrorSchema.parse(await tooBig.json()).error.code).toBe('payload_too_large');
 
     const chunk = new Uint8Array(900 * 1024);
+    const issue = createIssue(ctx.db, { project: project.project, authorId: member.id });
     await uploaded(await upload(chunk, 'a.bin'));
-    await uploaded(await upload(chunk, 'b.bin'));
+    await uploaded(await upload(chunk, 'b.bin', { parentType: 'issue', parentId: issue.id }));
     const overQuota = await upload(chunk, 'c.bin');
     expect(overQuota.status).toBe(413);
     expect(apiErrorSchema.parse(await overQuota.json()).error.message).toMatch(/storage/);
@@ -195,6 +197,113 @@ describe('upload', () => {
       ).json(),
     );
     expect(list.items.map((a) => a.id)).toEqual([attachment.id]);
+  });
+
+  it('answers a parent of another team exactly like a missing one (SEC-06)', async () => {
+    const outsider = createUser(ctx.db);
+    const other = createTeam(ctx.db, { ownerId: outsider.id });
+    const otherProject = createProject(ctx.db, { teamId: other.team.id, key: 'OTH' });
+    const foreign = {
+      task: createTask(ctx.db, { project: otherProject.project, authorId: outsider.id }).id,
+      issue: createIssue(ctx.db, { project: otherProject.project, authorId: outsider.id }).id,
+      project: otherProject.project.id,
+    };
+    for (const [parentType, parentId] of Object.entries(foreign)) {
+      const hidden = await upload(PNG, 'x.png', { parentType, parentId });
+      const missing = await upload(PNG, 'x.png', {
+        parentType,
+        parentId: '01ARZ3NDEKTSV4RRFFQ69G5FAV',
+      });
+      expect(hidden.status, parentType).toBe(404);
+      expect(await hidden.json()).toEqual(await missing.json());
+    }
+    const reply = createReply(ctx.deps, actorOf(outsider), {
+      parentType: 'task',
+      parentId: foreign.task,
+      body: 'hi',
+    });
+    const hiddenReply = await upload(PNG, 'x.png', { parentType: 'reply', parentId: reply.id });
+    expect(hiddenReply.status).toBe(404);
+    expect(apiErrorSchema.parse(await hiddenReply.json()).error.message).toBe('Reply not found');
+  });
+
+  it('needs a content permission for pending uploads (SEC-07)', async () => {
+    ctx.db.orm
+      .update(s.role)
+      .set({ permissions: [] })
+      .where(eq(s.role.id, team.everyoneRole.id))
+      .run();
+    const denied = await upload(PNG, 'x.png');
+    expect(denied.status).toBe(403);
+    expect(ctx.db.orm.select().from(s.attachment).all()).toHaveLength(0);
+    await expect(
+      uploadAttachmentContent(ctx.deps, actorOf(member), {
+        teamId: team.team.id,
+        parentType: 'pending',
+        filename: 'notes.md',
+        text: '# Notes',
+      }),
+    ).rejects.toThrow(/permission to upload/);
+
+    // Authors can still add files straight to their own items.
+    const own = createTask(ctx.db, { project: project.project, authorId: member.id });
+    await uploaded(await upload(PNG, 'x.png', { parentType: 'task', parentId: own.id }));
+
+    // Any permission that writes content (here only REPLY) is enough for pending uploads.
+    const replier = createRole(ctx.db, { teamId: team.team.id, permissions: ['REPLY'] });
+    ctx.db.orm
+      .insert(s.memberRole)
+      .values({ teamId: team.team.id, userId: member.id, roleId: replier.id })
+      .run();
+    await uploaded(await upload(PNG, 'x.png'));
+  });
+
+  it("caps a member's pending uploads at a tenth of the team quota (SEC-07)", async () => {
+    // MAX_UPLOAD_MB 1 and a 20 MB quota: at most 2 MB of pending uploads per member.
+    ctx.close();
+    ctx = createTestContext({ env: { MAX_UPLOAD_MB: '1', TEAM_STORAGE_QUOTA_MB: '20' } });
+    owner = createUser(ctx.db);
+    member = createUser(ctx.db);
+    team = createTeam(ctx.db, { ownerId: owner.id, slug: 'acme' });
+    addMember(ctx.db, { teamId: team.team.id, userId: member.id });
+    project = createProject(ctx.db, { teamId: team.team.id, key: 'API' });
+    memberKey = createApiKey(ctx.db, { userId: member.id }).key;
+
+    const chunk = new Uint8Array(1000 * 1024);
+    const first = await uploaded(await upload(chunk, 'a.bin'));
+    await uploaded(await upload(chunk, 'b.bin'));
+    const over = await upload(chunk, 'c.bin');
+    expect(over.status).toBe(413);
+    expect(apiErrorSchema.parse(await over.json()).error.message).toMatch(/unsaved uploads/);
+    // Others' pending uploads have their own allowance.
+    const ownerKey = createApiKey(ctx.db, { userId: owner.id }).key;
+    await uploaded(await upload(chunk, 'd.bin', {}, ownerKey));
+    // Saving a pending upload into an item frees the allowance.
+    const task = createTask(ctx.db, { project: project.project, authorId: member.id });
+    ctx.db.write((tx) =>
+      attachToParent(tx, actorOf(member), [first.id], {
+        type: 'task',
+        id: task.id,
+        teamId: team.team.id,
+        projectId: project.project.id,
+      }),
+    );
+    await uploaded(await upload(chunk, 'c.bin'));
+  });
+
+  it('answers a malformed multipart body with 400, not 500 (SEC-09)', async () => {
+    for (const path of ['/api/attachments', '/api/me/avatar']) {
+      const res = await ctx.app.request(path, {
+        method: 'POST',
+        headers: { ...bearer(memberKey), 'Content-Type': 'multipart/form-data; boundary=zzz' },
+        body: 'garbage',
+      });
+      expect(res.status, path).toBe(400);
+      expect(apiErrorSchema.parse(await res.json()).error).toMatchObject({
+        code: 'validation_failed',
+        message: expect.stringMatching(/multipart\/form-data/) as unknown,
+      });
+    }
   });
 
   it('accepts base64 and text content (MCP helper)', async () => {

@@ -35,6 +35,7 @@ import {
   sniffType,
 } from './attachments';
 import { emitAfterCommit } from './events';
+import { revokeInvitesOf } from './invites';
 
 /**
  * The signed-in user's own account (SPEC §1.1, §1.2): profile (display name, username, theme),
@@ -749,12 +750,14 @@ export async function deleteAccount(
       .where(eq(s.teamMember.userId, actor.userId))
       .all();
     for (const { teamId } of memberships) {
+      // Their invite links stop working with them (the rows keep a null creator).
+      const revokedInvites = revokeInvitesOf(tx, actor, teamId, actor.userId);
       recordActivity(tx, actor, {
         teamId,
         entityType: 'member',
         entityId: actor.userId,
         action: 'member.account_deleted',
-        meta: snapshot,
+        meta: { ...snapshot, revokedInvites },
       });
       emitAfterCommit(tx, {
         type: 'member.left',

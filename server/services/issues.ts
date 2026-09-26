@@ -36,6 +36,7 @@ import {
 import { recordActivity } from './activity';
 import { attachmentsByParent, attachToParent, referencedPendingUploads } from './attachments';
 import { emitAfterCommit } from './events';
+import { queueLinkedTaskEvents } from './linkEvents';
 import { trashedProject } from './items';
 import {
   notifyMentions,
@@ -728,6 +729,7 @@ export function updateIssue(
       });
     }
     emitAfterCommit(tx, issueEvent('issue.updated', next, actor));
+    queueLinkedTaskEvents(tx, actor, [issue.id]);
     return next;
   });
   return toIssue(orm, actor, updated, context);
@@ -775,6 +777,7 @@ function setResolved(deps: AppDeps, actor: Actor, issueId: string, resolved: boo
       { ...notificationTarget(next, context), snippet: '' },
     );
     emitAfterCommit(tx, issueEvent('issue.updated', next, actor));
+    queueLinkedTaskEvents(tx, actor, [issue.id]);
     return next;
   });
   return toIssue(orm, actor, updated, context);
@@ -815,6 +818,7 @@ export function deleteIssue(deps: AppDeps, actor: Actor, issueId: string): { ok:
       meta: meta(issue, contextOf(access)),
     });
     emitAfterCommit(tx, issueEvent('issue.deleted', issue, actor));
+    queueLinkedTaskEvents(tx, actor, [issue.id]);
   });
   return { ok: true };
 }
@@ -856,6 +860,7 @@ export function restoreIssue(deps: AppDeps, actor: Actor, issueId: string): Issu
       meta: meta(row, context),
     });
     emitAfterCommit(tx, issueEvent('issue.restored', next, actor));
+    queueLinkedTaskEvents(tx, actor, [row.id]);
     return next;
   });
   return toIssue(orm, actor, restored, context);

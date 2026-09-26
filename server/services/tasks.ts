@@ -34,7 +34,7 @@ import {
   type Membership,
 } from './access';
 import { recordActivity } from './activity';
-import { attachToParent, referencedPendingUploads } from './attachments';
+import { attachmentsByParent, attachToParent, referencedPendingUploads } from './attachments';
 import { isClaimValid, renewClaimOnWrite } from './claimLease';
 import { emitAfterCommit } from './events';
 import {
@@ -46,6 +46,7 @@ import {
   type NotifiedSet,
 } from './notifications';
 import { canTriageIssue } from './issues';
+import { queueLinkedIssueEvents } from './linkEvents';
 import { requireProject } from './projects';
 import { indexSearch } from './search';
 import { autoSubscribe } from './subscriptions';
@@ -149,6 +150,28 @@ export function taskEvent(
     entityId: task.id,
     actorId: actor?.userId ?? null,
   };
+}
+
+/**
+ * Queues the live event of a change that shows wherever the task is listed (title, status,
+ * deletion), plus `issue.updated` for linked issues of other projects, whose "Addressed by" list
+ * shows the task.
+ */
+function emitTaskChange(
+  tx: Tx,
+  type: 'task.updated' | 'task.deleted' | 'task.restored',
+  task: Pick<TaskRow, 'id' | 'teamId' | 'projectId'>,
+  actor: Actor,
+): void {
+  emitAfterCommit(tx, taskEvent(type, task, actor));
+  queueLinkedIssueEvents(tx, actor, [task.id]);
+}
+
+/** Names of the task's live files, oldest first (audit values of `changes.attachments`). */
+function attachmentNames(db: DbExecutor, taskId: string): string[] {
+  return (attachmentsByParent(db, 'task', [taskId]).get(taskId) ?? []).map(
+    (attachment) => attachment.filename,
+  );
 }
 
 function notificationTarget(
@@ -914,9 +937,13 @@ export function updateTask(
       Object.assign(patch, transition.patch);
     }
 
+    // Explicit files are audited like issue files (`changes.attachments`: names before and
+    // after); images pasted into a changed description go with the description change.
+    const explicitUploads = [...new Set(input.attachmentIds ?? [])];
+    const beforeFiles = explicitUploads.length > 0 ? attachmentNames(tx, taskId) : [];
     const uploads = [
       ...new Set([
-        ...(input.attachmentIds ?? []),
+        ...explicitUploads,
         ...(descriptionChanged && input.description !== undefined
           ? referencedPendingUploads(tx, actor, team.id, input.description)
           : []),
@@ -928,10 +955,10 @@ export function updateTask(
       teamId: team.id,
       projectId: project.id,
     });
-    if (!hasChanges(changes)) {
-      if (uploads.length > 0) renewClaimOnWrite(tx, actor, taskId, now);
-      return;
+    if (explicitUploads.length > 0) {
+      changes.attachments = change(beforeFiles, attachmentNames(tx, taskId));
     }
+    if (!hasChanges(changes)) return;
 
     const updated = tx
       .update(s.task)
@@ -983,7 +1010,7 @@ export function updateTask(
         notified,
       });
     }
-    emitAfterCommit(tx, taskEvent('task.updated', updated, actor));
+    emitTaskChange(tx, 'task.updated', updated, actor);
   });
   return getTask(deps, actor, taskId);
 }
@@ -1086,7 +1113,7 @@ export function moveTask(deps: AppDeps, actor: Actor, taskId: string, input: Mov
       meta: { ...taskMeta(updated, project.key), status: to.name },
     });
     transition?.recordRelease();
-    emitAfterCommit(tx, taskEvent('task.updated', updated, actor));
+    emitTaskChange(tx, 'task.updated', updated, actor);
   });
   return getTask(deps, actor, taskId);
 }
@@ -1121,7 +1148,7 @@ export function deleteTask(deps: AppDeps, actor: Actor, taskId: string): { ok: t
       action: 'task.deleted',
       meta: taskMeta(task, project.key),
     });
-    emitAfterCommit(tx, taskEvent('task.deleted', task, actor));
+    emitTaskChange(tx, 'task.deleted', task, actor);
   });
   return { ok: true };
 }
@@ -1162,7 +1189,7 @@ export function restoreTask(deps: AppDeps, actor: Actor, taskId: string): Task {
       action: 'task.restored',
       meta: taskMeta(task, project.key),
     });
-    emitAfterCommit(tx, taskEvent('task.restored', task, actor));
+    emitTaskChange(tx, 'task.restored', task, actor);
   });
   return getTask(deps, actor, taskId);
 }

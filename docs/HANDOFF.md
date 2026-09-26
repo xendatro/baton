@@ -173,3 +173,10 @@ Later notes win over the module sections above where they disagree.
 - Code that ends a membership must call `revokeInvitesOf(tx, actor, teamId, userId)` (server/services/invites.ts) in the same transaction. Audit meta must never hold a full invite code: use `inviteCodeHint`.
 - Notifications about trashed items are filtered when read (`liveSubjectCondition` in server/services/notifications.ts); a new notification subject type needs a case there. Edits of text that notifications quote call `refreshNotificationText(tx, target)`.
 - Pending uploads need a content permission (`PENDING_UPLOAD_PERMISSIONS`) and are capped per member at a tenth of the team quota (`pendingUploadCapBytes`), both in server/services/attachments.ts.
+
+## Integrity fixes (CDI-01 to CDI-15)
+
+- Every way a task changes status goes through `applyStatusTransition` (server/services/tasks.ts), status deletion included; a new path that moves tasks must call it and record `task.moved` per task.
+- Code that removes task assignees without editing the task (memberships, roles, accounts) calls `unassignFromTasks` (server/services/taskAssignees.ts) in the same transaction, before the rows go.
+- A task or issue change that shows on linked items calls `queueLinkedIssueEvents` / `queueLinkedTaskEvents` (server/services/linkEvents.ts); inside tasks.ts, `emitTaskChange` does it for you.
+- Writes that also post a reply use `prepareReply` (before the write) and `insertReply` (inside it), never `createReply`, so the whole mutation is one transaction.

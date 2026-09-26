@@ -34,6 +34,15 @@ describe('LIVE_INVALIDATIONS', () => {
     expect(keys).toContainEqual(queryKeys.work.all());
   });
 
+  it('refreshes the issues of a project when its statuses change (CDI-06)', () => {
+    // Issue pages list the statuses of the tasks addressing them ("Addressed by").
+    const keys = LIVE_INVALIDATIONS['status.changed'](
+      event({ type: 'status.changed', entityType: 'status' }),
+    );
+    expect(keys).toContainEqual(queryKeys.issues.all('proj1'));
+    expect(keys).toContainEqual(queryKeys.tasks.all('proj1'));
+  });
+
   it('targets the thread of reply events', () => {
     const keys = LIVE_INVALIDATIONS['reply.created'](
       event({ type: 'reply.created', entityType: 'reply', parentType: 'issue', parentId: 'iss1' }),

@@ -378,7 +378,8 @@ export function purgeTrash(deps: Pick<AppDeps, 'db'>, now: Date = new Date()): P
       .where(
         sql`(${s.notification.entityType} = 'issue' and ${s.notification.entityId} not in (select id from issue))
           or (${s.notification.entityType} = 'task' and ${s.notification.entityId} not in (select id from task))
-          or (${s.notification.entityType} = 'reply' and ${s.notification.entityId} not in (select id from reply))`,
+          or (${s.notification.entityType} = 'reply' and ${s.notification.entityId} not in (select id from reply))
+          or (${s.notification.entityType} = 'project' and ${s.notification.entityId} not in (select id from project))`,
       )
       .run();
 

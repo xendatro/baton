@@ -7,7 +7,7 @@ import type {
   UpdateReplyInput,
 } from '@shared/schemas/core';
 import type { Actor, AppDeps } from '../context';
-import type { DbExecutor } from '../db';
+import type { DbExecutor, Tx } from '../db';
 import * as s from '../db/schema';
 import { change } from '../lib/diff';
 import { errors } from '../lib/errors';
@@ -167,85 +167,102 @@ function activityMeta(item: ItemInfo, bodyExcerpt: string) {
   };
 }
 
+/** A reply checked and ready to insert: its parent item and the text derived from its body. */
+export interface PreparedReply {
+  item: ItemInfo;
+  input: CreateReplyInput;
+  text: ReturnType<typeof derivedText>;
+}
+
 /**
- * Posts a reply (`REPLY` permission): bumps the parent's reply count and last activity, claims
- * pending attachments, subscribes the author, indexes it for search and notifies mentioned
- * members and the parent's subscribers (one notification per person).
+ * Checks a new reply before the write (`REPLY` permission on a live item) and derives its search
+ * text and excerpt, so `insertReply` can post it inside any transaction.
  */
+export function prepareReply(deps: AppDeps, actor: Actor, input: CreateReplyInput): PreparedReply {
+  const { item, membership } = requireItem(deps.db.orm, actor, input.parentType, input.parentId);
+  requirePermission(membership, 'REPLY', "You don't have permission to reply here");
+  return { item, input, text: derivedText(input.body) };
+}
+
+/**
+ * Posts a prepared reply inside the caller's write: bumps the parent's reply count and last
+ * activity, claims pending attachments, subscribes the author, indexes it for search and notifies
+ * mentioned members and the parent's subscribers (one notification per person).
+ */
+export function insertReply(tx: Tx, actor: Actor, prepared: PreparedReply): ReplyRow {
+  const { item, input, text } = prepared;
+  const now = new Date();
+  const reply = tx
+    .insert(s.reply)
+    .values({
+      id: newId(),
+      teamId: item.teamId,
+      projectId: item.projectId,
+      parentType: item.type,
+      parentId: item.id,
+      authorId: actor.userId,
+      viaKeyId: actor.key?.id ?? null,
+      body: input.body,
+      createdAt: now,
+      updatedAt: now,
+    })
+    .returning()
+    .get();
+  itemResolvers[item.type].adjustReplies(tx, item.id, 1, true);
+  itemResolvers[item.type].onThreadWrite?.(tx, actor, item.id);
+  // Explicit files plus the images pasted into the body (uploaded as pending while typing).
+  attachToParent(
+    tx,
+    actor,
+    [
+      ...(input.attachmentIds ?? []),
+      ...referencedPendingUploads(tx, actor, item.teamId, input.body),
+    ],
+    { type: 'reply', id: reply.id, teamId: item.teamId, projectId: item.projectId },
+  );
+  autoSubscribe(tx, [actor.userId], item.type, item.id);
+  recordActivity(tx, actor, {
+    teamId: item.teamId,
+    projectId: item.projectId,
+    entityType: 'reply',
+    entityId: reply.id,
+    action: 'reply.created',
+    meta: activityMeta(item, text.excerpt),
+  });
+  indexSearch(tx, {
+    entityType: 'reply',
+    entityId: reply.id,
+    teamId: item.teamId,
+    projectId: item.projectId,
+    title: '',
+    text: text.plain,
+  });
+  const target = notificationTarget(item, reply.id, reply.body);
+  const notified = new Set<string>();
+  notifyMentions(tx, actor, target, reply.body, { notified });
+  notifyReply(tx, actor, { type: item.type, id: item.id }, target, notified);
+  emitAfterCommit(tx, {
+    type: 'reply.created',
+    teamId: item.teamId,
+    projectId: item.projectId,
+    entityType: 'reply',
+    entityId: reply.id,
+    parentType: item.type,
+    parentId: item.id,
+    actorId: actor.userId,
+  });
+  return reply;
+}
+
+/** Posts a reply (`REPLY` permission) in its own transaction; see `insertReply`. */
 export function createReply(
   deps: AppDeps,
   actor: Actor,
   input: CreateReplyInput,
 ): ReplyWithContext {
-  const { orm } = deps.db;
-  const { item, membership } = requireItem(orm, actor, input.parentType, input.parentId);
-  requirePermission(membership, 'REPLY', "You don't have permission to reply here");
-  const text = derivedText(input.body);
-
-  const row = deps.db.write((tx) => {
-    const now = new Date();
-    const reply = tx
-      .insert(s.reply)
-      .values({
-        id: newId(),
-        teamId: item.teamId,
-        projectId: item.projectId,
-        parentType: item.type,
-        parentId: item.id,
-        authorId: actor.userId,
-        viaKeyId: actor.key?.id ?? null,
-        body: input.body,
-        createdAt: now,
-        updatedAt: now,
-      })
-      .returning()
-      .get();
-    itemResolvers[item.type].adjustReplies(tx, item.id, 1, true);
-    itemResolvers[item.type].onThreadWrite?.(tx, actor, item.id);
-    // Explicit files plus the images pasted into the body (uploaded as pending while typing).
-    attachToParent(
-      tx,
-      actor,
-      [
-        ...(input.attachmentIds ?? []),
-        ...referencedPendingUploads(tx, actor, item.teamId, input.body),
-      ],
-      { type: 'reply', id: reply.id, teamId: item.teamId, projectId: item.projectId },
-    );
-    autoSubscribe(tx, [actor.userId], item.type, item.id);
-    recordActivity(tx, actor, {
-      teamId: item.teamId,
-      projectId: item.projectId,
-      entityType: 'reply',
-      entityId: reply.id,
-      action: 'reply.created',
-      meta: activityMeta(item, text.excerpt),
-    });
-    indexSearch(tx, {
-      entityType: 'reply',
-      entityId: reply.id,
-      teamId: item.teamId,
-      projectId: item.projectId,
-      title: '',
-      text: text.plain,
-    });
-    const target = notificationTarget(item, reply.id, reply.body);
-    const notified = new Set<string>();
-    notifyMentions(tx, actor, target, reply.body, { notified });
-    notifyReply(tx, actor, { type: item.type, id: item.id }, target, notified);
-    emitAfterCommit(tx, {
-      type: 'reply.created',
-      teamId: item.teamId,
-      projectId: item.projectId,
-      entityType: 'reply',
-      entityId: reply.id,
-      parentType: item.type,
-      parentId: item.id,
-      actorId: actor.userId,
-    });
-    return reply;
-  });
-  return withContext(deps, toReply(orm, row), item);
+  const prepared = prepareReply(deps, actor, input);
+  const row = deps.db.write((tx) => insertReply(tx, actor, prepared));
+  return withContext(deps, toReply(deps.db.orm, row), prepared.item);
 }
 
 /** Edits a reply (author, or `EDIT_ANY_CONTENT`). Newly added mentions notify. */

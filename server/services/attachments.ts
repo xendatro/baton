@@ -25,7 +25,14 @@ import {
 } from './access';
 import { recordActivity } from './activity';
 import { emitAfterCommit } from './events';
-import { findItem, trashedItem, trashedProject, trashedReply, type TrashEntry } from './items';
+import {
+  findItem,
+  itemResolvers,
+  trashedItem,
+  trashedProject,
+  trashedReply,
+  type TrashEntry,
+} from './items';
 import { getUserSummaries, getViaKeys } from './users';
 
 /**
@@ -251,6 +258,34 @@ function resolveParent(db: DbExecutor, parent: AttachmentParent): ResolvedParent
         canEdit: (m) => hasPermission(m, 'MANAGE_PROJECTS'),
       };
     }
+  }
+}
+
+/**
+ * A file was added to, removed from or restored to `parentType`/`parentId`, inside that write. It
+ * is a write on the issue or task the file belongs to, directly or through a reply: an item's own
+ * files move its last activity, and a task renews the actor's claim (any write by the holder
+ * renews the lease, SPEC §1.8), exactly like a reply does.
+ */
+function onParentWrite(
+  tx: Tx,
+  actor: Actor,
+  parentType: AttachmentParentType,
+  parentId: string | null,
+): void {
+  if (!parentId) return;
+  if (parentType === 'issue' || parentType === 'task') {
+    itemResolvers[parentType].touch(tx, parentId);
+    itemResolvers[parentType].onThreadWrite?.(tx, actor, parentId);
+    return;
+  }
+  if (parentType === 'reply') {
+    const reply = tx
+      .select({ parentType: s.reply.parentType, parentId: s.reply.parentId })
+      .from(s.reply)
+      .where(eq(s.reply.id, parentId))
+      .get();
+    if (reply) itemResolvers[reply.parentType].onThreadWrite?.(tx, actor, reply.parentId);
   }
 }
 
@@ -515,6 +550,7 @@ export async function uploadAttachment(
         .returning()
         .get();
       const projectId = parent ? resolveParent(tx, parent).projectId : null;
+      if (parent) onParentWrite(tx, actor, parent.type, parent.id);
       recordActivity(tx, actor, {
         teamId: input.teamId,
         projectId,
@@ -742,6 +778,7 @@ export function deleteAttachment(deps: AppDeps, actor: Actor, id: string): { ok:
       })
       .where(eq(s.attachment.id, id))
       .run();
+    onParentWrite(tx, actor, row.parentType, row.parentId);
     const projectId = attachmentProjectId(tx, row);
     recordActivity(tx, actor, {
       teamId,
@@ -780,6 +817,7 @@ export function restoreAttachment(deps: AppDeps, actor: Actor, id: string): void
       .set({ deletedAt: null, deletedById: null, deletedViaKeyId: null })
       .where(eq(s.attachment.id, id))
       .run();
+    onParentWrite(tx, actor, row.parentType, row.parentId);
     const projectId = attachmentProjectId(tx, row);
     recordActivity(tx, actor, {
       teamId,

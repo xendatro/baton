@@ -23,6 +23,7 @@ import { newId } from '../lib/ids';
 import { canManageRole, hasPermission, requirePermission, type Membership } from './access';
 import { recordActivity } from './activity';
 import { emitAfterCommit } from './events';
+import { unassignFromTasks } from './taskAssignees';
 import { memberCounts, requireTeam } from './teams';
 
 /**
@@ -313,7 +314,10 @@ export function updateRole(
   return toRole(orm, row);
 }
 
-/** Deletes a role; members lose it and tasks assigned to it lose that assignee. */
+/**
+ * Deletes a role; members lose it and tasks assigned to it lose that assignee (recorded in each
+ * task's history).
+ */
 export function deleteRole(
   deps: AppDeps,
   actor: Actor,
@@ -328,7 +332,8 @@ export function deleteRole(
   const holders = roleMemberCounts(orm, teamId).get(roleId) ?? 0;
 
   deps.db.write((tx) => {
-    // member_role and task_assignee_role rows go with the role (ON DELETE CASCADE).
+    const unassignedTasks = unassignFromTasks(tx, actor, teamId, { roleId }, 'role_deleted');
+    // member_role rows go with the role (ON DELETE CASCADE).
     tx.delete(s.role).where(eq(s.role.id, roleId)).run();
     tx.update(s.role)
       .set({ position: sql`${s.role.position} - 1` })
@@ -343,6 +348,7 @@ export function deleteRole(
         name: role.name,
         slug: role.slug,
         memberCount: holders,
+        unassignedTasks,
         permissions: permissionLabels(normalizePermissions(role.permissions)),
       },
     });

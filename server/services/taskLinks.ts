@@ -17,6 +17,7 @@ import { recordActivity } from './activity';
 import type { Membership } from './access';
 import { emitAfterCommit } from './events';
 import { canTriageIssue } from './issues';
+import { queueLinkedTaskEvents } from './linkEvents';
 import { notifyUsers, type NotifiedSet } from './notifications';
 import { subscriberIds } from './subscriptions';
 
@@ -542,6 +543,8 @@ export function resolveFixedIssues(
       entityId: issue.id,
       actorId: actor.userId,
     });
+    // Other tasks addressing the issue, in other projects, show it resolved now.
+    queueLinkedTaskEvents(tx, actor, [issue.id]);
     resolved.push(ref);
   }
   return resolved;

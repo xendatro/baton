@@ -18,8 +18,9 @@ import { requirePermission, type Membership } from './access';
 import { recordActivity } from './activity';
 import { isClaimValid, isHolder, leaseEnd, leaseMinutesOf } from './claimLease';
 import { emitAfterCommit } from './events';
+import { queueLinkedIssueEvents } from './linkEvents';
 import { requireProject } from './projects';
-import { createReply } from './replies';
+import { insertReply, prepareReply } from './replies';
 import {
   appendPosition,
   applyStatusTransition,
@@ -111,6 +112,8 @@ function moveOnClaim(
     changes: { status: { from: from.name, to: to.name } },
     meta: { ...taskMeta(task, access.project.key), status: to.name },
   });
+  // Linked issues of other projects show the task's status.
+  queueLinkedIssueEvents(tx, actor, [task.id]);
   return patch;
 }
 
@@ -403,12 +406,13 @@ export function releaseTask(
     );
   }
   const note = input.note?.trim();
-  if (note) {
-    requirePermission(membership, 'REPLY', "You don't have permission to reply here");
-    createReply(deps, actor, { parentType: 'task', parentId: taskId, body: note });
-  }
+  // The note and the release are one write: a failed release never leaves the note posted.
+  const reply = note
+    ? prepareReply(deps, actor, { parentType: 'task', parentId: taskId, body: note })
+    : null;
 
   deps.db.write((tx) => {
+    if (reply) insertReply(tx, actor, reply);
     const task = freshTask(tx, taskId);
     if (task.claimedById === null && task.claimedAt === null) return;
     const wasValid = isClaimValid(task, new Date());

@@ -88,8 +88,9 @@ export const LIVE_INVALIDATIONS: Readonly<Record<LiveEventType, Invalidation>> =
   'project.deleted': (e) => [...projectChange(e), ...trash(e)],
   'project.restored': (e) => [...projectChange(e), ...trash(e)],
   // Work lists show statuses and labels, and a status's category decides what is still open.
+  // Issues list the statuses of the tasks addressing them.
   'status.changed': (e) => [
-    ...projectKeys(e, queryKeys.projects.statuses, queryKeys.tasks.all),
+    ...projectKeys(e, queryKeys.projects.statuses, queryKeys.tasks.all, queryKeys.issues.all),
     queryKeys.work.all(),
   ],
   'label.changed': (e) => [

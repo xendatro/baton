@@ -19,7 +19,9 @@ import { newId } from '../lib/ids';
 import { requireMember, requirePermission, type Membership } from './access';
 import { recordActivity } from './activity';
 import { emitAfterCommit } from './events';
+import { queueLinkedIssueEvents } from './linkEvents';
 import { requireProject, type ProjectRow } from './projects';
+import { applyStatusTransition, taskMeta, type TaskRow } from './tasks';
 
 /**
  * Task statuses (SPEC §1.5): per project, ordered, each `open` or `done`, exactly one default for
@@ -81,6 +83,7 @@ export function listStatuses(deps: AppDeps, actor: Actor, projectId: string): St
 interface StatusAccess {
   status: StatusRow;
   project: ProjectRow;
+  teamSlug: string;
   membership: Membership;
 }
 
@@ -88,7 +91,7 @@ interface StatusAccess {
 function requireManageableStatus(deps: AppDeps, actor: Actor, statusId: string): StatusAccess {
   const { orm } = deps.db;
   const row = orm
-    .select({ status: s.status, project: s.project })
+    .select({ status: s.status, project: s.project, teamSlug: s.team.slug })
     .from(s.status)
     .innerJoin(s.project, eq(s.project.id, s.status.projectId))
     .innerJoin(s.team, eq(s.team.id, s.project.teamId))
@@ -263,8 +266,20 @@ export function updateStatus(
       },
     });
     emitAfterCommit(tx, statusEvent(project, actor, statusId));
+    // Linked issues of other projects show their tasks' statuses.
+    queueLinkedIssueEvents(tx, actor, liveTaskIds(tx, statusId));
   });
   return statusById(orm, project.id, statusId);
+}
+
+/** Live tasks of a status. */
+function liveTaskIds(tx: Tx, statusId: string): string[] {
+  return tx
+    .select({ id: s.task.id })
+    .from(s.task)
+    .where(and(eq(s.task.statusId, statusId), isNull(s.task.deletedAt)))
+    .all()
+    .map((row) => row.id);
 }
 
 /** Puts the project's statuses in the given order (`MANAGE_STATUSES`); every status once. */
@@ -317,9 +332,12 @@ export function reorderStatuses(
 }
 
 /**
- * Deletes a status (`MANAGE_STATUSES`), moving its tasks to the end of `moveTo`'s column (their
- * completion follows the new category). The last status can't be deleted; deleting the default
- * makes `moveTo` the default. Audited once, with the number of tasks moved.
+ * Deletes a status (`MANAGE_STATUSES`), moving its tasks to the end of `moveTo`'s column. The last
+ * status can't be deleted; deleting the default makes `moveTo` the default. The deletion is audited
+ * on the status (with the number of tasks moved), and each moved live task like any other move:
+ * a `task.moved` row (`meta.reason: 'status_deleted'`) and, when the category changes, the
+ * transition's side effects (entering done resolves its `fixes` issues, notifies `task_done` and
+ * releases its claim; leaving done clears `completedAt`). Tasks in Trash just follow the status.
  */
 export function deleteStatus(
   deps: AppDeps,
@@ -327,7 +345,7 @@ export function deleteStatus(
   statusId: string,
   query: DeleteStatusQuery,
 ): DeleteStatusResponse {
-  const { status, project } = requireManageableStatus(deps, actor, statusId);
+  const { status, project, teamSlug } = requireManageableStatus(deps, actor, statusId);
   if (query.moveTo === statusId) {
     throw errors.validation('Choose another status to move its tasks to');
   }
@@ -342,13 +360,11 @@ export function deleteStatus(
     if (statuses.length <= 1) throw errors.conflict("A project's last status can't be deleted");
     const target = statuses.find((row) => row.id === query.moveTo);
     if (!target) throw errors.notFound('Status to move the tasks to');
+    // Re-read under the write lock: the category may have changed since the access check.
+    const source = statuses.find((row) => row.id === statusId) ?? status;
 
     const tasks = tx
-      .select({
-        id: s.task.id,
-        completedAt: s.task.completedAt,
-        deletedAt: s.task.deletedAt,
-      })
+      .select()
       .from(s.task)
       .where(eq(s.task.statusId, statusId))
       .orderBy(asc(s.task.position), asc(s.task.number))
@@ -362,18 +378,42 @@ export function deleteStatus(
     const positions = appendPositions(last?.position ?? null, tasks.length);
     const now = new Date();
     for (const [index, task] of tasks.entries()) {
+      const patch: Partial<TaskRow> = {
+        statusId: target.id,
+        ...(positions[index] ? { position: positions[index] } : {}),
+        completedAt: target.category === 'done' ? (task.completedAt ?? now) : null,
+      };
+      if (task.deletedAt) {
+        tx.update(s.task).set(patch).where(eq(s.task.id, task.id)).run();
+        continue;
+      }
+      const transition = applyStatusTransition(
+        tx,
+        actor,
+        { task, projectKey: project.key, teamSlug },
+        source,
+        target,
+        now,
+        new Set<string>(),
+      );
       tx.update(s.task)
-        .set({
-          statusId: target.id,
-          ...(positions[index] ? { position: positions[index] } : {}),
-          completedAt: target.category === 'done' ? (task.completedAt ?? now) : null,
-        })
+        .set({ ...patch, ...transition.patch, updatedAt: now })
         .where(eq(s.task.id, task.id))
         .run();
+      recordActivity(tx, actor, {
+        teamId: task.teamId,
+        projectId: task.projectId,
+        entityType: 'task',
+        entityId: task.id,
+        action: 'task.moved',
+        changes: { status: change(source.name, target.name) },
+        meta: { ...taskMeta(task, project.key), status: target.name, reason: 'status_deleted' },
+      });
+      transition.recordRelease();
     }
 
     tx.delete(s.status).where(eq(s.status.id, statusId)).run();
-    if (status.isDefault) setDefault(tx, project.id, target.id);
+    if (source.isDefault) setDefault(tx, project.id, target.id);
     statuses
       .filter((row) => row.id !== statusId)
       .forEach((row, position) => {
@@ -382,7 +422,7 @@ export function deleteStatus(
         }
       });
 
-    const moved = tasks.filter((task) => task.deletedAt === null).length;
+    const moved = tasks.filter((task) => task.deletedAt === null);
     recordActivity(tx, actor, {
       teamId: project.teamId,
       projectId: project.id,
@@ -390,15 +430,22 @@ export function deleteStatus(
       entityId: statusId,
       action: 'status.deleted',
       meta: {
-        name: status.name,
-        category: status.category,
+        name: source.name,
+        category: source.category,
         movedTo: target.name,
-        movedTasks: moved,
-        ...(status.isDefault ? { newDefault: target.name } : {}),
+        movedTasks: moved.length,
+        ...(source.isDefault ? { newDefault: target.name } : {}),
       },
     });
+    // The project's boards and lists refresh on `status.changed`; linked issues of other
+    // projects show the moved tasks' statuses.
     emitAfterCommit(tx, statusEvent(project, actor, statusId));
-    return moved;
+    queueLinkedIssueEvents(
+      tx,
+      actor,
+      moved.map((task) => task.id),
+    );
+    return moved.length;
   });
   return { ok: true, movedTasks };
 }

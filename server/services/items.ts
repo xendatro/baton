@@ -40,8 +40,11 @@ export interface ItemResolver {
   find(db: DbExecutor, id: string): ItemInfo | null;
   /** Adjusts the reply count by `delta`; a new reply (`bumpActivity`) also moves lastActivityAt. */
   adjustReplies(tx: Tx, id: string, delta: number, bumpActivity: boolean): void;
+  /** The item's own files changed (added or removed directly): moves its last activity. */
+  touch(tx: Tx, id: string): void;
   /**
-   * The actor wrote to the item's thread (posted or edited a reply), inside that write. Tasks
+   * The actor wrote to the item (posted or edited a reply, added or removed a file), inside that
+   * write. Tasks
    * renew the actor's claim here: any write by the holder renews the lease (SPEC §1.8).
    */
   onThreadWrite?(tx: Tx, actor: Actor, id: string): void;
@@ -95,6 +98,10 @@ function makeResolver(type: ItemType): ItemResolver {
         })
         .where(eq(table.id, id))
         .run();
+    },
+    touch(tx, id) {
+      const now = new Date();
+      tx.update(table).set({ updatedAt: now, lastActivityAt: now }).where(eq(table.id, id)).run();
     },
   };
 }

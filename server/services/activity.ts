@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gte, inArray, isNull, lt, or, type SQL } from 'drizzle-orm';
+import { and, desc, eq, gte, inArray, isNull, lt, or, type SQL } from 'drizzle-orm';
 import type { ActivityEntityType } from '@shared/constants';
 import type { Paginated } from '@shared/schemas/common';
 import type {
@@ -293,11 +293,15 @@ export function toActivityEntries(db: DbExecutor, rows: readonly ActivityRow[]):
 // Queries
 // ---------------------------------------------------------------------------------------------
 
-/** Most rows returned by an entity history (a long-lived task stays well below this). */
-const HISTORY_LIMIT = 1000;
+/**
+ * Most rows returned by an entity history: the newest ones. A long-lived task can pass it (every
+ * explicit `renew_claim` writes a row), and then its oldest rows are left out, never its latest.
+ */
+export const HISTORY_LIMIT = 1000;
 
 /**
- * Entity history (`GET /api/activity`, MCP `get_activity`), oldest first. Per-item history
+ * Entity history (`GET /api/activity`, MCP `get_activity`): the newest `HISTORY_LIMIT` rows,
+ * oldest first. Per-item history
  * (issues, tasks, replies, attachments) is visible to every member of the item's team while the
  * item is live, and to those who may see it in Trash (its author or `MANAGE_TRASH`) while it is
  * not. The history of anything else in a team (the team, members, roles, invites, projects,
@@ -316,9 +320,10 @@ export function listEntityActivity(
     .where(
       and(eq(s.activity.entityType, query.entityType), eq(s.activity.entityId, query.entityId)),
     )
-    .orderBy(asc(s.activity.createdAt), asc(s.activity.id))
+    .orderBy(desc(s.activity.createdAt), desc(s.activity.id))
     .limit(HISTORY_LIMIT)
-    .all();
+    .all()
+    .reverse();
 
   if (query.entityType === 'user' || query.entityType === 'api_key') {
     // Account-level rows (the security log): only the user's own.

@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { CLAIM_LEASE, ISSUE_LINK_KINDS, LIMITS, PRIORITY_KEYS } from '@shared/constants';
 import { formatTaskRef } from '@shared/refs';
+import { dueDateSchema } from '@shared/schemas/common';
 import {
   claimNextTaskInputSchema,
   createTaskInputSchema,
@@ -210,6 +211,11 @@ const listTasksTool = defineTool({
     label: labelNames.optional().describe('Only tasks with any of these labels'),
     priority: z.array(priorityField).max(5).optional().describe('Only these priorities'),
     due: z.enum(TASK_DUE_FILTERS).optional().describe('overdue, today, week (next 7 days) or none'),
+    today: dueDateSchema
+      .optional()
+      .describe(
+        "Your local date as YYYY-MM-DD, used by the due filter to decide what is overdue, due today or this week (due dates have no time zone). Default: today's date in UTC",
+      ),
     claimed: z.enum(TASK_CLAIM_FILTERS).optional().describe('yes, no, or mine (claimed by you)'),
     blocked: z
       .enum(TASK_BLOCKED_FILTERS)
@@ -238,6 +244,7 @@ const listTasksTool = defineTool({
       label: labelIds(ctx, project.id, input.label)?.join(','),
       priority: input.priority?.map((value) => String(priorityOf(value))).join(','),
       due: input.due,
+      today: input.today,
       claimed: input.claimed,
       blocked: input.blocked,
       sort: input.sort,

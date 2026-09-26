@@ -36,6 +36,7 @@ import {
 } from './attachments';
 import { emitAfterCommit } from './events';
 import { revokeInvitesOf } from './invites';
+import { unassignFromTasks } from './taskAssignees';
 
 /**
  * The signed-in user's own account (SPEC §1.1, §1.2): profile (display name, username, theme),
@@ -750,14 +751,22 @@ export async function deleteAccount(
       .where(eq(s.teamMember.userId, actor.userId))
       .all();
     for (const { teamId } of memberships) {
-      // Their invite links stop working with them (the rows keep a null creator).
+      // Their invite links stop working with them (the rows keep a null creator), and their
+      // tasks record losing them as an assignee (the rows would otherwise just cascade away).
       const revokedInvites = revokeInvitesOf(tx, actor, teamId, actor.userId);
+      const unassignedTasks = unassignFromTasks(
+        tx,
+        actor,
+        teamId,
+        { userId: actor.userId },
+        'account_deleted',
+      );
       recordActivity(tx, actor, {
         teamId,
         entityType: 'member',
         entityId: actor.userId,
         action: 'member.account_deleted',
-        meta: { ...snapshot, revokedInvites },
+        meta: { ...snapshot, revokedInvites, unassignedTasks },
       });
       emitAfterCommit(tx, {
         type: 'member.left',

@@ -1,5 +1,5 @@
 import { eq } from 'drizzle-orm';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ActivityEntityType } from '@shared/constants';
 import type { Actor } from '../context';
 import * as s from '../db/schema';
@@ -243,5 +243,99 @@ describe('recent activity', () => {
     expect(rows.map((row) => row.action)).toEqual(['task.updated', 'task.updated', 'task.updated']);
     const ownerScope = workScope(ctx.db.orm, owner.id);
     expect(recentActivity(ctx.db.orm, ownerScope.memberships, 30)).toHaveLength(30);
+  });
+});
+
+describe('recent activity across teams (PERF-02)', () => {
+  function insertRow(
+    team: string,
+    entityType: ActivityEntityType,
+    action: string,
+    at: number,
+    entityId = `${entityType}-${at}`,
+  ) {
+    return ctx.db.orm
+      .insert(s.activity)
+      .values({
+        id: `${String(at).padStart(6, '0')}-${action}`,
+        teamId: team,
+        actorId: owner.id,
+        source: 'web',
+        entityType,
+        entityId,
+        action,
+        createdAt: new Date(Date.UTC(2026, 2, 1) + at * 1000),
+      })
+      .run();
+  }
+
+  it('merges the teams newest first: the whole log where Ada reads it, items elsewhere', () => {
+    // Ada owns "side" (audit log) and is a plain member of "acme" (per-item history only).
+    const side = createTeam(ctx.db, { ownerId: ada.id, slug: 'side' }).team.id;
+    const task = newTask('Shared task');
+    insertRow(teamId, 'role', 'role.created', 1);
+    insertRow(side, 'invite', 'invite.created', 2);
+    insertRow(teamId, 'task', 'task.created', 3, task.id);
+    insertRow(side, 'role', 'role.updated', 4);
+    insertRow(teamId, 'task', 'task.updated', 4, task.id);
+    insertRow(teamId, 'invite', 'invite.revoked', 5);
+
+    const scope = workScope(ctx.db.orm, ada.id);
+    const rows = recentActivity(ctx.db.orm, scope.memberships, 10);
+    // Equal times are ordered by id, descending, like the audit log.
+    expect(rows.map((row) => row.action)).toEqual([
+      'task.updated',
+      'role.updated',
+      'task.created',
+      'invite.created',
+    ]);
+    expect(recentActivity(ctx.db.orm, scope.memberships, 2).map((row) => row.action)).toEqual([
+      'task.updated',
+      'role.updated',
+    ]);
+  });
+
+  it('pages through each team log without losing rows between pages', () => {
+    const side = createTeam(ctx.db, { ownerId: owner.id, slug: 'side' }).team.id;
+    // More rows than one page per team, all at the same few timestamps.
+    for (let index = 0; index < 130; index += 1) {
+      insertRow(index % 2 === 0 ? teamId : side, 'task', `task.updated.${index}`, index % 7);
+    }
+    const scope = workScope(ctx.db.orm, owner.id);
+    const rows = recentActivity(ctx.db.orm, scope.memberships, 200);
+    expect(rows).toHaveLength(130);
+    const sorted = [...rows].sort(
+      (a, b) => b.createdAt.getTime() - a.createdAt.getTime() || (a.id < b.id ? 1 : -1),
+    );
+    expect(rows.map((row) => row.id)).toEqual(sorted.map((row) => row.id));
+  });
+
+  it('reads each team through its index and never sorts a whole log', () => {
+    const side = createTeam(ctx.db, { ownerId: ada.id, slug: 'side' }).team.id;
+    insertRow(side, 'task', 'task.created', 1);
+    insertRow(teamId, 'task', 'task.created', 2);
+    const statements: string[] = [];
+    const prepare = ctx.db.sqlite.prepare.bind(ctx.db.sqlite);
+    const spy = vi.spyOn(ctx.db.sqlite, 'prepare').mockImplementation((source: string) => {
+      if (/from "activity"/i.test(source)) statements.push(source);
+      return prepare(source);
+    });
+    try {
+      recentActivity(ctx.db.orm, workScope(ctx.db.orm, ada.id).memberships, 10);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(statements.length).toBeGreaterThan(0);
+    for (const statement of statements) {
+      const params = Array.from(statement.matchAll(/\?/g), () => 'x');
+      const plan = ctx.db.sqlite
+        .prepare(`EXPLAIN QUERY PLAN ${statement}`)
+        .all(...params)
+        .map((row) => (row as { detail: string }).detail)
+        .join(' | ');
+      expect(plan).toContain('activity_team_created_idx (team_id=?');
+      expect(plan).not.toContain('MULTI-INDEX OR');
+      expect(plan).not.toMatch(/TEMP B-TREE FOR ORDER BY/);
+    }
   });
 });

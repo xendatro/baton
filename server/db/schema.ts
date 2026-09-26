@@ -758,6 +758,39 @@ export const activity = sqliteTable(
   ],
 );
 
+/** What an `activity_facet` row lists: one of the audit log's filter menus. */
+export const ACTIVITY_FACET_KINDS = [
+  'actor',
+  'source',
+  'entity_type',
+  'action',
+  'project',
+  'key',
+] as const;
+export type ActivityFacetKind = (typeof ACTIVITY_FACET_KINDS)[number];
+
+/**
+ * The distinct values of a team's audit log (actors, sources, entity types, actions, projects and
+ * API keys) for its filter menus, kept by `recordActivity` in the same transaction as each row, so
+ * reading them never scans the (append-only, unbounded) log. Key rows also carry the key's latest
+ * name snapshot, owner and last use. No foreign keys, like `activity`.
+ */
+export const activityFacet = sqliteTable(
+  'activity_facet',
+  {
+    teamId: text('team_id').notNull(),
+    kind: text('kind', { enum: ACTIVITY_FACET_KINDS }).notNull(),
+    value: text('value').notNull(),
+    /** `key` rows: the key name as last recorded. */
+    keyName: text('key_name'),
+    /** `key` rows: the key's owner (the actor of its latest row). */
+    actorId: text('actor_id'),
+    /** `key` rows: when the key was last used in the team. */
+    lastAt: timestamp('last_at'),
+  },
+  (t) => [primaryKey({ columns: [t.teamId, t.kind, t.value] })],
+);
+
 // =============================================================================================
 // Relations (for db.query.* relational queries)
 // =============================================================================================

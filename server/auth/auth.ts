@@ -9,6 +9,7 @@ import * as schema from '../db/schema';
 import type { Env } from '../env';
 import { newId } from '../lib/ids';
 import type { RateLimiter } from '../lib/rateLimit';
+import { currentLogger } from '../lib/requestContext';
 import type { Logger } from '../logger';
 import { recordActivity } from '../services/activity';
 import type { Mailer } from './mailer';
@@ -207,10 +208,12 @@ export function createAuth(deps: AuthDeps) {
       level: env.logLevel === 'debug' || env.logLevel === 'trace' ? 'debug' : 'warn',
       disabled: env.logLevel === 'silent',
       log: (level, message, ...args) => {
+        // Inside a request, the request logger adds the request id and client IP.
+        const log = currentLogger(logger);
         const context = { component: 'better-auth', details: args.length > 0 ? args : undefined };
-        if (level === 'error') logger.error(context, message);
-        else if (level === 'warn') logger.warn(context, message);
-        else logger.debug(context, message);
+        if (level === 'error') log.error(context, message);
+        else if (level === 'warn') log.warn(context, message);
+        else log.debug(context, message);
       },
     },
 

@@ -130,6 +130,30 @@ export const LIVE_INVALIDATIONS: Readonly<Record<LiveEventType, Invalidation>> =
   'me.updated': () => [queryKeys.me(), queryKeys.account.all()],
 };
 
+/**
+ * The keys to invalidate for a batch of keys: duplicates and keys below another key of the batch
+ * (invalidation matches by prefix) are dropped, so each query refetches once.
+ */
+export function coalesceQueryKeys(keys: readonly QueryKey[]): QueryKey[] {
+  const unique = new Map(keys.map((key) => [JSON.stringify(key), key]));
+  const isPrefix = (prefix: QueryKey, key: QueryKey) =>
+    prefix.length <= key.length &&
+    prefix.every((part, index) => JSON.stringify(part) === JSON.stringify(key[index]));
+  return [...unique.values()].filter(
+    (key) =>
+      ![...unique.values()].some(
+        (other) => other !== key && other.length < key.length && isPrefix(other, key),
+      ),
+  );
+}
+
+/**
+ * How long live invalidations are collected before they run. One mutation sends several events
+ * (e.g. `task.updated` and `activity.created`, which both refresh the dashboard), and agents write
+ * in bursts: batching makes each affected query refetch once instead of once per event.
+ */
+export const LIVE_INVALIDATION_DELAY_MS = 100;
+
 /** Invalidates every query affected by `event`. */
 export async function invalidateForEvent(
   queryClient: QueryClient,
@@ -154,7 +178,10 @@ export type LiveConnectionState = 'connecting' | 'open' | 'reconnecting';
 
 const eventListeners = new Set<LiveEventListener>();
 
-/** Listens to every live event (after its invalidations are queued). Returns the unsubscribe. */
+/**
+ * Listens to every live event (its invalidations are queued and run shortly after, batched with
+ * those of the events around it). Returns the unsubscribe.
+ */
 export function subscribeLiveEvents(listener: LiveEventListener): () => void {
   eventListeners.add(listener);
   return () => {
@@ -187,9 +214,10 @@ export interface LiveConnectionOptions {
 
 /**
  * Opens one EventSource and keeps it open: every message is validated, mapped to query
- * invalidations and handed to the listeners. When the browser gives up on the stream (HTTP errors
- * close it for good) it reconnects with backoff. After a reconnect every query is invalidated,
- * since events may have been missed while offline. Returns the close function.
+ * invalidations (batched, see `LIVE_INVALIDATION_DELAY_MS`) and handed to the listeners. When the
+ * browser gives up on the stream (HTTP errors close it for good) it reconnects with backoff. After
+ * a reconnect every query is invalidated, since events may have been missed while offline.
+ * Returns the close function.
  */
 export function connectLiveEvents(options: LiveConnectionOptions): () => void {
   const {
@@ -203,8 +231,22 @@ export function connectLiveEvents(options: LiveConnectionOptions): () => void {
   let attempt = 0;
   let hasConnected = false;
   let closed = false;
+  let pendingKeys: QueryKey[] = [];
+  let flushTimer: ReturnType<typeof setTimeout> | null = null;
 
   const setState = (state: LiveConnectionState) => onStateChange?.(state);
+
+  const flushInvalidations = () => {
+    flushTimer = null;
+    const keys = coalesceQueryKeys(pendingKeys);
+    pendingKeys = [];
+    for (const queryKey of keys) void queryClient.invalidateQueries({ queryKey });
+  };
+
+  const queueInvalidations = (keys: readonly QueryKey[]) => {
+    pendingKeys.push(...keys);
+    flushTimer ??= setTimeout(flushInvalidations, LIVE_INVALIDATION_DELAY_MS);
+  };
 
   const handleMessage = (message: MessageEvent<unknown>) => {
     if (typeof message.data !== 'string') return;
@@ -216,7 +258,7 @@ export function connectLiveEvents(options: LiveConnectionOptions): () => void {
     }
     const parsed = liveEventSchema.safeParse(payload);
     if (!parsed.success) return;
-    void invalidateForEvent(queryClient, parsed.data);
+    queueInvalidations(LIVE_INVALIDATIONS[parsed.data.type](parsed.data));
     for (const listener of eventListeners) listener(parsed.data);
   };
 
@@ -259,6 +301,7 @@ export function connectLiveEvents(options: LiveConnectionOptions): () => void {
   return () => {
     closed = true;
     if (timer !== null) clearTimeout(timer);
+    if (flushTimer !== null) clearTimeout(flushTimer);
     source?.close();
     source = null;
   };

@@ -2,6 +2,7 @@ import type { Context, MiddlewareHandler } from 'hono';
 import { RATE_LIMITS } from '@shared/constants';
 import type { AppEnv } from '../context';
 import { errors } from '../lib/errors';
+import { loggedPath } from '../lib/requestContext';
 import type { RateLimiter, RateLimitRule } from '../lib/rateLimit';
 
 /**
@@ -38,7 +39,18 @@ export function rateLimit(options: RateLimitOptions): MiddlewareHandler<AppEnv> 
     if (key === null) return next();
     const decision = c.var.deps.rateLimiter.consume(`${options.name}:${key}`, rule);
     if (!decision.allowed) {
-      c.var.logger.warn({ limit: options.name }, 'rate limited');
+      // The request logger adds the request id and client IP.
+      c.var.logger.warn(
+        {
+          limit: options.name,
+          bucket: key,
+          method: c.req.method,
+          path: loggedPath(c.req.path),
+          userId: c.var.actor?.userId,
+          keyId: c.var.actor?.key?.id,
+        },
+        'rate limited',
+      );
       return c.json(errors.rateLimited().toJSON(), 429, {
         'Retry-After': String(decision.retryAfterSeconds),
       });

@@ -10,7 +10,7 @@ import type { ConfigResponse } from '@shared/schemas/core';
 import type { AppDeps, AppEnv } from './context';
 import { clientIp } from './lib/clientIp';
 import { AppError, errors, type ErrorCode } from './lib/errors';
-import { inviteCodeHint } from './lib/security';
+import { loggedPath, runWithRequestLogger } from './lib/requestContext';
 import { toValidationIssues } from './lib/validate';
 import { mcpRoutes } from './mcp/server';
 import { mountApiRoutes } from './routes';
@@ -25,6 +25,8 @@ export interface CreateAppOptions extends AppDeps {
   webDir?: string | null;
 }
 
+export { loggedPath };
+
 /** Paths that never fall back to the SPA. */
 const NON_SPA_PREFIXES = ['/api', '/mcp', '/healthz'];
 
@@ -34,18 +36,18 @@ function isNonSpaPath(requestPath: string): boolean {
   );
 }
 
-/** Paths that carry an invite code: the join page and the invite preview/accept endpoints. */
-const INVITE_CODE_PATH = /^(\/api\/invites\/|\/join\/)([^/]+)/;
+/** Longest user agent the request log keeps. */
+const USER_AGENT_LOG_MAX = 200;
 
 /**
- * The request path as the request log records it. Invite codes are working join links, so the
- * log keeps only a hint of them (`/api/invites/DtYC…/accept`).
+ * Requests answered with a file from the SPA build (`/assets/*`, `/theme-init.js`, …): logged at
+ * debug, since one page load fetches dozens of them.
  */
-export function loggedPath(requestPath: string): string {
-  return requestPath.replace(
-    INVITE_CODE_PATH,
-    (_match, prefix: string, code: string) => `${prefix}${inviteCodeHint(code)}`,
-  );
+const staticFileRequests = new WeakSet<Context>();
+
+/** Source maps are never served, even when a build left some in the web folder. */
+function isSourceMap(requestPath: string): boolean {
+  return requestPath.endsWith('.map');
 }
 
 const HTTP_STATUS_CODES: Partial<Record<number, ErrorCode>> = {
@@ -71,21 +73,27 @@ export function createApp(options: CreateAppOptions): Hono<AppEnv> {
   // --- Request context: id, deps, logger ---------------------------------------------------
   app.use(requestId());
   app.use(async (c, next) => {
-    const log = logger.child({ reqId: c.var.requestId });
+    const ip = clientIp(c, env.trustProxy);
+    // Every line logged for the request carries its id and the client's address.
+    const log = logger.child({ reqId: c.var.requestId, ...(ip ? { ip } : {}) });
     c.set('deps', deps);
     c.set('logger', log);
     c.set('actor', null);
     c.set('sessionId', null);
-    c.set('clientIp', clientIp(c, env.trustProxy));
+    c.set('clientIp', ip);
     const started = performance.now();
-    await next();
+    await runWithRequestLogger(log, next);
+    const { actor } = c.var;
     const entry = {
       method: c.req.method,
       path: loggedPath(c.req.path),
       status: c.res.status,
       ms: Math.round(performance.now() - started),
+      userId: actor?.userId,
+      keyId: actor?.key?.id,
+      ua: c.req.header('user-agent')?.slice(0, USER_AGENT_LOG_MAX),
     };
-    if (c.req.path === '/healthz') log.debug(entry, 'request');
+    if (c.req.path === '/healthz' || staticFileRequests.has(c)) log.debug(entry, 'request');
     else log.info(entry, 'request');
   });
 
@@ -172,9 +180,11 @@ export function createApp(options: CreateAppOptions): Hono<AppEnv> {
 
     app.get('*', async (c, next) => {
       if (isNonSpaPath(c.req.path) || c.req.path.endsWith('/')) return next();
+      if (isSourceMap(c.req.path)) throw errors.notFound('Page');
       const response = await staticFiles(c, next);
       // A Response means a file was served (otherwise serveStatic already ran the SPA fallback).
       if (!(response instanceof Response)) return;
+      staticFileRequests.add(c);
       // Vite emits content-hashed names under /assets; everything else must revalidate.
       response.headers.set(
         'Cache-Control',

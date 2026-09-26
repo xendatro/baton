@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, isNotNull, isNull, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNotNull, isNull } from 'drizzle-orm';
 import { z } from 'zod';
 import type { ActivityEntityType, ActorSource, TrashableType } from '@shared/constants';
 import { parseRef, type ParsedRef } from '@shared/refs';
@@ -344,53 +344,29 @@ export function getAuditLogFacets(deps: AppDeps, actor: Actor, teamId: string): 
     'VIEW_AUDIT_LOG',
     "You don't have permission to view the audit log",
   );
-  const inTeam = eq(s.activity.teamId, teamId);
-
-  const actorIds = orm
-    .selectDistinct({ id: s.activity.actorId })
-    .from(s.activity)
-    .where(and(inTeam, isNotNull(s.activity.actorId)))
-    .all()
-    .map((row) => row.id);
-  const sources = orm
-    .selectDistinct({ source: s.activity.source })
-    .from(s.activity)
-    .where(inTeam)
-    .all()
-    .map((row) => row.source);
-  // SQLite takes the bare columns of a max() aggregate from the row holding the maximum, so each
-  // key comes with its latest name snapshot and owner.
-  const keyRows = orm
-    .select({
-      keyId: s.activity.viaKeyId,
-      keyName: s.activity.viaKeyName,
-      actorId: s.activity.actorId,
-      lastUsed: sql<number>`max(${s.activity.createdAt})`,
-    })
-    .from(s.activity)
-    .where(and(inTeam, isNotNull(s.activity.viaKeyId)))
-    .groupBy(s.activity.viaKeyId)
-    .orderBy(desc(sql`max(${s.activity.createdAt})`))
+  // Read from the facet rows `recordActivity` keeps, never from the (unbounded) log itself.
+  const facetRows = orm
+    .select()
+    .from(s.activityFacet)
+    .where(eq(s.activityFacet.teamId, teamId))
     .all();
-  const entityTypes = orm
-    .selectDistinct({ entityType: s.activity.entityType })
-    .from(s.activity)
-    .where(inTeam)
-    .all()
-    .map((row) => row.entityType);
-  const actions = orm
-    .selectDistinct({ action: s.activity.action })
-    .from(s.activity)
-    .where(inTeam)
-    .orderBy(asc(s.activity.action))
-    .all()
-    .map((row) => row.action);
-  const projectIds = orm
-    .selectDistinct({ id: s.activity.projectId })
-    .from(s.activity)
-    .where(and(inTeam, isNotNull(s.activity.projectId)))
-    .all()
-    .flatMap((row) => (row.id ? [row.id] : []));
+  const valuesOf = (kind: s.ActivityFacetKind) =>
+    facetRows.filter((row) => row.kind === kind).map((row) => row.value);
+
+  const actorIds = valuesOf('actor');
+  const sources = valuesOf('source');
+  const keyRows = facetRows
+    .filter((row) => row.kind === 'key')
+    .map((row) => ({
+      keyId: row.value,
+      keyName: row.keyName,
+      actorId: row.actorId,
+      lastUsed: row.lastAt?.getTime() ?? 0,
+    }))
+    .sort((a, b) => b.lastUsed - a.lastUsed);
+  const entityTypes = valuesOf('entity_type');
+  const actions = valuesOf('action').sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+  const projectIds = valuesOf('project');
   const projects =
     projectIds.length === 0
       ? []

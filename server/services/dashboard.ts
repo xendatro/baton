@@ -41,7 +41,7 @@ const CLAIMED_LIMIT = 20;
 /** Entity types whose history every member may see (the rest is the team audit log). */
 const MEMBER_VISIBLE_TYPES: ActivityEntityType[] = ['issue', 'task', 'reply', 'attachment'];
 
-/** Activity rows read per batch while looking for visible ones, and at most in all. */
+/** Activity rows read per team and query while looking for visible ones, and at most in all. */
 const ACTIVITY_BATCH = 100;
 const ACTIVITY_SCAN_LIMIT = 1000;
 
@@ -110,49 +110,93 @@ export function recentActivity(
   memberships: readonly Membership[],
   limit: number = DASHBOARD_ACTIVITY_LIMIT,
 ): ActivityRow[] {
-  const auditTeams = memberships
-    .filter((membership) => hasPermission(membership, 'VIEW_AUDIT_LOG'))
-    .map((membership) => membership.teamId);
-  const otherTeams = memberships
-    .filter((membership) => !hasPermission(membership, 'VIEW_AUDIT_LOG'))
-    .map((membership) => membership.teamId);
-  const scope = or(
-    auditTeams.length > 0 ? inArray(s.activity.teamId, auditTeams) : undefined,
-    otherTeams.length > 0
-      ? and(
-          inArray(s.activity.teamId, otherTeams),
-          inArray(s.activity.entityType, MEMBER_VISIBLE_TYPES),
-        )
-      : undefined,
+  const streams = memberships.map((membership) =>
+    teamActivityStream(
+      db,
+      membership.teamId,
+      hasPermission(membership, 'VIEW_AUDIT_LOG') ? null : MEMBER_VISIBLE_TYPES,
+    ),
   );
-  if (!scope) return [];
-
   const visible = createVisibility(db, memberships);
   const found: ActivityRow[] = [];
-  let before: ActivityRow | undefined;
-  for (let scanned = 0; scanned < ACTIVITY_SCAN_LIMIT && found.length < limit;) {
-    const cursor: SQL | undefined = before
-      ? or(
-          lt(s.activity.createdAt, before.createdAt),
-          and(eq(s.activity.createdAt, before.createdAt), lt(s.activity.id, before.id)),
-        )
-      : undefined;
-    const batch = db
+  for (let scanned = 0; scanned < ACTIVITY_SCAN_LIMIT && found.length < limit; scanned += 1) {
+    // Merge the teams' streams: take the newest head row among them.
+    let newest: TeamActivityStream | undefined;
+    let newestRow: ActivityRow | undefined;
+    for (const stream of streams) {
+      const row = stream.peek();
+      if (row && (!newestRow || isNewer(row, newestRow))) {
+        newest = stream;
+        newestRow = row;
+      }
+    }
+    if (!newest || !newestRow) break;
+    newest.take();
+    if (visible(newestRow)) found.push(newestRow);
+  }
+  return found;
+}
+
+interface TeamActivityStream {
+  /** The team's next row (newest first) without consuming it; undefined at the end. */
+  peek(): ActivityRow | undefined;
+  take(): void;
+}
+
+/**
+ * One team's activity rows, newest first, optionally only some entity types, read a page at a
+ * time as the merge consumes them. Each page is a single-team query, so SQLite walks
+ * `activity_team_created_idx` from the newest row and stops at the LIMIT: its cost depends on the
+ * rows shown, never on the size of the log. (Several teams in one `IN`/`OR` query made SQLite read
+ * and sort every row of those teams first.)
+ */
+function teamActivityStream(
+  db: DbExecutor,
+  teamId: string,
+  entityTypes: readonly ActivityEntityType[] | null,
+): TeamActivityStream {
+  let page: ActivityRow[] = [];
+  let last: ActivityRow | undefined;
+  let exhausted = false;
+  const fill = () => {
+    if (page.length > 0 || exhausted) return;
+    page = db
       .select()
       .from(s.activity)
-      .where(and(scope, cursor))
+      .where(
+        and(
+          eq(s.activity.teamId, teamId),
+          entityTypes ? inArray(s.activity.entityType, [...entityTypes]) : undefined,
+          // Keyset cursor written so the index range applies (created_at <= t).
+          last
+            ? and(
+                lte(s.activity.createdAt, last.createdAt),
+                or(lt(s.activity.createdAt, last.createdAt), lt(s.activity.id, last.id)),
+              )
+            : undefined,
+        ),
+      )
       .orderBy(desc(s.activity.createdAt), desc(s.activity.id))
       .limit(ACTIVITY_BATCH)
       .all();
-    for (const row of batch) {
-      if (visible(row)) found.push(row);
-      if (found.length === limit) break;
-    }
-    scanned += batch.length;
-    before = batch.at(-1);
-    if (batch.length < ACTIVITY_BATCH) break;
-  }
-  return found;
+    last = page.at(-1) ?? last;
+    if (page.length < ACTIVITY_BATCH) exhausted = true;
+  };
+  return {
+    peek() {
+      fill();
+      return page[0];
+    },
+    take() {
+      page.shift();
+    },
+  };
+}
+
+/** The audit log's order: newest first, equal times by id descending. */
+function isNewer(a: ActivityRow, b: ActivityRow): boolean {
+  const byTime = a.createdAt.getTime() - b.createdAt.getTime();
+  return byTime !== 0 ? byTime > 0 : a.id > b.id;
 }
 
 /** The caller's live teams by name, with member counts and project cards. */

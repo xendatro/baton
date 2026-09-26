@@ -197,3 +197,13 @@ Later notes win over the module sections above where they disagree.
 - New theme tokens used for text should be added to the pairs in `web/styles/contrast.test.ts`.
 - Headings: a page has one h1 (the project name on project pages, the item on task/issue pages); `EmptyState` defaults to h2 (`headingLevel={3}` under a section h2); MarkdownView starts at h3.
 - Palette search providers may set `rank` on results (lower is better) to order the groups.
+
+## Production fixes (PERF-01 to PERF-04, OPS-01, SEC-01, LOG-01)
+
+- Activity rows must be written through `recordActivity` (server/services/activity.ts): it also keeps the team's audit-log facets (`activity_facet`), which `GET /api/teams/:teamId/audit-log/facets` and MCP `get_audit_log_facets` read. A new facet dimension needs a kind in `ACTIVITY_FACET_KINDS`, a line in `recordFacets` and a backfill migration.
+- Queries over `activity` that span teams must not use `team_id IN (…)` / `OR` with `ORDER BY created_at`: SQLite sorts every row of those teams. Query per team and merge (see `teamActivityStream` in server/services/dashboard.ts).
+- App-wide shell extensions must stay light: anything heavy (the editor, the date picker, charts) belongs in a module the extension loads with `lazy()` when it is needed, like `NewTaskForm` in web/pages/tasks/NewTaskDialog.tsx. `e2e/bundles.spec.ts` fails if the dashboard loads ProseMirror or react-day-picker code.
+- Live events invalidate queries 100 ms after they arrive (batched, deduplicated). Listeners registered with `useLiveEventListener` still run at once.
+- Code that runs inside a request without the Hono context can log with `currentLogger(deps.logger)` (server/lib/requestContext.ts) to get the request id and client IP.
+- Web source maps are in `dist/sourcemaps/web/` after `npm run build` (not published).
+- docs/DEPLOY.md (owned by ops) should say that `backups/uploads/` now follows the snapshots' retention: files deleted in the app leave the mirror once no retained daily or pre-deploy snapshot references them.

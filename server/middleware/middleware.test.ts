@@ -363,6 +363,40 @@ describe('request bodies (SEC-01)', () => {
     expect(await errorCode(res)).toBe('payload_too_large');
   });
 
+  it('never buffers a huge anonymous body on Better Auth endpoints (PERF-01)', async () => {
+    const signInWith = (init: RequestInit, headers: Record<string, string> = {}) =>
+      ctx.app.request('/api/auth/sign-in/username', {
+        ...init,
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Origin: ctx.env.baseUrl, ...headers },
+      });
+    // Declared too large: refused before a single byte is read.
+    const declared = watchedBody(new TextEncoder().encode('{"username":"ethan"}'));
+    const refused = await signInWith(declared.init, {
+      'Content-Length': String(95 * 1024 * 1024),
+    });
+    expect(refused.status).toBe(413);
+    expect(declared.watch.read).toBe(false);
+
+    // Streamed (no Content-Length): reading stops just past the limit, not at the 95 MB end.
+    const chunk = new Uint8Array(64 * 1024).fill(97);
+    let pulled = 0;
+    const endless = new ReadableStream<Uint8Array>(
+      {
+        pull(controller) {
+          if (pulled >= 95 * 1024 * 1024) return controller.close();
+          pulled += chunk.byteLength;
+          controller.enqueue(chunk);
+        },
+      },
+      { highWaterMark: 0 },
+    );
+    const streamed = await signInWith({ body: endless, duplex: 'half' });
+    expect(streamed.status).toBe(413);
+    expect(await errorCode(streamed)).toBe('payload_too_large');
+    expect(pulled).toBeLessThanOrEqual(AUTH_BODY_MAX_BYTES + 2 * chunk.byteLength);
+  });
+
   it('leaves uploads to their own, larger limit', async () => {
     ctx.close();
     ctx = createTestContext({ env: { MAX_UPLOAD_MB: '5' } });

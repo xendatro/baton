@@ -10,6 +10,7 @@ import {
   isNull,
   lt,
   or,
+  sql,
   type SQL,
 } from 'drizzle-orm';
 import type { ActivityEntityType } from '@shared/constants';
@@ -88,6 +89,7 @@ export function recordActivity(tx: Tx, actor: Actor | null, input: ActivityInput
     })
     .returning()
     .get();
+  if (row.teamId) recordFacets(tx, row, row.teamId);
   queueLiveEvent(tx, {
     type: 'activity.created',
     teamId: row.teamId,
@@ -101,6 +103,36 @@ export function recordActivity(tx: Tx, actor: Actor | null, input: ActivityInput
     ...(row.teamId === null && row.actorId ? { userId: row.actorId } : {}),
   });
   return row;
+}
+
+/**
+ * Adds the row's values to its team's audit-log facets (`activity_facet`), which the filter menus
+ * read instead of scanning the log. Values already listed cost one primary-key lookup each; a
+ * key's name, owner and last use follow its newest row.
+ */
+function recordFacets(tx: Tx, row: ActivityRow, teamId: string): void {
+  const values: Array<{ kind: s.ActivityFacetKind; value: string | null }> = [
+    { kind: 'actor', value: row.actorId },
+    { kind: 'source', value: row.source },
+    { kind: 'entity_type', value: row.entityType },
+    { kind: 'action', value: row.action },
+    { kind: 'project', value: row.projectId },
+  ];
+  tx.insert(s.activityFacet)
+    .values(values.flatMap(({ kind, value }) => (value === null ? [] : [{ teamId, kind, value }])))
+    .onConflictDoNothing()
+    .run();
+  if (row.viaKeyId) {
+    const key = { keyName: row.viaKeyName, actorId: row.actorId, lastAt: row.createdAt };
+    tx.insert(s.activityFacet)
+      .values({ teamId, kind: 'key', value: row.viaKeyId, ...key })
+      .onConflictDoUpdate({
+        target: [s.activityFacet.teamId, s.activityFacet.kind, s.activityFacet.value],
+        set: key,
+        setWhere: sql`${s.activityFacet.lastAt} is null or ${s.activityFacet.lastAt} <= excluded.last_at`,
+      })
+      .run();
+  }
 }
 
 // ---------------------------------------------------------------------------------------------

@@ -1,5 +1,7 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import { eq } from 'drizzle-orm';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { auditLogFacetsSchema, trashPageSchema } from '@shared/schemas/admin';
 import type { Actor } from '../context';
 import * as s from '../db/schema';
@@ -397,6 +399,63 @@ describe('getAuditLogFacets', () => {
     expect(() => getAuditLogFacets(ctx.deps, web(createUser(ctx.db)), team.team.id)).toThrow(
       /Team not found/,
     );
+  });
+
+  function logSample() {
+    const first = createApiKey(ctx.db, { userId: mia.id, name: 'Codex' });
+    const second = createApiKey(ctx.db, { userId: owner.id, name: 'Claude' });
+    const via = (user: UserRow, id: string, name: string): Actor => ({
+      userId: user.id,
+      source: 'mcp',
+      key: { id, name },
+    });
+    const base = { teamId: team.team.id, projectId: project.project.id, entityId: 'x' } as const;
+    log(via(mia, first.apiKey.id, 'Codex (old)'), { ...base, entityType: 'task', action: 'a.1' });
+    log(via(owner, second.apiKey.id, 'Claude'), { ...base, entityType: 'issue', action: 'b.1' });
+    log(via(mia, first.apiKey.id, 'Codex'), { ...base, entityType: 'reply', action: 'a.2' });
+    log(web(owner), { teamId: team.team.id, entityType: 'role', entityId: 'r', action: 'c.1' });
+    log(null, { ...base, entityType: 'task', action: 'a.1' });
+  }
+
+  it('reads the facets without scanning the audit log (PERF-03)', () => {
+    logSample();
+    const statements: string[] = [];
+    const prepare = ctx.db.sqlite.prepare.bind(ctx.db.sqlite);
+    const spy = vi.spyOn(ctx.db.sqlite, 'prepare').mockImplementation((source: string) => {
+      statements.push(source);
+      return prepare(source);
+    });
+    let facets;
+    try {
+      facets = getAuditLogFacets(ctx.deps, web(owner), team.team.id);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(statements.some((source) => /from "activity"(?!_)/i.test(source))).toBe(false);
+    expect(facets.actions).toEqual(['a.1', 'a.2', 'b.1', 'c.1']);
+    expect(facets.entityTypes).toEqual(['task', 'issue', 'reply', 'role']);
+    expect(facets.sources).toEqual(['web', 'mcp', 'system']);
+    // Most recently used key first, with its latest name.
+    expect(facets.keys.map((key) => [key.keyName, key.user?.username])).toEqual([
+      ['Codex', 'mia'],
+      ['Claude', 'owner'],
+    ]);
+  });
+
+  it('backfills the facets of existing rows in migration 0002', () => {
+    logSample();
+    const expected = getAuditLogFacets(ctx.deps, web(owner), team.team.id);
+    ctx.db.sqlite.prepare('DELETE FROM activity_facet').run();
+    expect(getAuditLogFacets(ctx.deps, web(owner), team.team.id).actions).toEqual([]);
+
+    const migration = fs.readFileSync(
+      path.join(import.meta.dirname, '../db/migrations/0002_activity_facets.sql'),
+      'utf8',
+    );
+    for (const statement of migration.split('--> statement-breakpoint')) {
+      if (/INSERT OR IGNORE INTO/.test(statement)) ctx.db.sqlite.exec(statement);
+    }
+    expect(getAuditLogFacets(ctx.deps, web(owner), team.team.id)).toEqual(expected);
   });
 
   it('resolves API keys by id or by name', () => {

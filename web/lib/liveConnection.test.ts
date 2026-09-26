@@ -1,7 +1,13 @@
 import { QueryClient } from '@tanstack/react-query';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FakeEventSource } from '@web/test/mockApi';
-import { connectLiveEvents, reconnectDelay, subscribeLiveEvents } from './live';
+import {
+  coalesceQueryKeys,
+  connectLiveEvents,
+  LIVE_INVALIDATION_DELAY_MS,
+  reconnectDelay,
+  subscribeLiveEvents,
+} from './live';
 import { queryKeys } from './queryKeys';
 
 const event = {
@@ -63,8 +69,9 @@ describe('connectLiveEvents', () => {
     source.emit({ type: 'nope' });
     source.onmessage?.(new MessageEvent('message', { data: 'not json' }));
 
-    expect(client.getQueryState(tasks)?.isInvalidated).toBe(true);
     expect(listener).toHaveBeenCalledTimes(1);
+    vi.advanceTimersByTime(LIVE_INVALIDATION_DELAY_MS);
+    expect(client.getQueryState(tasks)?.isInvalidated).toBe(true);
     expect(listener).toHaveBeenCalledWith(expect.objectContaining({ type: 'task.updated' }));
     unsubscribe();
   });
@@ -103,11 +110,50 @@ describe('connectLiveEvents', () => {
     expect(states.at(-1)).toBe('open');
   });
 
+  it('batches the invalidations of a burst of events, so each query refetches once (PERF-02)', () => {
+    const source = connect();
+    source.open();
+    const invalidate = vi.spyOn(client, 'invalidateQueries');
+    // One task write: its own event and the audit row's, both of which refresh the dashboard.
+    source.emit(event);
+    source.emit({ ...event, type: 'activity.created', entityType: 'activity', entityId: 'a1' });
+    source.emit({ ...event, entityId: 'task2' });
+    expect(invalidate).not.toHaveBeenCalled();
+
+    vi.advanceTimersByTime(LIVE_INVALIDATION_DELAY_MS);
+    const keys = invalidate.mock.calls.map(([filters]) => JSON.stringify(filters?.queryKey));
+    expect(new Set(keys).size).toBe(keys.length);
+    expect(keys).toContain(JSON.stringify(queryKeys.work.all()));
+    // Covered by work.all(): not invalidated a second time.
+    expect(keys).not.toContain(JSON.stringify(queryKeys.work.dashboard()));
+  });
+
   it('stops reconnecting once closed', () => {
     const source = connect();
     source.fail(true);
     close();
     vi.advanceTimersByTime(60_000);
     expect(FakeEventSource.instances).toHaveLength(1);
+  });
+});
+
+describe('coalesceQueryKeys', () => {
+  it('drops duplicates and keys under another key of the batch', () => {
+    expect(
+      coalesceQueryKeys([
+        ['work', 'dashboard'],
+        ['tasks', 'p1'],
+        ['work'],
+        ['tasks', 'p1'],
+        ['tasks', 'p10'],
+        ['replies', { type: 'task', id: 't1' }],
+        ['replies', { type: 'task', id: 't1' }],
+      ]),
+    ).toEqual([
+      ['tasks', 'p1'],
+      ['work'],
+      ['tasks', 'p10'],
+      ['replies', { type: 'task', id: 't1' }],
+    ]);
   });
 });

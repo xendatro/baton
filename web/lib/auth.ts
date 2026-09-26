@@ -11,6 +11,7 @@ import {
 } from '@shared/schemas/core';
 import { api } from './api';
 import { queryKeys } from './queryKeys';
+import { clearReplyDrafts } from './replyDrafts';
 
 /**
  * Authentication on the web: the Better Auth client (email + password, email OTP, username,
@@ -126,13 +127,15 @@ export function useConfig(): UseQueryResult<ConfigResponse> {
   });
 }
 
-/** Signs out, drops every cached query and returns to the login page. */
+/** Signs out, drops every cached query and reply draft and returns to the login page. */
 export function useSignOut(): () => Promise<void> {
   const queryClient = useQueryClient();
   return useCallback(async () => {
     try {
       await authClient.signOut();
     } finally {
+      // Unsent reply drafts stay in this tab otherwise (shared computers).
+      clearReplyDrafts();
       queryClient.clear();
       queryClient.setQueryData(queryKeys.session(), null);
       window.location.assign('/login');

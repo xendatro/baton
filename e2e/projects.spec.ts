@@ -160,8 +160,14 @@ test('manage statuses: add, set default, recategorize, reorder by keyboard, dele
     .poll(async () => (await statusesOf(page, project.id)).find((s) => s.isDefault)?.name)
     .toBe('In review');
 
-  await page.getByRole('combobox', { name: 'Category of In review' }).click();
+  const category = page.getByRole('combobox', { name: 'Category of In review' });
+  await category.click();
   await page.getByRole('option', { name: 'Done' }).click();
+  // Radix Select hands focus back to its trigger once its close animation ends. Filling another
+  // field before that lost the focus to the trigger mid-edit, which blurred (and so saved) the
+  // rename below before Enter was pressed.
+  await expect(page.getByRole('listbox')).toBeHidden();
+  await expect(category).toBeFocused();
   await expect
     .poll(
       async () =>
@@ -169,10 +175,14 @@ test('manage statuses: add, set default, recategorize, reorder by keyboard, dele
     )
     .toBe('done');
 
-  // Rename in place.
-  const name = page.getByLabel('Name of status Open');
+  // Rename in place. The field's label follows the saved name, so hold on to the row (Open is
+  // the first) instead.
+  const name = page.getByTestId('status-row').first().getByRole('textbox');
+  await expect(name).toHaveAccessibleName('Name of status Open');
   await name.fill('To do');
+  await expect(name).toBeFocused();
   await name.press('Enter');
+  await expect(page.getByLabel('Name of status To do')).toHaveValue('To do');
   await expect
     .poll(async () => (await statusesOf(page, project.id)).map((s) => s.name))
     .toEqual(['To do', 'Done', 'In review']);

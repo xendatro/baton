@@ -274,6 +274,27 @@ test('an unsent reply survives leaving the issue and coming back (UX-13)', async
   await expect(reply).not.toContainText(draft);
 });
 
+test('signing out forgets unsent reply drafts', async ({ page }) => {
+  const owner = await signedInUser(page);
+  const team = seedTeam(owner);
+  const project = await createProject(page, team, 'SGN');
+  const issue = await createIssue(page, project.id, { title: 'Shared computer' });
+  const draftKeys = () =>
+    page.evaluate(() =>
+      Object.keys(sessionStorage).filter((key) => key.startsWith('baton:reply-draft:')),
+    );
+
+  await page.goto(`/t/${team.slug}/p/SGN/issues/${issue.number}`);
+  await page.getByRole('textbox', { name: 'Reply' }).click();
+  await page.keyboard.type('not for the next person');
+  await expect.poll(draftKeys).toHaveLength(1);
+
+  await page.getByRole('button', { name: 'Account menu' }).click();
+  await page.getByRole('menuitem', { name: 'Sign out' }).click();
+  await expect(page).toHaveURL(/\/login/);
+  expect(await draftKeys()).toEqual([]);
+});
+
 test('delete an issue, then undo from the toast', async ({ page }) => {
   const owner = await signedInUser(page);
   const team = seedTeam(owner);

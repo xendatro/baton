@@ -137,8 +137,10 @@ check "no X-Powered-By header" is "$(header index x-powered-by)" ""
 # 5. Auth boundaries: REST and MCP refuse anonymous callers
 fetch me "$BASE_URL/api/me"
 check "GET /api/me without a session -> 401" is "$(status me)" 401
+# Every /api route but /api/auth/* and /api/config is private: anonymous callers get a JSON 401,
+# even for unknown paths (never the SPA's HTML); signed in, an unknown path is a 404 (section 6).
 fetch nope "$BASE_URL/api/definitely-not-a-route"
-check "unknown /api route -> 404 JSON" is "$(status nope):$(has "$(header nope content-type)" json && echo json)" 404:json
+check "unknown /api route without a session -> 401 JSON" is "$(status nope):$(has "$(header nope content-type)" json && echo json)" 401:json
 MCP_INIT='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"baton-smoke","version":"1"}}}'
 fetch mcp -X POST "$BASE_URL/mcp" -H 'Content-Type: application/json' \
   -H 'Accept: application/json, text/event-stream' --data "$MCP_INIT"
@@ -153,6 +155,8 @@ check "POST /mcp with an invalid key -> 401" is "$(status mcpbad)" 401
 if [[ -n "${SMOKE_API_KEY:-}" ]]; then
   fetch meKey "$BASE_URL/api/me" -H "Authorization: Bearer $SMOKE_API_KEY"
   check "GET /api/me with SMOKE_API_KEY -> 200" is "$(status meKey)" 200
+  fetch nopeKey "$BASE_URL/api/definitely-not-a-route" -H "Authorization: Bearer $SMOKE_API_KEY"
+  check "unknown /api route with SMOKE_API_KEY -> 404 JSON" is "$(status nopeKey):$(has "$(header nopeKey content-type)" json && echo json)" 404:json
   fetch tools -X POST "$BASE_URL/mcp" -H 'Content-Type: application/json' \
     -H 'Accept: application/json, text/event-stream' -H "Authorization: Bearer $SMOKE_API_KEY" \
     --data '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}'

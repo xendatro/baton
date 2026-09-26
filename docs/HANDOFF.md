@@ -206,4 +206,18 @@ Later notes win over the module sections above where they disagree.
 - Live events invalidate queries 100 ms after they arrive (batched, deduplicated). Listeners registered with `useLiveEventListener` still run at once.
 - Code that runs inside a request without the Hono context can log with `currentLogger(deps.logger)` (server/lib/requestContext.ts) to get the request id and client IP.
 - Web source maps are in `dist/sourcemaps/web/` after `npm run build` (not published).
-- docs/DEPLOY.md (owned by ops) should say that `backups/uploads/` now follows the snapshots' retention: files deleted in the app leave the mirror once no retained daily or pre-deploy snapshot references them.
+- `backups/uploads/` follows the snapshots' retention (documented in docs/DEPLOY.md → Backups and restore). Migration 0002 (`activity_facet` plus its backfill) runs on the next deploy.
+
+## Final verification (after the fix rounds)
+
+- The whole fix series (SEC, CDI, MCP, UX, production) was reviewed together. Lint, typecheck, unit tests and three full Playwright runs pass; a seeded production build was clicked through in light and dark (and at 375 px), and an agent workflow was driven over `/mcp` against it.
+- Theme choices go through `setTheme` (`web/lib/theme.ts`). A choice made before the account extension registers its persister is saved once it does; don't call `applyStoredTheme` for user choices.
+- Reply drafts live in `web/lib/replyDrafts.ts`, keyed by user, and `useSignOut` clears them. Anything else that keeps a user's content in browser storage must be keyed by user and cleared on sign-out the same way.
+- `scripts/smoke.sh` checks the private-by-default `/api`: anonymous unknown routes are 401, keyed ones 404. Update it with any change to what is public.
+- E2E: never edit spec files while Playwright runs (traces zip the sources, and a file that changes mid-run fails the running test with "file data stream has unexpected number of bytes"). After closing a Radix Select, wait for its trigger to regain focus before typing elsewhere (see `e2e/projects.spec.ts`), and locate inputs whose label follows saved data by something stable.
+
+### Known issues at hand-off
+
+- Creating a task from an issue copies the issue body into the description, so `@mentions` in it notify the mentioned people again for the task. Noisy but harmless; unchanged.
+- Vite still warns that the lazily loaded RichTextEditor chunk is over 500 kB.
+- Linux `npm ci` and e2e were not run here (Windows only); the mini runs the production build (see docs/DEPLOY.md).

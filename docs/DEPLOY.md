@@ -147,9 +147,11 @@ SMOKE_API_KEY=bat_... scripts/smoke.sh --ssh    # + authenticated read-only chec
 
 Checks: `/healthz` ok + version, `/api/config`, `/`, `/signup` and its entry script, `/theme-init.js`,
 CSP (`default-src 'self'`, no inline scripts, `frame-ancestors 'none'`), `X-Frame-Options`,
-`nosniff`, `Referrer-Policy`, HSTS (`--no-hsts` for a development server), anonymous `/api/me` → 401,
-unknown `/api` route → 404 JSON, `/mcp` without or with a bad key → 401 with `WWW-Authenticate:
-Bearer`. With `SMOKE_API_KEY`: `/api/me` and MCP `tools/list`. Nothing is written.
+`nosniff`, `Referrer-Policy`, HSTS (`--no-hsts` for a development server), anonymous `/api/me` and
+an unknown `/api` route → JSON 401 (every `/api` route except `/api/auth/*` and `/api/config` is
+private), `/mcp` without or with a bad key → 401 with `WWW-Authenticate: Bearer`. With
+`SMOKE_API_KEY`: `/api/me`, an unknown `/api` route → 404 JSON, and MCP `tools/list`. Nothing is
+written.
 
 ## Logs and service control
 
@@ -255,6 +257,13 @@ The app backs itself up (SPEC §5): daily at 03:30 host time it writes
 copies new upload files into `backups/uploads/`. Every deploy also writes
 `backups/pre-deploy/baton-<release id>.db` before migrating (newest 5 kept).
 
+`backups/uploads/` follows the snapshots' retention: the same daily job deletes a mirrored file
+once `uploads/` no longer has it (purged from Trash, a replaced avatar, a deleted account) and no
+retained daily or pre-deploy snapshot has an attachment pointing at it. So every retained
+snapshot can still be restored with its files, and a file deleted in the app leaves the mirror
+about 14 days later. If any snapshot can't be opened, nothing is pruned that day and the journal
+shows a warning (`old upload files were kept`).
+
 These backups live on the same disk. For an off-site copy, pull them from another machine, e.g. a
 daily scheduled task on the dev machine:
 
@@ -263,7 +272,8 @@ rsync -a --delete ethan@mini:.local/share/baton/backups/ ~/baton-backups/
 ```
 
 (or `rclone copy` to object storage from a user timer on the host). The snapshots are complete,
-consistent SQLite files; `uploads/` files are immutable once written.
+consistent SQLite files; `uploads/` files are immutable once written. With `--delete` the copy
+follows the host's retention (old snapshots and pruned files go); drop it to keep everything.
 
 **Restore** (on the host):
 

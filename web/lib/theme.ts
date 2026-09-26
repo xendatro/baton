@@ -42,11 +42,38 @@ export type ThemePersister = (theme: Theme) => void | Promise<void>;
 const persisters = new Set<ThemePersister>();
 
 /**
+ * The latest choice made through `setTheme` while no persister was registered. The account
+ * module's persister is a lazily loaded shell extension, so a theme can be picked from the user
+ * menu before it mounts; the choice is handed to the first persister that registers, so it is
+ * still saved (and marks the session as settled) instead of being lost and then overridden by the
+ * profile theme on the next load.
+ */
+let unsavedChoice: Theme | null = null;
+
+/**
+ * Calls the persister synchronously (it marks the session as settled before any later effect in
+ * the same render reads it) and ignores its failures: the local choice applies either way.
+ */
+function persistWith(persist: ThemePersister, theme: Theme): void {
+  try {
+    void Promise.resolve(persist(theme)).catch(() => undefined);
+  } catch {
+    // A persister that throws synchronously is ignored like one that rejects.
+  }
+}
+
+/**
  * Registers a callback that saves theme changes made through `setTheme` to the user's profile
- * (the account module owns that endpoint). Returns the unregister function.
+ * (the account module owns that endpoint). A choice made before any persister was registered is
+ * passed to it at once. Returns the unregister function.
  */
 export function registerThemePersister(persist: ThemePersister): () => void {
   persisters.add(persist);
+  if (unsavedChoice !== null) {
+    const theme = unsavedChoice;
+    unsavedChoice = null;
+    persistWith(persist, theme);
+  }
   return () => {
     persisters.delete(persist);
   };
@@ -75,7 +102,11 @@ export function applyStoredTheme(theme: Theme): void {
 /** Stores, applies and saves a theme to the profile, notifying every `useTheme` consumer. */
 export function setTheme(theme: Theme): void {
   applyStoredTheme(theme);
-  for (const persist of persisters) void Promise.resolve(persist(theme)).catch(() => undefined);
+  if (persisters.size === 0) {
+    unsavedChoice = theme;
+    return;
+  }
+  for (const persist of persisters) persistWith(persist, theme);
 }
 
 function hasStoredTheme(): boolean {

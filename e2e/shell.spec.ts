@@ -49,6 +49,41 @@ test('the theme choice applies at once and survives a reload', async ({ page }) 
   await expect(html).not.toHaveClass(/dark/);
 });
 
+// The profile is saved by the account module's shell extension, which loads lazily after the page.
+// A theme picked before it mounted used to stay local only, so the reload adopted the profile's
+// 'system' theme over it (the old flake of the test above).
+test('a theme picked before the account extension loads is saved and survives a reload', async ({
+  page,
+}) => {
+  let release: () => void = () => undefined;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const extensionChunk = '**/assets/AccountShellExtension-*.js';
+  await page.route(extensionChunk, async (route) => {
+    await gate;
+    await route.continue();
+  });
+  await openShell(page);
+  const html = page.locator('html');
+  await chooseTheme(page, 'Dark');
+  await expect(html).toHaveClass(/dark/);
+
+  const saved = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === '/api/me' && response.request().method() === 'PATCH',
+  );
+  release();
+  expect((await saved).ok()).toBe(true);
+  await page.unroute(extensionChunk);
+
+  await page.reload();
+  await expect(page.getByRole('heading', { name: 'Dashboard' })).toBeVisible();
+  // Settled once the account extension has mounted (it registers the settings palette commands).
+  await expect(page.getByRole('button', { name: 'New team' })).toBeVisible();
+  await expect(html).toHaveClass(/dark/);
+});
+
 test('the sidebar is one navigation landmark (UX-15)', async ({ page }) => {
   await openShell(page);
   const nav = page.getByRole('navigation', { name: 'Main' });

@@ -1,8 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
-import { z } from 'zod';
 import type { ReplyParentType } from '@shared/constants';
-import { attachmentSchema, type Attachment } from '@shared/schemas/core';
+import type { Attachment } from '@shared/schemas/core';
 import { AttachmentList } from '@web/components/attachments/AttachmentList';
 import { AttachmentUploader } from '@web/components/attachments/AttachmentUploader';
 import { Kbd } from '@web/components/common/Kbd';
@@ -10,7 +9,9 @@ import { Spinner } from '@web/components/common/Spinner';
 import { RichTextEditor, type RichTextEditorHandle } from '@web/components/editor/RichTextEditor';
 import { Button } from '@web/components/ui/button';
 import { errorMessage } from '@web/lib/api';
+import { useSession } from '@web/lib/auth';
 import { useTeamAccess } from '@web/lib/permissions';
+import { readReplyDraft, writeReplyDraft, type ReplyDraft } from '@web/lib/replyDrafts';
 import { useCreateReply } from './queries';
 
 export interface ReplyComposerProps {
@@ -19,38 +20,6 @@ export interface ReplyComposerProps {
   teamId: string;
   placeholder?: string;
   onSent?: () => void;
-}
-
-// ---------------------------------------------------------------------------------------------
-// Drafts: an unsent reply survives leaving the page (links, Back, reload) in this tab
-// ---------------------------------------------------------------------------------------------
-
-const draftSchema = z.object({ body: z.string(), attachments: z.array(attachmentSchema) });
-type Draft = z.infer<typeof draftSchema>;
-
-const draftKey = (parentType: ReplyParentType, parentId: string) =>
-  `baton:reply-draft:${parentType}:${parentId}`;
-
-/** The saved draft for a thread (sessionStorage, so it stays in this tab and this session). */
-function readReplyDraft(parentType: ReplyParentType, parentId: string): Draft | null {
-  try {
-    const raw = sessionStorage.getItem(draftKey(parentType, parentId));
-    if (!raw) return null;
-    const parsed = draftSchema.safeParse(JSON.parse(raw));
-    return parsed.success ? parsed.data : null;
-  } catch {
-    return null;
-  }
-}
-
-function writeReplyDraft(parentType: ReplyParentType, parentId: string, draft: Draft): void {
-  try {
-    const key = draftKey(parentType, parentId);
-    if (!draft.body.trim() && draft.attachments.length === 0) sessionStorage.removeItem(key);
-    else sessionStorage.setItem(key, JSON.stringify(draft));
-  } catch {
-    // Storage full or disabled: the draft lasts as long as the page.
-  }
 }
 
 /** Reply box with mentions, uploads and Ctrl/Cmd+Enter to send. Hidden without `REPLY`. */
@@ -68,14 +37,19 @@ function Composer({
 }: ReplyComposerProps) {
   const access = useTeamAccess(teamId);
   const editor = useRef<RichTextEditorHandle>(null);
-  const [saved] = useState(() => readReplyDraft(parentType, parentId));
+  // Unsent text survives leaving the thread (UX-13); drafts belong to the signed-in user.
+  const userId = useSession().data?.user.id ?? null;
+  const saveDraft = (draft: ReplyDraft) => {
+    if (userId) writeReplyDraft(userId, parentType, parentId, draft);
+  };
+  const [saved] = useState(() => (userId ? readReplyDraft(userId, parentType, parentId) : null));
   const [body, setBody] = useState(saved?.body ?? '');
   const [attachments, setAttachments] = useState<Attachment[]>(saved?.attachments ?? []);
   const create = useCreateReply(parentType, parentId);
   // Following a link away from the thread used to discard the text silently (UX-13).
   useEffect(() => {
-    writeReplyDraft(parentType, parentId, { body, attachments });
-  }, [parentType, parentId, body, attachments]);
+    if (userId) writeReplyDraft(userId, parentType, parentId, { body, attachments });
+  }, [userId, parentType, parentId, body, attachments]);
 
   if (access.isMember && !access.has('REPLY')) {
     return (
@@ -90,11 +64,11 @@ function Composer({
     if (!text || create.isPending) return;
     // Forget the saved draft now: if the viewer leaves before the reply is posted, coming back
     // must not offer the posted text again. A failed send saves it back.
-    writeReplyDraft(parentType, parentId, { body: '', attachments: [] });
+    saveDraft({ body: '', attachments: [] });
     create.mutate(
       { body: text, attachmentIds: attachments.length ? attachments.map((a) => a.id) : undefined },
       {
-        onError: () => writeReplyDraft(parentType, parentId, { body, attachments }),
+        onError: () => saveDraft({ body, attachments }),
         onSuccess: () => {
           setBody('');
           setAttachments([]);

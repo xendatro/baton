@@ -35,6 +35,7 @@ import { createProject, deleteProject, updateProject } from '../server/services/
 import { createRole, reorderRoles, teamRoles } from '../server/services/roles';
 import { createStatus, reorderStatuses, updateStatus } from '../server/services/statuses';
 import { createTeam } from '../server/services/teams';
+import { seedIssues } from './seed-issues';
 
 const PASSWORD = 'password123';
 
@@ -358,6 +359,9 @@ async function seed(deps: ReturnType<typeof createAppDeps>): Promise<void> {
     name: key,
     key: createApiKey(deps, actor(username), createApiKeyInputSchema.parse({ name: key })).key,
   }));
+
+  // Issues (some opened by agents through the keys above).
+  seedIssues(deps, actor, { web: web.id, api: api.id });
 
   const base = deps.env.baseUrl;
   console.log(`\nSeeded ${deps.db.file}\n`);

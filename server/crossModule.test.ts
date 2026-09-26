@@ -19,8 +19,9 @@ import {
 
 /**
  * Wave A contracts end to end, through the real REST routes and MCP tools of several modules:
- * teams ↔ account (deleted teams, account deletion), teams/projects ↔ admin (Trash handlers,
- * restore_item, audit-log facets) and the live events the web client invalidates on.
+ * teams ↔ account (deleted teams, account deletion), teams/projects/issues ↔ admin (Trash handlers,
+ * restore_item, audit-log facets), issues ↔ core (replies, search, notifications) and the live
+ * events the web client invalidates on.
  */
 
 let ctx: TestContext;
@@ -215,6 +216,75 @@ describe('projects ↔ admin: Trash', () => {
       'project.deleted',
       'project.created',
     ]);
+  });
+});
+
+describe('issues ↔ core and admin', () => {
+  it('threads replies, searches, notifies, and restores a deleted issue from Trash by ref', async () => {
+    const { team, project } = await setup();
+    const created = await call<{ id: string; ref: string }>(
+      memberKey,
+      'POST',
+      `/projects/${project.id}/issues`,
+      { title: 'Export is slow', body: 'Takes minutes for @ethan' },
+    );
+    expect(created.status).toBe(201);
+    const issue = created.body;
+
+    // Replies bump the reply count; the author (auto-subscribed) is notified of the reply.
+    expect(
+      (
+        await call(ownerKey, 'POST', '/replies', {
+          parentType: 'issue',
+          parentId: issue.id,
+          body: 'Looking into the CSV writer',
+        })
+      ).status,
+    ).toBe(201);
+    const list = await call<{ items: Array<{ replyCount: number }> }>(
+      ownerKey,
+      'GET',
+      `/projects/${project.id}/issues?q=csv`,
+    );
+    expect(list.body.items).toEqual([expect.objectContaining({ replyCount: 1 })]);
+    const inbox = await call<{ items: Array<{ type: string }> }>(
+      memberKey,
+      'GET',
+      '/notifications',
+    );
+    expect(inbox.body.items.map((item) => item.type)).toEqual(['reply']);
+    const mentioned = await call<{ items: Array<{ type: string }> }>(
+      ownerKey,
+      'GET',
+      '/notifications',
+    );
+    expect(mentioned.body.items.map((item) => item.type)).toEqual(['mention']);
+    const found = await call<{ results: Array<{ ref: string }> }>(
+      ownerKey,
+      'GET',
+      `/search?q=export&teamId=${team.id}`,
+    );
+    expect(found.body.results.map((result) => result.ref)).toEqual([issue.ref]);
+
+    // Deleted: out of lists and search, in the author's Trash, restorable by ref over MCP.
+    expect((await call(memberKey, 'DELETE', `/issues/${issue.id}`)).status).toBe(200);
+    expect(
+      (await call<{ results: unknown[] }>(ownerKey, 'GET', `/search?q=export&teamId=${team.id}`))
+        .body.results,
+    ).toEqual([]);
+    const trash = await call<{ items: Array<{ type: string; ref: string | null }> }>(
+      memberKey,
+      'GET',
+      `/teams/${team.id}/trash`,
+    );
+    expect(trash.body.items).toEqual([expect.objectContaining({ type: 'issue', ref: issue.ref })]);
+    const tool = await mcpAs(member);
+    const restored = await tool('restore_item', { item: `${team.slug}/${issue.ref}` });
+    expect(restored.url).toBe(`${ctx.env.baseUrl}/t/${team.slug}/p/${project.key}/issues/1`);
+    expect((await call(ownerKey, 'GET', `/issues/${issue.id}`)).status).toBe(200);
+    expect(events.map((event) => event.type)).toEqual(
+      expect.arrayContaining(['issue.created', 'reply.created', 'issue.deleted', 'issue.restored']),
+    );
   });
 });
 

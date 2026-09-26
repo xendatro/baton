@@ -9,7 +9,7 @@
  */
 import fs from 'node:fs';
 import { hashPassword } from 'better-auth/crypto';
-import { eq } from 'drizzle-orm';
+import { asc, eq, gte } from 'drizzle-orm';
 import type { Permission } from '../shared/permissions';
 import { createApiKeyInputSchema } from '../shared/schemas/core';
 import {
@@ -36,7 +36,7 @@ import { createRole, reorderRoles, teamRoles } from '../server/services/roles';
 import { createStatus, reorderStatuses, updateStatus } from '../server/services/statuses';
 import { createTeam } from '../server/services/teams';
 import { seedIssues } from './seed-issues';
-import { seedTasks, settleNotifications } from './seed-tasks';
+import { seedTasks, settleSeedTimeline } from './seed-tasks';
 
 const PASSWORD = 'password123';
 
@@ -362,6 +362,9 @@ async function seed(deps: ReturnType<typeof createAppDeps>): Promise<void> {
     key: createApiKey(deps, actor(username), createApiKeyInputSchema.parse({ name: key })).key,
   }));
 
+  // The setup happened three weeks ago; issues and tasks follow over the weeks after it.
+  backdateSetup(deps, seededSince, Date.now() - 21 * DAY_MS);
+
   // Issues (some opened by agents through the keys above), then the tasks that address them.
   seedIssues(deps, actor, { web: web.id, api: api.id });
   seedTasks(deps, actor, roleId, {
@@ -369,7 +372,7 @@ async function seed(deps: ReturnType<typeof createAppDeps>): Promise<void> {
     api: { id: api.id, teamId: team.id },
     lab: { id: lab.id, teamId: side.id },
   });
-  settleNotifications(deps, seededSince);
+  settleSeedTimeline(deps, seededSince);
 
   const base = deps.env.baseUrl;
   console.log(`\nSeeded ${deps.db.file}\n`);
@@ -385,6 +388,42 @@ async function seed(deps: ReturnType<typeof createAppDeps>): Promise<void> {
   console.log(
     `\nClaude Code: claude mcp add --transport http baton ${base}/mcp --header "Authorization: Bearer <key>"\n`,
   );
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Moves the setup (teams, roles, invites, projects, statuses, labels, keys) back to `base`: its
+ * audit and security-log rows two minutes apart in their order, the notifications it sent, the
+ * creation times of teams and projects, and the Trash time of the deleted project.
+ */
+function backdateSetup(deps: ReturnType<typeof createAppDeps>, since: Date, base: number): void {
+  deps.db.write((tx) => {
+    const rows = tx
+      .select()
+      .from(s.activity)
+      .where(gte(s.activity.createdAt, since))
+      .orderBy(asc(s.activity.createdAt), asc(s.activity.id))
+      .all();
+    rows.forEach((row, index) => {
+      const time = new Date(base + index * 2 * 60 * 1000);
+      tx.update(s.activity).set({ createdAt: time }).where(eq(s.activity.id, row.id)).run();
+      if (row.action === 'project.deleted') {
+        tx.update(s.project).set({ deletedAt: time }).where(eq(s.project.id, row.entityId)).run();
+      }
+    });
+    const end = new Date(base + rows.length * 2 * 60 * 1000);
+    tx.update(s.notification)
+      .set({ createdAt: end })
+      .where(gte(s.notification.createdAt, since))
+      .run();
+    for (const table of [s.team, s.project]) {
+      tx.update(table)
+        .set({ createdAt: new Date(base), updatedAt: end })
+        .where(gte(table.createdAt, since))
+        .run();
+    }
+  });
 }
 
 /**

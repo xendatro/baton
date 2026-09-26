@@ -10,7 +10,7 @@
  * Claims stay recent, so they are still valid right after seeding.
  */
 import { addDays, format } from 'date-fns';
-import { and, eq, gte, isNotNull } from 'drizzle-orm';
+import { and, asc, eq, gte, isNotNull } from 'drizzle-orm';
 import type { IssueLinkKind, PriorityValue } from '../shared/constants';
 import {
   claimTaskInputSchema,
@@ -45,7 +45,8 @@ interface SeedTask {
   id: string;
   by: Username;
   viaKey?: true;
-  title: string;
+  /** Required unless `fromIssue` gives the title. */
+  title?: string;
   description?: string;
   /** Created from this issue (same project): title, body and labels copied, linked `fixes`. */
   fromIssue?: string;
@@ -74,7 +75,6 @@ const WEB_TASKS: SeedTask[] = [
   {
     id: 'release-checklist',
     by: 'ethan',
-    title: 'Write the release checklist',
     fromIssue: 'Document the release checklist',
     status: 'Done',
     priority: 2,
@@ -92,7 +92,6 @@ const WEB_TASKS: SeedTask[] = [
   {
     id: 'code-theme',
     by: 'maya',
-    title: 'Switch code blocks to a high-contrast theme',
     fromIssue: 'Dark mode: code blocks are hard to read',
     status: 'Done',
     priority: 2,
@@ -155,7 +154,6 @@ const WEB_TASKS: SeedTask[] = [
   {
     id: 'board-overflow',
     by: 'maya',
-    title: 'Fix board overflow on small screens',
     fromIssue: 'Board columns overflow on small screens',
     status: 'In Progress',
     priority: 3,
@@ -174,7 +172,6 @@ const WEB_TASKS: SeedTask[] = [
   {
     id: 'avatar-formats',
     by: 'caden',
-    title: 'Explain the supported avatar formats',
     fromIssue: 'Avatar upload fails for HEIC photos',
     status: 'In Review',
     priority: 2,
@@ -210,7 +207,6 @@ const WEB_TASKS: SeedTask[] = [
     id: 'inbox-grouping',
     by: 'caden',
     viaKey: true,
-    title: 'Group inbox notifications by item',
     fromIssue: 'Inbox should group notifications by issue',
     status: 'Todo',
     priority: 3,
@@ -290,7 +286,6 @@ const API_TASKS: SeedTask[] = [
   {
     id: 'retry-after',
     by: 'leo',
-    title: 'Send Retry-After on every 429',
     fromIssue: 'Rate limit headers missing on 429 responses',
     status: 'In Progress',
     priority: 3,
@@ -411,7 +406,18 @@ function at<T>(deps: AppDeps, time: Date, fn: () => T): T {
   const start = new Date();
   const result = fn();
   deps.db.write((tx) => {
-    tx.update(s.activity).set({ createdAt: time }).where(gte(s.activity.createdAt, start)).run();
+    // A millisecond apart, so rows of one step keep their order in newest-first lists.
+    tx.select({ id: s.activity.id })
+      .from(s.activity)
+      .where(gte(s.activity.createdAt, start))
+      .orderBy(asc(s.activity.createdAt), asc(s.activity.id))
+      .all()
+      .forEach((row, index) => {
+        tx.update(s.activity)
+          .set({ createdAt: new Date(time.getTime() + index) })
+          .where(eq(s.activity.id, row.id))
+          .run();
+      });
     tx.update(s.notification)
       .set({ createdAt: time })
       .where(gte(s.notification.createdAt, start))
@@ -526,6 +532,7 @@ function seedProject(
 
     let task = at(deps, new Date(openedAt), () => {
       if (!seed.fromIssue) {
+        if (!seed.title) throw new Error(`Seed task ${seed.id} needs a title`);
         return createTask(
           deps,
           author,
@@ -546,7 +553,6 @@ function seedProject(
         author,
         fromIssue.id,
         updateTaskInputSchema.parse({
-          title: seed.title,
           statusId: fields.statusId,
           priority: fields.priority,
           dueDate: fields.dueDate,
@@ -618,19 +624,68 @@ export function seedTasks(
 }
 
 /**
- * Notifications written while seeding issues carry the seeding time: move each to the time of
- * what it is about (the reply, the issue, its resolution), then mark everything older than three
- * days as read, so the inbox has a realistic mix of read and unread.
+ * Final pass over the seeded timeline:
+ * - rows still carrying the seeding time (moving an issue to Trash right after it was backdated)
+ *   move to an hour and a half ago, and so does the item's `deletedAt`;
+ * - every issue and task is "updated" when its latest history row or reply was written;
+ * - notifications written while seeding issues move to the time of what they are about (the
+ *   reply, the issue, its resolution);
+ * - notifications older than three days are read, so the inbox mixes read and unread.
  */
-export function settleNotifications(deps: AppDeps, seededSince: Date): void {
-  const readBefore = new Date(Date.now() - 3 * DAY_MS);
+export function settleSeedTimeline(deps: AppDeps, seededSince: Date): void {
+  const now = Date.now();
   deps.db.write((tx) => {
-    const recent = tx
+    const leftovers = tx
+      .select()
+      .from(s.activity)
+      .where(gte(s.activity.createdAt, seededSince))
+      .orderBy(asc(s.activity.createdAt), asc(s.activity.id))
+      .all();
+    leftovers.forEach((row, index) => {
+      const time = new Date(now - 90 * MINUTE_MS + index * MINUTE_MS);
+      tx.update(s.activity).set({ createdAt: time }).where(eq(s.activity.id, row.id)).run();
+      if (row.action === 'issue.deleted') {
+        tx.update(s.issue).set({ deletedAt: time }).where(eq(s.issue.id, row.entityId)).run();
+      }
+      if (row.action === 'task.deleted') {
+        tx.update(s.task).set({ deletedAt: time }).where(eq(s.task.id, row.entityId)).run();
+      }
+    });
+
+    for (const [table, type] of [
+      [s.task, 'task'],
+      [s.issue, 'issue'],
+    ] as const) {
+      const latest = new Map<string, Date>();
+      const bump = (id: string | null, at: Date) => {
+        if (!id) return;
+        const current = latest.get(id);
+        if (!current || at > current) latest.set(id, at);
+      };
+      for (const row of tx
+        .select({ id: s.activity.entityId, at: s.activity.createdAt })
+        .from(s.activity)
+        .where(eq(s.activity.entityType, type))
+        .all()) {
+        bump(row.id, row.at);
+      }
+      for (const row of tx
+        .select({ id: s.reply.parentId, at: s.reply.createdAt })
+        .from(s.reply)
+        .where(eq(s.reply.parentType, type))
+        .all()) {
+        bump(row.id, row.at);
+      }
+      for (const [id, at] of latest) {
+        tx.update(table).set({ updatedAt: at, lastActivityAt: at }).where(eq(table.id, id)).run();
+      }
+    }
+
+    for (const row of tx
       .select()
       .from(s.notification)
       .where(gte(s.notification.createdAt, seededSince))
-      .all();
-    for (const row of recent) {
+      .all()) {
       let time: Date | null | undefined;
       if (row.entityType === 'reply') {
         time = tx
@@ -649,8 +704,8 @@ export function settleNotifications(deps: AppDeps, seededSince: Date): void {
           .run();
       }
     }
-    const old = tx.select().from(s.notification).all();
-    for (const row of old) {
+    const readBefore = new Date(now - 3 * DAY_MS);
+    for (const row of tx.select().from(s.notification).all()) {
       if (row.createdAt < readBefore && row.readAt === null) {
         tx.update(s.notification)
           .set({ readAt: new Date(row.createdAt.getTime() + HOUR_MS) })

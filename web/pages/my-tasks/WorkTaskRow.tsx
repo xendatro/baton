@@ -19,7 +19,7 @@ export interface WorkTaskRowProps {
   task: MyTask;
   /** Show the team and project (lists that mix projects without grouping them). */
   showContext?: boolean;
-  /** Show the claim as a full badge (holder, key, age) instead of an icon. */
+  /** Show the claim as a full badge (holder, key, age) under the title instead of an icon. */
   claimBadge?: boolean;
   className?: string;
 }
@@ -76,9 +76,23 @@ export function WorkTaskRow({
               </span>
             ) : null}
           </span>
-          {showContext ? (
-            <span className="mt-0.5 hidden truncate text-xs text-muted-foreground sm:block">
-              {task.team.name} · {task.project.name}
+          {showContext || (claimBadge && task.claim) ? (
+            <span className="mt-0.5 hidden min-w-0 items-center gap-2 text-xs text-muted-foreground sm:flex">
+              {showContext ? (
+                <span className="truncate">
+                  {task.team.name} · {task.project.name}
+                </span>
+              ) : null}
+              {/* Claim lists show the holder under the title, where there is room for it. */}
+              {claimBadge && task.claim ? (
+                <ClaimBadge
+                  holder={task.claim.user}
+                  via={task.claim.via}
+                  claimedAt={task.claim.claimedAt}
+                  expiresAt={task.claim.expiresAt}
+                  className="h-5 max-w-72 shrink-0"
+                />
+              ) : null}
             </span>
           ) : null}
         </span>
@@ -113,31 +127,21 @@ export function WorkTaskRow({
             <span className="sr-only">{hint}</span>
           </span>
         ) : null}
-        {task.claim ? (
-          claimBadge ? (
-            <ClaimBadge
-              holder={task.claim.user}
-              via={task.claim.via}
-              claimedAt={task.claim.claimedAt}
-              expiresAt={task.claim.expiresAt}
-              className="hidden max-w-60 shrink-0 sm:inline-flex"
-            />
-          ) : (
-            <span
-              className="hidden shrink-0 text-emerald-600 sm:inline dark:text-emerald-400"
-              title={`Claimed by ${task.claim.user.name}${task.claim.via ? ` via ${task.claim.via.keyName}` : ' (web)'}`}
-            >
-              {task.claim.via ? (
-                <BotIcon className="size-4" aria-hidden="true" />
-              ) : (
-                <HandIcon className="size-4" aria-hidden="true" />
-              )}
-              <span className="sr-only">
-                Claimed by {task.claim.user.name}
-                {task.claim.via ? ` via ${task.claim.via.keyName}` : ' (web)'}
-              </span>
+        {task.claim && !claimBadge ? (
+          <span
+            className="hidden shrink-0 text-emerald-600 sm:inline dark:text-emerald-400"
+            title={`Claimed by ${task.claim.user.name}${task.claim.via ? ` via ${task.claim.via.keyName}` : ' (web)'}`}
+          >
+            {task.claim.via ? (
+              <BotIcon className="size-4" aria-hidden="true" />
+            ) : (
+              <HandIcon className="size-4" aria-hidden="true" />
+            )}
+            <span className="sr-only">
+              Claimed by {task.claim.user.name}
+              {task.claim.via ? ` via ${task.claim.via.keyName}` : ' (web)'}
             </span>
-          )
+          </span>
         ) : null}
         {/* A fixed-width column, so due dates line up from row to row. */}
         <span className="hidden w-24 shrink-0 justify-end sm:flex">

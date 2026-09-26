@@ -180,3 +180,11 @@ Later notes win over the module sections above where they disagree.
 - Code that removes task assignees without editing the task (memberships, roles, accounts) calls `unassignFromTasks` (server/services/taskAssignees.ts) in the same transaction, before the rows go.
 - A task or issue change that shows on linked items calls `queueLinkedIssueEvents` / `queueLinkedTaskEvents` (server/services/linkEvents.ts); inside tasks.ts, `emitTaskChange` does it for you.
 - Writes that also post a reply use `prepareReply` (before the write) and `insertReply` (inside it), never `createReply`, so the whole mutation is one transaction.
+
+## MCP fixes (MCP-01 to MCP-17)
+
+- Build every tool input, and every nested argument object, with `toolInput({...})` from `server/mcp/tools/define.ts`, never `z.object`: it refuses unknown keys with a "did you mean" hint. `server/mcp/agentSafety.test.ts` fails if any advertised object schema lacks `additionalProperties: false`, or if a tool that isn't `readOnlyHint: true` doesn't declare `destructiveHint` (`openWorldHint: false` is added by `defineTool`).
+- MCP results name tasks and issues with team-qualified refs: use `qualifyRef`, `withQualifiedRefs` and `teamSlugs` from `server/mcp/util.ts` for any new output carrying a `KEY-12` / `KEY#51` ref.
+- When a tool maps its parameters onto a shared REST schema, parse with `parseToolInput(schema, value, fieldNames)` so validation errors name the tool's parameters.
+- `refs.ts` resolvers throw messages that list valid values; `toToolResult` appends `AppError.details` (minus `issues`, `ref`, `candidates`, which the messages already carry) as JSON.
+- Paged reads for agents: `listReplyPage` (server/services/replies.ts), `listEntityActivityPage` (server/services/activity.ts) and `listMyTasks(…, { offset, limit })`.

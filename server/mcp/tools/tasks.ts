@@ -6,6 +6,7 @@ import {
   claimNextTaskInputSchema,
   createTaskInputSchema,
   listTasksQuerySchema,
+  PRIORITY_INPUT_MESSAGE,
   priorityInputSchema,
   TASK_BLOCKED_FILTERS,
   TASK_CLAIM_FILTERS,
@@ -16,7 +17,9 @@ import {
   type Task,
   type TaskCard,
 } from '@shared/schemas/tasks';
-import { parseInput } from '../../lib/validate';
+import type { Reply } from '@shared/schemas/core';
+import { errors, isAppError } from '../../lib/errors';
+import { appPaths } from '../../lib/urls';
 import { listEntityActivity } from '../../services/activity';
 import { resolveTrashRef } from '../../services/admin';
 import { claimNextTask, claimTask, releaseTask, renewClaim } from '../../services/claims';
@@ -29,7 +32,7 @@ import {
   resolveTask,
   resolveUser,
 } from '../../services/refs';
-import { listReplies } from '../../services/replies';
+import { listReplyPage } from '../../services/replies';
 import {
   createTask,
   createTaskFromIssue,
@@ -40,8 +43,8 @@ import {
   restoreTask,
   updateTask,
 } from '../../services/tasks';
-import { toAbsolute, withAbsoluteUrls } from '../util';
-import { defineTool, type McpTool, type ToolContext } from './define';
+import { parseToolInput, qualifyRef, toAbsolute, withAbsoluteUrls } from '../util';
+import { defineTool, toolInput, type McpTool, type ToolContext } from './define';
 
 /**
  * Task MCP tools (SPEC §5.1 [tasks]): the board, tasks, links and claims. Handlers resolve refs
@@ -61,7 +64,9 @@ const projectRef = z
 const taskRef = z.string().min(1).describe('Task: KEY-12, team-slug/KEY-12, or task id');
 const statusRef = z.string().min(1).describe('Status name (case-insensitive) or id');
 const priorityField = z
-  .union([z.enum(PRIORITY_KEYS), z.number().int().min(0).max(4)])
+  .union([z.enum(PRIORITY_KEYS), z.number().int().min(0).max(4)], {
+    error: PRIORITY_INPUT_MESSAGE,
+  })
   .describe('Priority: none, low, medium, high, urgent (or 0–4)');
 const dueDateField = z.string().describe('Due date YYYY-MM-DD');
 const usernames = z
@@ -80,7 +85,7 @@ const taskRefs = z
   .array(z.string().min(1))
   .max(TASK_LIMITS.blockers)
   .describe('Task refs (KEY-12) of the same project');
-const issueLinkField = z.object({
+const issueLinkField = toolInput({
   issue: z.string().min(1).describe('Issue: KEY#51, team-slug/KEY#51, or issue id'),
   kind: z
     .enum(ISSUE_LINK_KINDS)
@@ -99,14 +104,30 @@ const leaseField = z
   );
 
 function listChange<T extends z.ZodType>(item: T, description: string) {
-  return z
-    .object({
-      set: z.array(item).optional().describe('Replace the whole list'),
-      add: z.array(item).optional().describe('Add these'),
-      remove: z.array(item).optional().describe('Remove these'),
-    })
-    .describe(`${description}. Pass set, or add and/or remove.`);
+  return toolInput({
+    set: z.array(item).optional().describe('Replace the whole list'),
+    add: z.array(item).optional().describe('Add these'),
+    remove: z.array(item).optional().describe('Remove these'),
+  }).describe(`${description}. Pass set, or add and/or remove.`);
 }
+
+/**
+ * The tools' parameter names for the fields of the shared task schemas, so validation errors
+ * name what the agent sent.
+ */
+const TASK_FIELD_NAMES: Readonly<Record<string, string>> = {
+  q: 'query',
+  statusId: 'status',
+  assigneeUserIds: 'assignees',
+  assigneeRoleIds: 'assigneeRoles',
+  assigneeUsers: 'assignees',
+  labelIds: 'labels',
+  blockedByTaskIds: 'blockedBy',
+  issueLinks: 'issues',
+  roleId: 'role',
+  labelId: 'label',
+  moveToStatusId: 'moveToStatus',
+};
 
 // ---------------------------------------------------------------------------------------------
 // Resolution and output
@@ -141,7 +162,7 @@ function statusId(ctx: ToolContext, projectId: string, ref: string | undefined) 
 }
 
 function priorityOf(value: z.infer<typeof priorityField> | undefined) {
-  return value === undefined ? undefined : parseInput(priorityInputSchema, value);
+  return value === undefined ? undefined : parseToolInput(priorityInputSchema, value, {});
 }
 
 type Change<T> = { set?: T[] | undefined; add?: T[] | undefined; remove?: T[] | undefined };
@@ -155,28 +176,91 @@ function mapChange<T, R>(value: Change<T> | undefined, map: (items: T[]) => R[] 
   };
 }
 
-/** A card with an absolute `url` instead of the relative `path`. */
-function cardOut(ctx: ToolContext, card: TaskCard) {
+/**
+ * A card with a team-qualified `ref` (`team/KEY-12`, which keeps resolving when another of your
+ * teams uses the same key), `teamSlug` and an absolute `url` instead of the relative `path`.
+ */
+function cardOut(ctx: ToolContext, card: TaskCard, teamSlug: string) {
   const { path, position: _position, ...rest } = card;
-  return { ...rest, url: toAbsolute(ctx.deps, path) };
-}
-
-/** The full task with absolute URLs everywhere. */
-function taskOut(ctx: ToolContext, task: Task) {
-  const { path, position: _position, ...rest } = task;
   return {
     ...rest,
+    ref: qualifyRef(teamSlug, card.ref),
+    teamSlug,
+    blockers: card.blockers.map((ref) => qualifyRef(teamSlug, ref)),
     url: toAbsolute(ctx.deps, path),
-    blockedBy: task.blockedBy.map(({ path: p, ...item }) => ({
-      ...item,
-      url: toAbsolute(ctx.deps, p),
-    })),
-    blocking: task.blocking.map(({ path: p, ...item }) => ({
-      ...item,
-      url: toAbsolute(ctx.deps, p),
-    })),
-    issues: task.issues.map(({ path: p, ...item }) => ({ ...item, url: toAbsolute(ctx.deps, p) })),
+  };
+}
+
+/** The full task with team-qualified refs and absolute URLs everywhere. */
+function taskOut(ctx: ToolContext, task: Task) {
+  const { path, position: _position, ...rest } = task;
+  const linked = <T extends { ref: string; path: string }>({ path: p, ...item }: T) => ({
+    ...item,
+    ref: qualifyRef(task.teamSlug, item.ref),
+    url: toAbsolute(ctx.deps, p),
+  });
+  return {
+    ...rest,
+    ref: qualifyRef(task.teamSlug, task.ref),
+    blockers: task.blockers.map((ref) => qualifyRef(task.teamSlug, ref)),
+    url: toAbsolute(ctx.deps, path),
+    blockedBy: task.blockedBy.map(linked),
+    blocking: task.blocking.map(linked),
+    issues: task.issues.map(linked),
     attachments: withAbsoluteUrls(ctx.deps, task.attachments),
+  };
+}
+
+/**
+ * A list_tasks assignee filter value: `me`, `unassigned`, `@&slug` / `role:<name>` (a role), or a
+ * member (username or id) or role (name, slug or id). A value naming both a member and a role is
+ * ambiguous.
+ */
+function assigneeFilter(ctx: ToolContext, teamId: string, value: string): string {
+  const trimmed = value.trim();
+  const lower = trimmed.toLowerCase();
+  if (lower === 'me' || lower === 'unassigned') return lower;
+  if (trimmed.startsWith('@&') || lower.startsWith('role:')) {
+    return `role:${resolveRole(ctx.deps.db.orm, teamId, trimmed.replace(/^role:/i, '')).id}`;
+  }
+  const attempt = <T>(resolve: () => T): T | null => {
+    try {
+      return resolve();
+    } catch (error) {
+      if (isAppError(error) && error.code === 'not_found') return null;
+      throw error;
+    }
+  };
+  const user = attempt(() => resolveUser(ctx.deps, ctx.actor, trimmed, { teamId }));
+  const role = trimmed.startsWith('@')
+    ? null
+    : attempt(() => resolveRole(ctx.deps.db.orm, teamId, trimmed));
+  if (user && role) {
+    const member = `@${user.username ?? user.id}`;
+    throw errors.validation(
+      `Assignee "${trimmed}" is both a member (${member}) and a role (${role.name}). Use "${member}" for the member or "@&${role.slug}" for the role`,
+      { candidates: [member, `@&${role.slug}`] },
+    );
+  }
+  if (user) return `user:${user.id}`;
+  if (role) return `role:${role.id}`;
+  throw errors.notFoundWith(
+    `Assignee not found: "${trimmed}" is neither a member nor a role of this team. Pass me, unassigned, a username or a role name`,
+    { ref: trimmed },
+  );
+}
+
+/** A reply as get_task shows it: author, key, body, files and a link to the reply. */
+function replyOut(ctx: ToolContext, taskPath: string, reply: Reply) {
+  return {
+    id: reply.id,
+    author: reply.author?.username ?? null,
+    via: reply.via?.keyName ?? null,
+    body: reply.body,
+    attachments: withAbsoluteUrls(ctx.deps, reply.attachments),
+    url: toAbsolute(ctx.deps, appPaths.reply(taskPath, reply.id)),
+    createdAt: reply.createdAt,
+    editedAt: reply.editedAt,
   };
 }
 
@@ -189,7 +273,7 @@ const listTasksTool = defineTool({
   title: 'List tasks',
   description:
     'Tasks of a project with the board/list filters: text, status, assignee (me = you or your roles, unassigned, a username, a role), label, priority, due (overdue/today/week/none), claimed (yes/no/mine) and blocked (yes/no). Each task has its ref (KEY-12), status, priority (0 none … 4 urgent), due date, labels, assignees, claim (who is working on it, via which key, until when), blocked flag and URL. To pick work, prefer claim_next_task.',
-  input: z.object({
+  input: toolInput({
     project: projectRef,
     query: z
       .string()
@@ -206,7 +290,7 @@ const listTasksTool = defineTool({
       .max(TASK_LIMITS.filterValues)
       .optional()
       .describe(
-        'Any of: "me" (you or your roles), "unassigned", a username, or a role as @&slug / role name',
+        'Any of: "me" (you or your roles), "unassigned", a username, or a role (its name, or @&slug)',
       ),
     label: labelNames.optional().describe('Only tasks with any of these labels'),
     priority: z.array(priorityField).max(5).optional().describe('Only these priorities'),
@@ -229,32 +313,29 @@ const listTasksTool = defineTool({
   annotations: { readOnlyHint: true },
   handler: (ctx, input) => {
     const { project, team } = projectOf(ctx, input.project);
-    const assignee = input.assignee?.map((value) => {
-      const lower = value.trim().toLowerCase();
-      if (lower === 'me' || lower === 'unassigned') return lower;
-      if (value.trim().startsWith('@&') || lower.startsWith('role:')) {
-        return `role:${resolveRole(ctx.deps.db.orm, team.id, value.replace(/^role:/i, '')).id}`;
-      }
-      return `user:${resolveUser(ctx.deps, ctx.actor, value, { teamId: team.id }).id}`;
-    });
-    const query = parseInput(listTasksQuerySchema, {
-      q: input.query,
-      status: input.status?.map((ref) => statusId(ctx, project.id, ref)).join(','),
-      assignee: assignee?.join(','),
-      label: labelIds(ctx, project.id, input.label)?.join(','),
-      priority: input.priority?.map((value) => String(priorityOf(value))).join(','),
-      due: input.due,
-      today: input.today,
-      claimed: input.claimed,
-      blocked: input.blocked,
-      sort: input.sort,
-      order: input.order,
-      limit: input.limit,
-      cursor: input.cursor,
-    });
+    const assignee = input.assignee?.map((value) => assigneeFilter(ctx, team.id, value));
+    const query = parseToolInput(
+      listTasksQuerySchema,
+      {
+        q: input.query,
+        status: input.status?.map((ref) => statusId(ctx, project.id, ref)).join(','),
+        assignee: assignee?.join(','),
+        label: labelIds(ctx, project.id, input.label)?.join(','),
+        priority: input.priority?.map((value) => String(priorityOf(value))).join(','),
+        due: input.due,
+        today: input.today,
+        claimed: input.claimed,
+        blocked: input.blocked,
+        sort: input.sort,
+        order: input.order,
+        limit: input.limit,
+        cursor: input.cursor,
+      },
+      TASK_FIELD_NAMES,
+    );
     const page = listTasks(ctx.deps, ctx.actor, project.id, query);
     return {
-      tasks: page.items.map((card) => cardOut(ctx, card)),
+      tasks: page.items.map((card) => cardOut(ctx, card, team.slug)),
       total: page.total,
       nextCursor: page.nextCursor,
     };
@@ -268,32 +349,26 @@ const getTaskTool = defineTool({
   name: 'get_task',
   title: 'Get task',
   description:
-    'Full context of a task before you work on it: description (markdown), status, priority, due date, assignees, labels, blockers (blockedBy) and tasks waiting for it (blocking) with their statuses, linked issues (fixes/relates), the claim (holder, key, expiry), attachments, the latest replies and the latest history entries.',
-  input: z.object({ task: taskRef }),
+    'Full context of a task before you work on it: description (markdown), status, priority, due date, assignees, labels, blockers (blockedBy) and tasks waiting for it (blocking) with their statuses, linked issues (fixes/relates), the claim (holder, key, expiry), attachments, the latest 20 replies (replyCount says how many there are; list_replies pages through them all) and the latest 20 history entries (get_activity pages through all of them).',
+  input: toolInput({ task: taskRef }),
   annotations: { readOnlyHint: true },
   handler: (ctx, input) => {
     const { task } = taskOf(ctx, input.task);
     const full = getTask(ctx.deps, ctx.actor, task.id);
-    const replies = listReplies(ctx.deps, ctx.actor, {
+    const replies = listReplyPage(ctx.deps, ctx.actor, {
       parentType: 'task',
       parentId: task.id,
-    }).items;
+      limit: REPLIES_SHOWN,
+      order: 'desc',
+    });
     const history = listEntityActivity(ctx.deps, ctx.actor, {
       entityType: 'task',
       entityId: task.id,
     }).items;
     return {
       ...taskOut(ctx, full),
-      replyCount: replies.length,
-      recentReplies: replies.slice(-REPLIES_SHOWN).map((reply) => ({
-        id: reply.id,
-        author: reply.author?.username ?? null,
-        via: reply.via?.keyName ?? null,
-        body: reply.body,
-        attachments: withAbsoluteUrls(ctx.deps, reply.attachments),
-        createdAt: reply.createdAt,
-        editedAt: reply.editedAt,
-      })),
+      replyCount: replies.total,
+      recentReplies: replies.items.reverse().map((reply) => replyOut(ctx, full.path, reply)),
       recentHistory: history.slice(-HISTORY_SHOWN).map((entry) => ({
         action: entry.action,
         actor: entry.actor.user?.username ?? (entry.actor.source === 'system' ? 'system' : null),
@@ -314,7 +389,7 @@ const createTaskTool = defineTool({
   title: 'Create task',
   description:
     'Creates a task in a project (needs CREATE_TASKS). It goes to the default status (or `status`) at the end of its column and gets the next number (KEY-n). Assignees (members and roles) are notified, @mentions in the description too; you and the assigned members are subscribed to replies.',
-  input: z.object({
+  input: toolInput({
     project: projectRef,
     title: z.string().min(1).max(LIMITS.title.max).describe('Short title'),
     description: z
@@ -340,24 +415,29 @@ const createTaskTool = defineTool({
       .optional()
       .describe('Ids from upload_attachment (pending uploads) to attach'),
   }),
+  annotations: { destructiveHint: false },
   handler: (ctx, input) => {
     const { project, team } = projectOf(ctx, input.project);
-    const data = parseInput(createTaskInputSchema, {
-      title: input.title,
-      description: input.description,
-      statusId: statusId(ctx, project.id, input.status),
-      priority: priorityOf(input.priority),
-      dueDate: input.dueDate,
-      assigneeUserIds: userIds(ctx, team.id, input.assignees),
-      assigneeRoleIds: roleIds(ctx, team.id, input.assigneeRoles),
-      labelIds: labelIds(ctx, project.id, input.labels),
-      blockedByTaskIds: taskIds(ctx, input.blockedBy),
-      issueLinks: input.issues?.map((link) => ({
-        issueId: resolveIssue(ctx.deps, ctx.actor, link.issue).issue.id,
-        kind: link.kind,
-      })),
-      attachmentIds: input.attachmentIds,
-    });
+    const data = parseToolInput(
+      createTaskInputSchema,
+      {
+        title: input.title,
+        description: input.description,
+        statusId: statusId(ctx, project.id, input.status),
+        priority: priorityOf(input.priority),
+        dueDate: input.dueDate,
+        assigneeUserIds: userIds(ctx, team.id, input.assignees),
+        assigneeRoleIds: roleIds(ctx, team.id, input.assigneeRoles),
+        labelIds: labelIds(ctx, project.id, input.labels),
+        blockedByTaskIds: taskIds(ctx, input.blockedBy),
+        issueLinks: input.issues?.map((link) => ({
+          issueId: resolveIssue(ctx.deps, ctx.actor, link.issue).issue.id,
+          kind: link.kind,
+        })),
+        attachmentIds: input.attachmentIds,
+      },
+      TASK_FIELD_NAMES,
+    );
     return taskOut(ctx, createTask(ctx.deps, ctx.actor, project.id, data));
   },
 });
@@ -367,7 +447,7 @@ const updateTaskTool = defineTool({
   title: 'Update task',
   description:
     'Changes any field of a task. Lists (assignees, assigneeRoles, labels, blockedBy, issues) take {set} or {add, remove}. Title and description need to be the author or EDIT_ANY_CONTENT; the rest the author or UPDATE_TASKS. A new status puts the task at the end of that column (use move_task to place it exactly); entering a done status resolves the issues it fixes, notifies the author and assignees and releases the claim. Your writes renew your claim.',
-  input: z.object({
+  input: toolInput({
     task: taskRef,
     title: z.string().min(1).max(LIMITS.title.max).optional().describe('New title'),
     description: z
@@ -388,12 +468,11 @@ const updateTaskTool = defineTool({
       z.string().min(1),
       'Blocking tasks of the same project (KEY-12)',
     ).optional(),
-    issues: z
-      .object({
-        set: z.array(issueLinkField).optional().describe('Replace every link'),
-        add: z.array(issueLinkField).optional().describe('Link these (or change their kind)'),
-        remove: z.array(z.string().min(1)).optional().describe('Unlink these issues (KEY#51)'),
-      })
+    issues: toolInput({
+      set: z.array(issueLinkField).optional().describe('Replace every link'),
+      add: z.array(issueLinkField).optional().describe('Link these (or change their kind)'),
+      remove: z.array(z.string().min(1)).optional().describe('Unlink these issues (KEY#51)'),
+    })
       .optional()
       .describe('Issues this task addresses. Pass set, or add and/or remove.'),
     attachmentIds: z
@@ -402,37 +481,42 @@ const updateTaskTool = defineTool({
       .optional()
       .describe('Pending uploads (from upload_attachment) to attach'),
   }),
+  annotations: { destructiveHint: false },
   handler: (ctx, input) => {
     const { task, project, team } = taskOf(ctx, input.task);
     const issueLink = (link: z.infer<typeof issueLinkField>) => ({
       issueId: resolveIssue(ctx.deps, ctx.actor, link.issue).issue.id,
       kind: link.kind,
     });
-    const data = parseInput(updateTaskInputSchema, {
-      title: input.title,
-      description: input.description,
-      statusId: statusId(ctx, project.id, input.status),
-      priority: priorityOf(input.priority),
-      dueDate: input.dueDate,
-      assigneeUsers: mapChange(input.assignees, (refs) => userIds(ctx, team.id, refs)),
-      assigneeRoles: mapChange(input.assigneeRoles, (refs) => roleIds(ctx, team.id, refs)),
-      labels: mapChange(input.labels, (refs) => labelIds(ctx, project.id, refs)),
-      blockedBy: mapChange(input.blockedBy, (refs) => taskIds(ctx, refs)),
-      issueLinks: input.issues
-        ? {
-            ...(input.issues.set ? { set: input.issues.set.map(issueLink) } : {}),
-            ...(input.issues.add ? { add: input.issues.add.map(issueLink) } : {}),
-            ...(input.issues.remove
-              ? {
-                  remove: input.issues.remove.map(
-                    (ref) => resolveIssue(ctx.deps, ctx.actor, ref).issue.id,
-                  ),
-                }
-              : {}),
-          }
-        : undefined,
-      attachmentIds: input.attachmentIds,
-    });
+    const data = parseToolInput(
+      updateTaskInputSchema,
+      {
+        title: input.title,
+        description: input.description,
+        statusId: statusId(ctx, project.id, input.status),
+        priority: priorityOf(input.priority),
+        dueDate: input.dueDate,
+        assigneeUsers: mapChange(input.assignees, (refs) => userIds(ctx, team.id, refs)),
+        assigneeRoles: mapChange(input.assigneeRoles, (refs) => roleIds(ctx, team.id, refs)),
+        labels: mapChange(input.labels, (refs) => labelIds(ctx, project.id, refs)),
+        blockedBy: mapChange(input.blockedBy, (refs) => taskIds(ctx, refs)),
+        issueLinks: input.issues
+          ? {
+              ...(input.issues.set ? { set: input.issues.set.map(issueLink) } : {}),
+              ...(input.issues.add ? { add: input.issues.add.map(issueLink) } : {}),
+              ...(input.issues.remove
+                ? {
+                    remove: input.issues.remove.map(
+                      (ref) => resolveIssue(ctx.deps, ctx.actor, ref).issue.id,
+                    ),
+                  }
+                : {}),
+            }
+          : undefined,
+        attachmentIds: input.attachmentIds,
+      },
+      TASK_FIELD_NAMES,
+    );
     return taskOut(ctx, updateTask(ctx.deps, ctx.actor, task.id, data));
   },
 });
@@ -442,7 +526,7 @@ const moveTaskTool = defineTool({
   title: 'Move task',
   description:
     'Moves a task to another status and/or position on the board: right after `after`, right before `before`, or (neither) to the end of the column. Moving into a done status marks it finished: it resolves the issues it fixes, notifies the author and assignees, and releases your claim — the usual last step of your work.',
-  input: z.object({
+  input: toolInput({
     task: taskRef,
     status: statusRef.optional().describe('Target status (default: the current one)'),
     after: z
@@ -454,6 +538,7 @@ const moveTaskTool = defineTool({
       .optional()
       .describe('Place right before this task (KEY-12) of the target column'),
   }),
+  annotations: { destructiveHint: false },
   handler: (ctx, input) => {
     const { task, project } = taskOf(ctx, input.task);
     return taskOut(
@@ -472,12 +557,16 @@ const deleteTaskTool = defineTool({
   title: 'Delete task',
   description:
     'Moves a task to Trash (author, or DELETE_ANY_CONTENT). It can be restored for 30 days with restore_task.',
-  input: z.object({ task: taskRef }),
+  input: toolInput({ task: taskRef }),
   annotations: { destructiveHint: true },
   handler: (ctx, input) => {
-    const { task, project } = taskOf(ctx, input.task);
+    const { task, project, team } = taskOf(ctx, input.task);
     deleteTask(ctx.deps, ctx.actor, task.id);
-    return { ok: true, ref: formatTaskRef(project.key, task.number), restoreWith: 'restore_task' };
+    return {
+      ok: true,
+      ref: formatTaskRef(project.key, task.number, team.slug),
+      restoreWith: 'restore_task',
+    };
   },
 });
 
@@ -486,9 +575,10 @@ const restoreTaskTool = defineTool({
   title: 'Restore task',
   description:
     'Restores a deleted task from Trash (author, or MANAGE_TRASH) at its old place on the board.',
-  input: z.object({
+  input: toolInput({
     task: z.string().min(1).describe('Deleted task: KEY-12, team-slug/KEY-12, or id'),
   }),
+  annotations: { destructiveHint: false },
   handler: (ctx, input) => {
     const ref = resolveTrashRef(ctx.deps, ctx.actor, { item: input.task, type: 'task' });
     return taskOut(ctx, restoreTask(ctx.deps, ctx.actor, ref.id));
@@ -500,10 +590,11 @@ const createFromIssueTool = defineTool({
   title: 'Create task from issue',
   description:
     "Turns an issue into a task: the issue's title, a link back to the issue plus its body as the description, its labels, and a `fixes` link (finishing the task resolves the issue; a `relates` link if you may not resolve the issue).",
-  input: z.object({
+  input: toolInput({
     issue: z.string().min(1).describe('Issue: KEY#51, team-slug/KEY#51, or issue id'),
     project: projectRef.optional().describe("Project for the task (default: the issue's project)"),
   }),
+  annotations: { destructiveHint: false },
   handler: (ctx, input) => {
     const { issue, project: issueProject } = resolveIssue(ctx.deps, ctx.actor, input.issue);
     const project = input.project ? projectOf(ctx, input.project).project : issueProject;
@@ -523,7 +614,7 @@ const claimNextTool = defineTool({
   title: 'Claim next task',
   description:
     'Start here to pick up work. Atomically claims the best task you can work on in a project: open status, not blocked, not claimed by anyone else, matching the optional filters. Tasks assigned to you or your roles come first, then unassigned ones; then higher priority, earlier due date, lower number. Returns the full task (read its description, then work; post progress with add_reply; finish with move_task to a done status, which releases the claim) or task: null when nothing is eligible. The claim is held by you through this key; it lasts leaseMinutes and every write you make on the task (updates, replies) renews it — call renew_claim during long silent work, release_task if you stop.',
-  input: z.object({
+  input: toolInput({
     project: projectRef,
     role: z.string().optional().describe('Only tasks assigned to this role (name, slug or id)'),
     label: z.string().optional().describe('Only tasks with this label (name or id)'),
@@ -542,16 +633,23 @@ const claimNextTool = defineTool({
       .describe('Move the claimed task to this open status, e.g. "In Progress"'),
     leaseMinutes: leaseField.optional(),
   }),
+  annotations: { destructiveHint: false },
   handler: (ctx, input) => {
     const { project, team } = projectOf(ctx, input.project);
-    const data = parseInput(claimNextTaskInputSchema, {
-      roleId: input.role ? resolveRole(ctx.deps.db.orm, team.id, input.role).id : undefined,
-      labelId: input.label ? resolveLabel(ctx.deps.db.orm, project.id, input.label).id : undefined,
-      priority: input.priority?.map((value) => priorityOf(value)),
-      assignedToMe: input.assignedToMe,
-      moveToStatusId: statusId(ctx, project.id, input.moveToStatus),
-      leaseMinutes: input.leaseMinutes,
-    });
+    const data = parseToolInput(
+      claimNextTaskInputSchema,
+      {
+        roleId: input.role ? resolveRole(ctx.deps.db.orm, team.id, input.role).id : undefined,
+        labelId: input.label
+          ? resolveLabel(ctx.deps.db.orm, project.id, input.label).id
+          : undefined,
+        priority: input.priority?.map((value) => priorityOf(value)),
+        assignedToMe: input.assignedToMe,
+        moveToStatusId: statusId(ctx, project.id, input.moveToStatus),
+        leaseMinutes: input.leaseMinutes,
+      },
+      TASK_FIELD_NAMES,
+    );
     const { task } = claimNextTask(ctx.deps, ctx.actor, project.id, data);
     if (!task) {
       return {
@@ -569,7 +667,7 @@ const claimTaskTool = defineTool({
   title: 'Claim task',
   description:
     'Claims a specific task (needs UPDATE_TASKS or being its author), telling everyone you are working on it. Claiming a task you already hold renews it. If someone else holds a valid claim it fails with who holds it, unless force: true, which takes the claim over (UPDATE_TASKS; audited as a takeover) — only do that when the holder has clearly stopped. A task in a done status must be moved to an open status (moveToStatus) to be claimed.',
-  input: z.object({
+  input: toolInput({
     task: taskRef,
     force: z.boolean().optional().describe("Take over someone else's claim"),
     moveToStatus: statusRef
@@ -577,6 +675,7 @@ const claimTaskTool = defineTool({
       .describe('Move the task to this open status, e.g. "In Progress"'),
     leaseMinutes: leaseField.optional(),
   }),
+  annotations: { destructiveHint: false },
   handler: (ctx, input) => {
     const { task, project } = taskOf(ctx, input.task);
     return taskOut(
@@ -595,7 +694,8 @@ const renewClaimTool = defineTool({
   title: 'Renew claim',
   description:
     'Extends your claim on a task to a full lease from now (the same length as before unless leaseMinutes is given). Writes on the task renew it too, so call this only during long stretches without updates or replies. Fails if you do not hold the claim.',
-  input: z.object({ task: taskRef, leaseMinutes: leaseField.optional() }),
+  input: toolInput({ task: taskRef, leaseMinutes: leaseField.optional() }),
+  annotations: { destructiveHint: false, idempotentHint: true },
   handler: (ctx, input) => {
     const { task } = taskOf(ctx, input.task);
     return taskOut(
@@ -610,7 +710,7 @@ const releaseTaskTool = defineTool({
   title: 'Release task',
   description:
     "Releases your claim so someone else can pick the task up (e.g. you are stopping before it is done). Add a note on what was done and what is left: it is posted as a reply. Not needed after moving the task to a done status, which releases it automatically. Releasing someone else's claim needs UPDATE_TASKS.",
-  input: z.object({
+  input: toolInput({
     task: taskRef,
     note: z
       .string()
@@ -618,6 +718,7 @@ const releaseTaskTool = defineTool({
       .optional()
       .describe('Handoff note (markdown), posted as a reply'),
   }),
+  annotations: { destructiveHint: false },
   handler: (ctx, input) => {
     const { task } = taskOf(ctx, input.task);
     return taskOut(ctx, releaseTask(ctx.deps, ctx.actor, task.id, { note: input.note }));

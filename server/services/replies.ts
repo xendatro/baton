@@ -1,4 +1,4 @@
-import { and, asc, eq, isNull } from 'drizzle-orm';
+import { and, asc, count, desc, eq, gt, isNull, lt, or, type SQL } from 'drizzle-orm';
 import type {
   CreateReplyInput,
   ListRepliesQuery,
@@ -9,6 +9,7 @@ import type {
 import type { Actor, AppDeps } from '../context';
 import type { DbExecutor, Tx } from '../db';
 import * as s from '../db/schema';
+import { decodeCursor, encodeCursor, timeIdCursorSchema } from '../lib/cursor';
 import { change } from '../lib/diff';
 import { errors } from '../lib/errors';
 import { newId } from '../lib/ids';
@@ -114,6 +115,63 @@ export function listReplies(
     .orderBy(asc(s.reply.createdAt), asc(s.reply.id))
     .all();
   return { items: toReplies(orm, rows) };
+}
+
+export interface ReplyPageQuery extends ListRepliesQuery {
+  limit: number;
+  /** `nextCursor` of the previous page. */
+  cursor?: string | undefined;
+  /** `asc`: oldest first (thread order); `desc`: newest first. */
+  order: 'asc' | 'desc';
+}
+
+export interface ReplyPage {
+  items: Reply[];
+  /** Live replies in the whole thread. */
+  total: number;
+  nextCursor: string | null;
+}
+
+/**
+ * One page of a thread (MCP `list_replies`, and the latest replies of `get_task` / `get_issue`),
+ * keyset-paginated on `[createdAt, id]` in either direction, so long threads stay bounded.
+ */
+export function listReplyPage(deps: AppDeps, actor: Actor, query: ReplyPageQuery): ReplyPage {
+  const { orm } = deps.db;
+  requireItem(orm, actor, query.parentType, query.parentId);
+  const thread = and(
+    eq(s.reply.parentType, query.parentType),
+    eq(s.reply.parentId, query.parentId),
+    isNull(s.reply.deletedAt),
+  );
+  const newestFirst = query.order === 'desc';
+  let after: SQL | undefined;
+  if (query.cursor) {
+    const [createdAtMs, id] = decodeCursor(query.cursor, timeIdCursorSchema);
+    const createdAt = new Date(createdAtMs);
+    const beyond = newestFirst ? lt : gt;
+    after = or(
+      beyond(s.reply.createdAt, createdAt),
+      and(eq(s.reply.createdAt, createdAt), beyond(s.reply.id, id)),
+    );
+  }
+  const direction = newestFirst ? desc : asc;
+  const rows = orm
+    .select()
+    .from(s.reply)
+    .where(and(thread, after))
+    .orderBy(direction(s.reply.createdAt), direction(s.reply.id))
+    .limit(query.limit + 1)
+    .all();
+  const page = rows.slice(0, query.limit);
+  const last = page.at(-1);
+  const total = orm.select({ value: count() }).from(s.reply).where(thread).get()?.value ?? 0;
+  return {
+    items: toReplies(orm, page),
+    total,
+    nextCursor:
+      rows.length > query.limit && last ? encodeCursor([last.createdAt.getTime(), last.id]) : null,
+  };
 }
 
 /** A live reply the actor can see, with its parent item and the actor's membership. */

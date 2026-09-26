@@ -260,7 +260,16 @@ function textCondition(q: string): SQL | undefined {
  * Every open task assigned to the caller (directly or through their roles) across their teams,
  * filtered and sorted. Filtering by a team or project the caller can't see is `not_found`.
  */
-export function listMyTasks(deps: AppDeps, actor: Actor, query: MyTasksQuery): MyTasksResponse {
+/**
+ * My tasks: open tasks assigned to the actor or their roles. Without `page` it lists the first
+ * `MY_TASKS_MAX` (the web groups them); MCP `my_tasks` pages through every match with `page`.
+ */
+export function listMyTasks(
+  deps: AppDeps,
+  actor: Actor,
+  query: MyTasksQuery,
+  page: { offset: number; limit: number } = { offset: 0, limit: MY_TASKS_MAX },
+): MyTasksResponse {
   const { orm } = deps.db;
   const today = query.today ?? utcToday();
   if (query.teamId) requireMember(orm, actor, query.teamId);
@@ -289,8 +298,10 @@ export function listMyTasks(deps: AppDeps, actor: Actor, query: MyTasksQuery): M
   const rows = selectTasks(orm)
     .where(where)
     .orderBy(...taskOrder(query.sort))
-    .limit(MY_TASKS_MAX)
+    .limit(page.limit)
+    .offset(page.offset)
     .all();
-  const total = rows.length < MY_TASKS_MAX ? rows.length : countTasks(orm, where);
+  const total =
+    page.offset === 0 && rows.length < page.limit ? rows.length : countTasks(orm, where);
   return { items: toMyTasks(orm, rows, scope), total };
 }

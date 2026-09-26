@@ -293,7 +293,7 @@ export function claimTask(
     if (input.moveToStatusId) requireOpenStatus(tx, project.id, input.moveToStatusId);
     else if (status.category === 'done') {
       throw errors.conflict(
-        `${ref} is ${status.name} (done). Move it to an open status to work on it (moveToStatusId).`,
+        `${ref} is ${status.name} (done). To work on it, claim it with an open status to move it to.`,
       );
     }
     const previousHolder = takeover ? holderLabel(tx, task) : null;

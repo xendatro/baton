@@ -42,10 +42,15 @@ export const TASK_LIMITS = {
 export const priorityValueSchema = z.literal(PRIORITY_VALUES);
 
 /** Priority as agents and scripts may write it: a number 0–4 or a name (`high`). */
-export const priorityInputSchema = z.union([
-  priorityValueSchema,
-  z.enum(PRIORITY_KEYS).transform((key): PriorityValue => priorityByKey(key)),
-]);
+export const PRIORITY_INPUT_MESSAGE = `Priority must be one of ${PRIORITY_KEYS.join(', ')} (or 0–4)`;
+
+export const priorityInputSchema = z.union(
+  [
+    priorityValueSchema,
+    z.enum(PRIORITY_KEYS).transform((key): PriorityValue => priorityByKey(key)),
+  ],
+  { error: PRIORITY_INPUT_MESSAGE },
+);
 
 export const leaseMinutesSchema = z
   .number()

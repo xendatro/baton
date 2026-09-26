@@ -1,4 +1,17 @@
-import { and, desc, eq, gte, inArray, isNull, lt, or, type SQL } from 'drizzle-orm';
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  gt,
+  gte,
+  inArray,
+  isNotNull,
+  isNull,
+  lt,
+  or,
+  type SQL,
+} from 'drizzle-orm';
 import type { ActivityEntityType } from '@shared/constants';
 import type { Paginated } from '@shared/schemas/common';
 import type {
@@ -313,36 +326,100 @@ export function listEntityActivity(
   actor: Actor,
   query: EntityActivityQuery,
 ): ActivityListResponse {
+  const page = listEntityActivityPage(deps, actor, {
+    ...query,
+    limit: HISTORY_LIMIT,
+    order: 'desc',
+  });
+  return { items: page.items.reverse() };
+}
+
+export interface EntityActivityPageQuery extends EntityActivityQuery {
+  limit: number;
+  /** `nextCursor` of the previous page. */
+  cursor?: string | undefined;
+  /** `desc`: newest first; `asc`: oldest first. */
+  order: 'asc' | 'desc';
+}
+
+/**
+ * One page of an entity's history (MCP `get_activity` with an item), keyset-paginated on
+ * `[createdAt, id]` in either direction, with the visibility rules of `listEntityActivity`.
+ */
+export function listEntityActivityPage(
+  deps: AppDeps,
+  actor: Actor,
+  query: EntityActivityPageQuery,
+): Paginated<ActivityEntry> {
   const { orm } = deps.db;
+  const entity = and(
+    eq(s.activity.entityType, query.entityType),
+    eq(s.activity.entityId, query.entityId),
+  );
+  const visible = and(entity, historyScope(orm, actor, query));
+  const newestFirst = query.order === 'desc';
+  let after: SQL | undefined;
+  if (query.cursor) {
+    const [createdAtMs, id] = decodeCursor(query.cursor, timeIdCursorSchema);
+    const createdAt = new Date(createdAtMs);
+    const beyond = newestFirst ? lt : gt;
+    after = or(
+      beyond(s.activity.createdAt, createdAt),
+      and(eq(s.activity.createdAt, createdAt), beyond(s.activity.id, id)),
+    );
+  }
+  const direction = newestFirst ? desc : asc;
   const rows = orm
     .select()
     .from(s.activity)
-    .where(
-      and(eq(s.activity.entityType, query.entityType), eq(s.activity.entityId, query.entityId)),
-    )
-    .orderBy(desc(s.activity.createdAt), desc(s.activity.id))
-    .limit(HISTORY_LIMIT)
-    .all()
-    .reverse();
+    .where(and(visible, after))
+    .orderBy(direction(s.activity.createdAt), direction(s.activity.id))
+    .limit(query.limit + 1)
+    .all();
+  const page = rows.slice(0, query.limit);
+  const last = page.at(-1);
+  return {
+    items: toActivityEntries(orm, page),
+    nextCursor:
+      rows.length > query.limit && last ? encodeCursor([last.createdAt.getTime(), last.id]) : null,
+  };
+}
 
+/**
+ * The rows of an entity's history the actor may read (see `listEntityActivity`), as a condition;
+ * throws 404/403 when the actor may read none of it.
+ */
+function historyScope(db: DbExecutor, actor: Actor, query: EntityActivityQuery): SQL | undefined {
+  const entity = and(
+    eq(s.activity.entityType, query.entityType),
+    eq(s.activity.entityId, query.entityId),
+  );
   if (query.entityType === 'user' || query.entityType === 'api_key') {
     // Account-level rows (the security log): only the user's own.
-    const own = rows.filter((row) => row.teamId === null && row.actorId === actor.userId);
-    if (rows.length > 0 && own.length === 0) throw errors.notFound('Item');
-    return { items: toActivityEntries(orm, own) };
+    const own = and(isNull(s.activity.teamId), eq(s.activity.actorId, actor.userId));
+    const any = db.select({ id: s.activity.id }).from(s.activity).where(entity).limit(1).get();
+    const mine = db
+      .select({ id: s.activity.id })
+      .from(s.activity)
+      .where(and(entity, own))
+      .limit(1)
+      .get();
+    if (any && !mine) throw errors.notFound('Item');
+    return own;
   }
   const teamId =
-    entityTeamId(orm, query.entityType, query.entityId) ??
-    rows.find((row) => row.teamId !== null)?.teamId;
+    entityTeamId(db, query.entityType, query.entityId) ??
+    db
+      .select({ teamId: s.activity.teamId })
+      .from(s.activity)
+      .where(and(entity, isNotNull(s.activity.teamId)))
+      .limit(1)
+      .get()?.teamId ??
+    undefined;
   if (!teamId) throw errors.notFound('Item');
-  const membership = requireMember(orm, actor, teamId, 'Item');
-  requireHistoryAccess(orm, membership, query);
-  return {
-    items: toActivityEntries(
-      orm,
-      rows.filter((row) => row.teamId === teamId),
-    ),
-  };
+  const membership = requireMember(db, actor, teamId, 'Item');
+  requireHistoryAccess(db, membership, query);
+  return eq(s.activity.teamId, teamId);
 }
 
 /** Throws unless the member may see this team entity's history (see `listEntityActivity`). */

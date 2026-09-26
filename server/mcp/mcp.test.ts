@@ -115,7 +115,7 @@ describe('MCP over Streamable HTTP', () => {
         arguments: { item: 'API-1', body: 'Started working on this.' },
       }),
     );
-    expect(reply.ref).toBe('API-1');
+    expect(reply.ref).toBe('acme/API-1');
     expect(reply.url).toBe(`${ctx.env.baseUrl}/t/acme/p/API/tasks/1#reply-${reply.id}`);
     expect(reply.via.keyName).toBe('Claude on laptop');
 
@@ -144,7 +144,7 @@ describe('MCP over Streamable HTTP', () => {
     const thread = structured<{ item: { ref: string }; replies: Array<{ id: string }> }>(
       await client.callTool({ name: 'list_replies', arguments: { item: task.id } }),
     );
-    expect(thread.item.ref).toBe('API-1');
+    expect(thread.item.ref).toBe('acme/API-1');
     expect(thread.replies.map((r) => r.id)).toEqual([reply.id]);
   });
 
@@ -170,7 +170,7 @@ describe('MCP over Streamable HTTP', () => {
     const found = structured<{ results: Array<{ ref: string; url: string }> }>(
       await client.callTool({ name: 'search', arguments: { query: 'crash', project: 'API' } }),
     );
-    expect(found.results.map((r) => r.ref)).toEqual(['API#1']);
+    expect(found.results.map((r) => r.ref)).toEqual(['acme/API#1']);
     expect(found.results[0]?.url.startsWith(ctx.env.baseUrl)).toBe(true);
 
     const upload = structured<{ id: string; parentType: string; url: string }>(
@@ -260,7 +260,12 @@ describe('MCP over Streamable HTTP', () => {
       arguments: { item: 'NOPE-1', body: 'x' },
     });
     expect(result.isError).toBe(true);
-    expect(result.content).toEqual([{ type: 'text', text: 'not_found: Project not found' }]);
+    const [content] = result.content as Array<{ type: string; text: string }>;
+    // MCP-07: the error names the ref and lists what exists instead.
+    expect(content?.text).toMatch(
+      /^not_found: Task not found: "NOPE-1" \(no project with the key NOPE\)\. Your projects: none$/,
+    );
+    expect(content?.text).not.toMatch(/\.ts:\d+|at \w+ \(/);
     const invalid = await client.callTool({ name: 'list_replies', arguments: {} });
     expect(invalid.isError).toBe(true);
   });

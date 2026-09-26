@@ -150,6 +150,31 @@ attributed to the key's owner with `source: 'mcp'` and the key name. Core tools:
 `delete_reply`, `upload_attachment`, `list_attachments`, `get_attachment`, `delete_attachment`,
 `get_activity`, `subscribe`, `unsubscribe`.
 
+Conventions shared by every tool:
+
+- Inputs are strict: an unknown or misspelled argument (top level or nested) is an error that names
+  it, suggests the parameter it probably meant and lists the accepted ones (`Unknown parameter
+"labels" (did you mean "label"?). Accepted: …`); the advertised JSON schemas carry
+  `additionalProperties: false`.
+- Task, issue, search and trash results carry team-qualified refs (`northwind/WEB-12`,
+  `northwind/WEB#51`) and `teamSlug` where the entity has a team, so a ref an agent was given keeps
+  resolving when another of its teams creates a project with the same key. Short refs are still
+  accepted; an ambiguous one lists the qualified candidates (`northwind/WEB-1, side-quests/WEB-1`).
+  App URLs (`…/t/team/p/KEY/tasks/12`) are accepted as refs too.
+- Errors are `code: message`, followed by the error's details as JSON when they add something (e.g.
+  `{"key":"WEB","suggestion":"WEB2"}`). Not-found messages name the failing ref and list the valid
+  values (`Status not found: "Doing" in northwind/WEB. Statuses: Backlog, Todo, …`); a ref of the
+  wrong kind (`WEB#9` passed as a task) is `validation_failed` saying so. Validation messages name
+  the tool's parameters (`assignees`, `status`), not the REST fields.
+- Every tool is annotated `openWorldHint: false`; read tools `readOnlyHint: true`; every other tool
+  states `destructiveHint` (true only for deletions, removals, ownership transfer and unassigning
+  roles) and `idempotentHint` where repeating the call changes nothing more.
+- `list_replies` pages a thread (`limit`, `cursor`, `order` asc/desc → `{ item, total, nextCursor,
+replies }`); `get_activity` with `item` or `entityType` + `entityId` pages the history the same
+  way. `add_reply` and `edit_reply` validate like REST (a whitespace-only body is `validation_failed`)
+  and return absolute file URLs. `get_attachment` returns the text of any file up to 256 KB whose
+  content is UTF-8 text (source files, diffs, logs), whatever its extension.
+
 ## Feature endpoints
 
 Each module documents its own routes here as it lands, in the same table format. One router file
@@ -268,8 +293,8 @@ Consumed from the tasks module: `POST /api/projects/:projectId/tasks/from-issue`
 created `Task` (the issue page's "Create task" button opens its `path`).
 
 MCP tools (issues): `list_issues` (project, state, labels by name, labelMatch, author by username, q,
-sort, limit, cursor), `get_issue` (with every reply, the linked tasks and the last 30 history
-entries), `create_issue`, `update_issue` (title, body, `labels` to replace the set, `addLabels`,
+sort, limit, cursor), `get_issue` (with the latest 20 replies, each with its `url`, plus
+`replyCount`, the linked tasks and the last 30 history entries), `create_issue`, `update_issue` (title, body, `labels` to replace the set, `addLabels`,
 `removeLabels`, attachmentIds), `resolve_issue`, `reopen_issue`, `delete_issue`, `restore_issue`
 (a deleted `KEY#51` or id). Issues are named `KEY#51`, `team-slug/KEY#51` or by id everywhere.
 
@@ -323,7 +348,9 @@ issue, i.e. being its author or having `RESOLVE_ISSUES` (`403` otherwise; link i
 `task.claimed` (claims, takeovers and renewals), `task.released` (releases and expiries) and
 `issue.updated` for linked issues. Trash: the `task` handler is registered.
 
-MCP tools (tasks): `list_tasks`, `get_task` (with the latest replies and history), `create_task`,
+MCP tools (tasks): `list_tasks` (an `assignee` value that is not a member falls back to a role
+name or slug; one naming both is ambiguous), `get_task` (with the latest 20 replies and history
+entries and `replyCount`), `create_task`,
 `update_task`, `move_task`, `delete_task`, `restore_task`, `create_task_from_issue`,
 `claim_next_task`, `claim_task`, `renew_claim`, `release_task`. They take refs (`KEY-12`, status and
 label names, usernames, role names or `@&slug`, `KEY#51` issues) and priorities by name.
@@ -337,7 +364,7 @@ Schemas: `shared/schemas/work.ts`. `MyTask` = the tasks module's `TaskSummary` (
 | `GET /api/me/tasks`     | `?teamId&projectId&priority=high,urgent&due=overdue\|today\|week\|none&q&sort=priority\|due\|updated\|created&today` (`week` = today and the next 6 days; `q` matches the title, or a ref such as `WEB-12`, `acme/WEB-12`, `12`) | `{ items: MyTask[], total }`: open tasks assigned to me directly or through any of my roles (`@everyone` included) across my teams, at most 500 listed (`total` counts all). `sort=priority` (default): priority, then earliest due, then recently updated. A `teamId`/`projectId` I can't see is `404`                                                                                                                                                                                                                                                                                                                                                           |
 | `GET /api/me/dashboard` | `?today`                                                                                                                                                                                                                         | `{ today, counts: { assigned, overdue, dueSoon, claimed }, assigned, overdue, dueSoon, claimed: MyTask[], activity: ActivityEntry[], teams }`. Lists hold at most 10 tasks (claims 20); `dueSoon` = due today through the next 6 days; `claimed` = valid claims held by me on the web or through any of my keys, newest first; `activity` = the 30 newest rows across my teams that I may see (per-item history of issues, tasks, replies and files, with the Trash rule; everything with `VIEW_AUDIT_LOG`); `teams` = `[{ id, slug, name, icon, color, memberCount, url, projects: [{ id, key, name, icon, color, description, openTasks, openIssues, url }] }]` |
 
-MCP tools (work): `my_tasks` (`team`, `project` refs, `priority` keys, `due`, `query`, `sort`, `today`, `limit` 1–200, default 50 → `{ total, returned, tasks }` with absolute URLs) and `dashboard_summary` (`today`), both read-only. The inbox uses the core notification endpoints above.
+MCP tools (work): `my_tasks` (`team`, `project` refs, `priority` keys, `due`, `query`, `sort`, `today`, `limit` 1–200, default 50, `cursor` → `{ total, returned, tasks, nextCursor }` with absolute URLs and team-qualified refs) and `dashboard_summary` (`today`; its `activity` rows are compact: `{ at, actor, via, action, entityType, ref, title, changes?, url }`), both read-only. The inbox uses the core notification endpoints above.
 
 ### Admin (trash, audit log, search)
 

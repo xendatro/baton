@@ -32,8 +32,8 @@ import {
   reorderStatuses,
   updateStatus,
 } from '../../services/statuses';
-import { toAbsolute } from '../util';
-import { defineTool, type McpTool, type ToolContext } from './define';
+import { toAbsolute, withKeyConflictHint } from '../util';
+import { defineTool, toolInput, type McpTool, type ToolContext } from './define';
 
 /**
  * Project MCP tools (SPEC §5.1 [projects]): projects, their statuses and labels. Handlers resolve
@@ -66,7 +66,7 @@ const listProjectsTool = defineTool({
   title: 'List projects',
   description:
     'Projects in your teams (or in one team), with key, ref, description and open/done task and open/resolved issue counts. Use a project ref (team-slug/KEY) with the other tools.',
-  input: z.object({
+  input: toolInput({
     team: z.string().optional().describe('Only this team (slug or id); default: all your teams'),
   }),
   annotations: { readOnlyHint: true },
@@ -83,7 +83,7 @@ const getProjectTool = defineTool({
   title: 'Get project',
   description:
     'Everything about a project: description, README (markdown), task statuses in board order (category open/done, which one is the default for new tasks), labels with usage counts, counts, previous keys and URL.',
-  input: z.object({ project: projectRef }),
+  input: toolInput({ project: projectRef }),
   annotations: { readOnlyHint: true },
   handler: (ctx, input) =>
     withUrl(ctx, getProject(ctx.deps, ctx.actor, projectContext(ctx, input.project).id)),
@@ -94,7 +94,7 @@ const createProjectTool = defineTool({
   title: 'Create project',
   description:
     'Creates a project in a team (needs MANAGE_PROJECTS). It starts with the statuses Open (default) and Done. The key is derived from the name unless given.',
-  input: z.object({
+  input: toolInput({
     team: z.string().min(1).describe('Team slug or id'),
     name: z.string().min(1).max(LIMITS.projectName.max).describe('Project name'),
     key: z
@@ -112,6 +112,7 @@ const createProjectTool = defineTool({
     icon: emojiField.optional(),
     color: colorField.optional(),
   }),
+  annotations: { destructiveHint: false },
   handler: (ctx, input) => {
     const { team, ...fields } = input;
     const teamId = resolveTeam(ctx.deps, ctx.actor, team).team.id;
@@ -125,7 +126,7 @@ const updateProjectTool = defineTool({
   title: 'Update project',
   description:
     'Changes a project’s name, key, description, README, icon or color (needs MANAGE_PROJECTS). A new key keeps the old one working for existing refs and links. Pass only the fields to change.',
-  input: z.object({
+  input: toolInput({
     project: projectRef,
     name: z.string().optional().describe('New name'),
     key: z.string().optional().describe('New key (2–6 characters, e.g. WEB)'),
@@ -141,6 +142,7 @@ const updateProjectTool = defineTool({
         'Ids of pending uploads (upload_attachment without an item) to attach to the project',
       ),
   }),
+  annotations: { destructiveHint: false },
   handler: (ctx, input) => {
     const { project, ...fields } = input;
     const projectId = projectContext(ctx, project).id;
@@ -154,7 +156,7 @@ const deleteProjectTool = defineTool({
   title: 'Delete project',
   description:
     'Moves a project to Trash (needs MANAGE_PROJECTS). Its issues and tasks disappear from lists and search until it is restored; it is purged after 30 days.',
-  input: z.object({ project: projectRef }),
+  input: toolInput({ project: projectRef }),
   annotations: { destructiveHint: true },
   handler: (ctx, input) => {
     const project = projectContext(ctx, input.project);
@@ -168,17 +170,27 @@ const restoreProjectTool = defineTool({
   title: 'Restore project',
   description:
     'Restores a project from Trash with everything in it (needs MANAGE_PROJECTS or MANAGE_TRASH). If another project took its key meanwhile, pass a new key.',
-  input: z.object({
+  input: toolInput({
     project: z
       .string()
       .min(1)
       .describe('The deleted project: its id, or team-slug/KEY (the most recently deleted match)'),
     key: z.string().optional().describe('New key, when the old one is now used by another project'),
   }),
+  annotations: { destructiveHint: false },
   handler: (ctx, input) => {
     const project = findDeletedProject(ctx.deps, ctx.actor, input.project);
     const parsed = parseInput(restoreProjectInputSchema, { key: input.key });
-    return withUrl(ctx, restoreProject(ctx.deps, ctx.actor, project.id, parsed));
+    const restore = () => restoreProject(ctx.deps, ctx.actor, project.id, parsed);
+    return withUrl(
+      ctx,
+      input.key === undefined
+        ? withKeyConflictHint(
+            restore,
+            (suggestion) => `Call restore_project again with key (e.g. "${suggestion}").`,
+          )
+        : restore(),
+    );
   },
 });
 
@@ -187,7 +199,7 @@ const listStatusesTool = defineTool({
   title: 'List statuses',
   description:
     'Task statuses of a project in board order: name, color, category (open or done; done counts as finished), whether it is the default for new tasks, and how many tasks it holds.',
-  input: z.object({ project: projectRef }),
+  input: toolInput({ project: projectRef }),
   annotations: { readOnlyHint: true },
   handler: (ctx, input) => {
     const { items } = listStatuses(ctx.deps, ctx.actor, projectContext(ctx, input.project).id);
@@ -200,7 +212,7 @@ const createStatusTool = defineTool({
   title: 'Create status',
   description:
     'Adds a task status at the end of the board (needs MANAGE_STATUSES). Category done means tasks in it count as finished.',
-  input: z.object({
+  input: toolInput({
     project: projectRef,
     name: z.string().min(1).max(LIMITS.statusName.max).describe('Status name, e.g. In review'),
     category: z
@@ -210,6 +222,7 @@ const createStatusTool = defineTool({
     color: colorField.optional(),
     isDefault: z.boolean().optional().describe('Make it the default status for new tasks'),
   }),
+  annotations: { destructiveHint: false },
   handler: (ctx, input) => {
     const { project, ...fields } = input;
     const parsed = parseInput(createStatusInputSchema, fields);
@@ -222,7 +235,7 @@ const updateStatusTool = defineTool({
   title: 'Update status',
   description:
     'Renames, recolors or recategorizes a status, or makes it the default for new tasks (needs MANAGE_STATUSES). Changing the category marks all its tasks finished (done) or unfinished (open).',
-  input: z.object({
+  input: toolInput({
     project: projectRef,
     status: statusRef,
     name: z.string().optional().describe('New name'),
@@ -233,6 +246,7 @@ const updateStatusTool = defineTool({
       .optional()
       .describe('true to make this the default status (the previous default is unset)'),
   }),
+  annotations: { destructiveHint: false },
   handler: (ctx, input) => {
     const { project, status, ...fields } = input;
     const projectId = projectContext(ctx, project).id;
@@ -247,7 +261,7 @@ const reorderStatusesTool = defineTool({
   title: 'Reorder statuses',
   description:
     'Sets the board order of a project’s statuses (needs MANAGE_STATUSES). List every status exactly once, first column first.',
-  input: z.object({
+  input: toolInput({
     project: projectRef,
     statuses: z
       .array(z.string().min(1))
@@ -255,6 +269,7 @@ const reorderStatusesTool = defineTool({
       .max(PROJECT_LIMITS.statuses)
       .describe('Every status (name or id) in the new order'),
   }),
+  annotations: { destructiveHint: false, idempotentHint: true },
   handler: (ctx, input) => {
     const projectId = projectContext(ctx, input.project).id;
     const statusIds = input.statuses.map(
@@ -270,7 +285,7 @@ const deleteStatusTool = defineTool({
   title: 'Delete status',
   description:
     'Deletes a status and moves its tasks to another status (needs MANAGE_STATUSES). Deleting the default status makes the target the default. The last status can’t be deleted.',
-  input: z.object({
+  input: toolInput({
     project: projectRef,
     status: statusRef.describe('Status to delete (name or id)'),
     moveTo: statusRef.describe('Status that receives its tasks (name or id)'),
@@ -291,7 +306,7 @@ const listLabelsTool = defineTool({
   title: 'List labels',
   description:
     'Labels of a project (shared by its issues and tasks), alphabetical, with color, description and how many issues and tasks use each.',
-  input: z.object({ project: projectRef }),
+  input: toolInput({ project: projectRef }),
   annotations: { readOnlyHint: true },
   handler: (ctx, input) => {
     const { items } = listLabels(ctx.deps, ctx.actor, projectContext(ctx, input.project).id);
@@ -304,7 +319,7 @@ const createLabelTool = defineTool({
   title: 'Create label',
   description:
     'Creates a label for a project’s issues and tasks (needs MANAGE_LABELS). Names are unique per project, ignoring case.',
-  input: z.object({
+  input: toolInput({
     project: projectRef,
     name: z.string().min(1).max(LIMITS.labelName.max).describe('Label name, e.g. bug'),
     color: colorField.optional(),
@@ -314,6 +329,7 @@ const createLabelTool = defineTool({
       .optional()
       .describe('What the label means (shown on hover)'),
   }),
+  annotations: { destructiveHint: false },
   handler: (ctx, input) => {
     const { project, ...fields } = input;
     const parsed = parseInput(createLabelInputSchema, fields);
@@ -325,13 +341,14 @@ const updateLabelTool = defineTool({
   name: 'update_label',
   title: 'Update label',
   description: 'Renames, recolors or re-describes a label (needs MANAGE_LABELS).',
-  input: z.object({
+  input: toolInput({
     project: projectRef,
     label: labelRef,
     name: z.string().optional().describe('New name'),
     color: colorField.optional(),
     description: z.string().optional().describe('New description (empty string clears it)'),
   }),
+  annotations: { destructiveHint: false },
   handler: (ctx, input) => {
     const { project, label, ...fields } = input;
     const projectId = projectContext(ctx, project).id;
@@ -346,7 +363,7 @@ const deleteLabelTool = defineTool({
   title: 'Delete label',
   description:
     'Deletes a label and removes it from every issue and task that has it (needs MANAGE_LABELS). This can’t be undone.',
-  input: z.object({ project: projectRef, label: labelRef }),
+  input: toolInput({ project: projectRef, label: labelRef }),
   annotations: { destructiveHint: true },
   handler: (ctx, input) => {
     const projectId = projectContext(ctx, input.project).id;

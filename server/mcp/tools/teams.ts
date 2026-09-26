@@ -43,7 +43,7 @@ import {
   updateTeam,
 } from '../../services/teams';
 import { toAbsolute } from '../util';
-import { defineTool, type McpTool, type ToolContext } from './define';
+import { defineTool, toolInput, type McpTool, type ToolContext } from './define';
 
 /**
  * Team MCP tools (SPEC §5.1 [teams]): teams, members, roles and invite links, plus the owner-only
@@ -98,7 +98,7 @@ const listTeamsTool = defineTool({
   title: 'List teams',
   description:
     'The teams you belong to (name, slug, description, owner, member count). Use a team slug as the "team" argument of other tools.',
-  input: z.object({}),
+  input: toolInput({}),
   annotations: { readOnlyHint: true },
   handler: (ctx) => ({
     teams: listTeams(ctx.deps, ctx.actor).items.map((item) => teamOut(ctx.deps, item)),
@@ -110,7 +110,7 @@ const getTeamTool = defineTool({
   title: 'Get team',
   description:
     'Everything about a team: details, your effective permissions, its projects (with open task and issue counts) and its roles (highest first, with permissions and member counts).',
-  input: z.object({ team: teamRef }),
+  input: toolInput({ team: teamRef }),
   annotations: { readOnlyHint: true },
   handler: (ctx, input) => {
     const { team: row, membership } = resolveTeam(ctx.deps, ctx.actor, input.team);
@@ -135,7 +135,7 @@ const createTeamTool = defineTool({
   title: 'Create team',
   description:
     'Creates a team you own, seeded with the @everyone role (default permissions) and an Admin role. Invite people with create_invite.',
-  input: z.object({
+  input: toolInput({
     name: teamNameSchema.describe(`Team name (1–${LIMITS.teamName.max} characters)`),
     slug: teamSlugSchema
       .optional()
@@ -146,6 +146,7 @@ const createTeamTool = defineTool({
     icon: emojiSchema.optional().describe('A single emoji used as the team icon'),
     color: hexColorSchema.optional().describe('Accent color like #6366f1'),
   }),
+  annotations: { destructiveHint: false },
   handler: (ctx, input) => teamOut(ctx.deps, createTeam(ctx.deps, ctx.actor, input)),
 });
 
@@ -154,7 +155,7 @@ const updateTeamTool = defineTool({
   title: 'Update team',
   description:
     "Edits a team's name, URL slug, description, icon or color (needs Manage team). Only the fields you pass change.",
-  input: z.object({
+  input: toolInput({
     team: teamRef,
     name: teamNameSchema.optional().describe('New name'),
     slug: teamSlugSchema.optional().describe('New URL slug (old /t/<slug> links stop working)'),
@@ -162,6 +163,7 @@ const updateTeamTool = defineTool({
     icon: emojiSchema.nullable().optional().describe('New emoji icon, or null to remove it'),
     color: hexColorSchema.optional().describe('New accent color like #6366f1'),
   }),
+  annotations: { destructiveHint: false },
   handler: (ctx, { team: ref, ...changes }) =>
     teamOut(ctx.deps, updateTeam(ctx.deps, ctx.actor, team(ctx, ref).id, changes)),
 });
@@ -171,7 +173,7 @@ const transferOwnershipTool = defineTool({
   title: 'Transfer team ownership',
   description:
     'Makes another member the owner of a team (owner only; you stay a member). Pass the team slug again as "confirm" to show you mean it.',
-  input: z.object({
+  input: toolInput({
     team: teamRef,
     user: userRef,
     confirm: z.string().describe('The team slug, typed again to confirm'),
@@ -192,7 +194,7 @@ const deleteTeamTool = defineTool({
   title: 'Delete team',
   description:
     'Moves a team, with all its projects, issues and tasks, to Trash (owner only). It can be restored with restore_team for 30 days, then it is purged. Pass the team slug again as "confirm".',
-  input: z.object({
+  input: toolInput({
     team: teamRef,
     confirm: z.string().describe('The team slug, typed again to confirm'),
   }),
@@ -210,7 +212,7 @@ const listDeletedTeamsTool = defineTool({
   name: 'list_deleted_teams',
   title: 'List deleted teams',
   description: 'Teams you own that are in Trash, with the date each will be purged.',
-  input: z.object({}),
+  input: toolInput({}),
   annotations: { readOnlyHint: true },
   handler: (ctx) => listDeletedTeams(ctx.deps, ctx.actor),
 });
@@ -220,9 +222,10 @@ const restoreTeamTool = defineTool({
   title: 'Restore team',
   description:
     'Restores a team you own from Trash. If another team took its slug meanwhile, it gets a numbered one (e.g. acme-2).',
-  input: z.object({
+  input: toolInput({
     team: z.string().min(1).describe('Deleted team: its slug or id (see list_deleted_teams)'),
   }),
+  annotations: { destructiveHint: false },
   handler: (ctx, input) => {
     const ref = input.team.trim();
     const deleted = listDeletedTeams(ctx.deps, ctx.actor).items.filter(
@@ -248,7 +251,7 @@ const listMembersTool = defineTool({
   title: 'List members',
   description:
     'Members of a team with their roles (highest first), join date and whether they own the team.',
-  input: z.object({ team: teamRef }),
+  input: toolInput({ team: teamRef }),
   annotations: { readOnlyHint: true },
   handler: (ctx, input) => ({
     members: listMembers(ctx.deps, ctx.actor, team(ctx, input.team).id).items.map(memberOut),
@@ -260,7 +263,7 @@ const removeMemberTool = defineTool({
   title: 'Remove member',
   description:
     'Removes someone from a team (needs Manage members; never the owner; only administrators can remove members who have Administrator). To remove yourself use leave_team.',
-  input: z.object({ team: teamRef, user: userRef }),
+  input: toolInput({ team: teamRef, user: userRef }),
   annotations: { destructiveHint: true },
   handler: (ctx, input) => {
     const row = team(ctx, input.team);
@@ -274,7 +277,7 @@ const leaveTeamTool = defineTool({
   title: 'Leave team',
   description:
     'Leaves a team. The owner cannot leave: transfer ownership or delete the team first.',
-  input: z.object({ team: teamRef }),
+  input: toolInput({ team: teamRef }),
   annotations: { destructiveHint: true },
   handler: (ctx, input) => leaveTeam(ctx.deps, ctx.actor, team(ctx, input.team).id),
 });
@@ -291,7 +294,8 @@ const assignRoleTool = defineTool({
   title: 'Assign role',
   description:
     'Gives a member a role (needs Manage members; without Administrator you can only grant roles whose permissions you have).',
-  input: z.object({ team: teamRef, user: userRef, role: roleRef }),
+  input: toolInput({ team: teamRef, user: userRef, role: roleRef }),
+  annotations: { destructiveHint: false, idempotentHint: true },
   handler: (ctx, input) => {
     const { teamId, userId, roleId } = roleChange(ctx, input);
     return memberOut(assignRole(ctx.deps, ctx.actor, teamId, userId, roleId));
@@ -302,7 +306,8 @@ const unassignRoleTool = defineTool({
   name: 'unassign_role',
   title: 'Unassign role',
   description: 'Takes a role away from a member (same rules as assign_role).',
-  input: z.object({ team: teamRef, user: userRef, role: roleRef }),
+  input: toolInput({ team: teamRef, user: userRef, role: roleRef }),
+  annotations: { destructiveHint: true, idempotentHint: true },
   handler: (ctx, input) => {
     const { teamId, userId, roleId } = roleChange(ctx, input);
     return memberOut(unassignRole(ctx.deps, ctx.actor, teamId, userId, roleId));
@@ -318,7 +323,7 @@ const listRolesTool = defineTool({
   title: 'List roles',
   description:
     "A team's roles, highest first (@everyone last), with color, mentionable flag, permissions and member counts. Members' permissions are the union of their roles and @everyone.",
-  input: z.object({ team: teamRef }),
+  input: toolInput({ team: teamRef }),
   annotations: { readOnlyHint: true },
   handler: (ctx, input) => {
     const row = team(ctx, input.team);
@@ -335,7 +340,7 @@ const createRoleTool = defineTool({
   title: 'Create role',
   description:
     'Creates a role at the bottom of the list (just above @everyone). Needs Manage roles; without Administrator you can only grant permissions you have.',
-  input: z.object({
+  input: toolInput({
     team: teamRef,
     name: roleNameSchema.describe(`Role name (1–${LIMITS.roleName.max} characters)`),
     color: hexColorSchema.nullable().optional().describe('Color like #3b82f6, or null for none'),
@@ -345,6 +350,7 @@ const createRoleTool = defineTool({
       .describe('Whether everyone can @&mention the role (default false)'),
     permissions: permissionList.optional(),
   }),
+  annotations: { destructiveHint: false },
   handler: (ctx, { team: ref, ...input }) => {
     const row = team(ctx, ref);
     return roleOut(ctx.deps, row.slug, createRole(ctx.deps, ctx.actor, row.id, input));
@@ -356,7 +362,7 @@ const updateRoleTool = defineTool({
   title: 'Update role',
   description:
     'Edits a role: name, color, mentionable, and permissions (replace them with "permissions", or change some with "addPermissions"/"removePermissions"). @everyone only accepts permission changes. Needs Manage roles, within your own permissions.',
-  input: z.object({
+  input: toolInput({
     team: teamRef,
     role: roleRef,
     name: roleNameSchema.optional().describe('New name (the @&slug follows it)'),
@@ -366,6 +372,7 @@ const updateRoleTool = defineTool({
     addPermissions: permissionList.optional().describe('Permissions to add'),
     removePermissions: permissionList.optional().describe('Permissions to remove'),
   }),
+  annotations: { destructiveHint: false },
   handler: (ctx, input) => {
     const row = team(ctx, input.team);
     const role = resolveRole(ctx.deps.db.orm, row.id, input.role);
@@ -391,7 +398,7 @@ const deleteRoleTool = defineTool({
   title: 'Delete role',
   description:
     'Deletes a role: members lose it and tasks assigned to it lose that assignee. @everyone cannot be deleted.',
-  input: z.object({ team: teamRef, role: roleRef }),
+  input: toolInput({ team: teamRef, role: roleRef }),
   annotations: { destructiveHint: true },
   handler: (ctx, input) => {
     const row = team(ctx, input.team);
@@ -405,10 +412,11 @@ const reorderRolesTool = defineTool({
   title: 'Reorder roles',
   description:
     "Sets the order of the roles, highest first (a member's name shows in the color of their highest colored role). List every role except @everyone exactly once. Without Administrator, roles you cannot manage must keep their place.",
-  input: z.object({
+  input: toolInput({
     team: teamRef,
     roles: z.array(roleRef).min(1).max(250).describe('Every role except @everyone, highest first'),
   }),
+  annotations: { destructiveHint: false, idempotentHint: true },
   handler: (ctx, input) => {
     const row = team(ctx, input.team);
     const roleIds = input.roles.map((ref) => resolveRole(ctx.deps.db.orm, row.id, ref).id);
@@ -429,7 +437,7 @@ const createInviteTool = defineTool({
   title: 'Create invite link',
   description:
     'Creates an invite link (needs Create invites). Share the returned url; anyone signed in to Baton can join with it until it expires or runs out of uses.',
-  input: z.object({
+  input: toolInput({
     team: teamRef,
     expiresIn: z
       .enum(INVITE_EXPIRY_OPTIONS)
@@ -444,6 +452,7 @@ const createInviteTool = defineTool({
       .default(null)
       .describe('How many people can join with it, or null for unlimited (default)'),
   }),
+  annotations: { destructiveHint: false },
   handler: (ctx, { team: ref, ...input }) =>
     inviteOut(ctx.deps, createInvite(ctx.deps, ctx.actor, team(ctx, ref).id, input)),
 });
@@ -453,7 +462,7 @@ const listInvitesTool = defineTool({
   title: 'List invite links',
   description:
     "A team's invite links that haven't been revoked, newest first, with uses, expiry, creator and status. You see your own; Manage invites shows everyone's.",
-  input: z.object({ team: teamRef }),
+  input: toolInput({ team: teamRef }),
   annotations: { readOnlyHint: true },
   handler: (ctx, input) => ({
     invites: listInvites(ctx.deps, ctx.actor, team(ctx, input.team).id).items.map((invite) =>
@@ -467,7 +476,7 @@ const revokeInviteTool = defineTool({
   title: 'Revoke invite link',
   description:
     "Revokes an invite link so nobody else can join with it (your own, or anyone's with Manage invites).",
-  input: z.object({
+  input: toolInput({
     team: teamRef,
     invite: z.string().min(1).describe('The invite code (as in /join/<code>) or invite id'),
   }),
@@ -494,7 +503,7 @@ const getInviteTool = defineTool({
   title: 'Preview invite link',
   description:
     'Shows which team an invite link is for (name, description, member count, who invited you) and whether you are already a member.',
-  input: z.object({ code: inviteCodeInput }),
+  input: toolInput({ code: inviteCodeInput }),
   annotations: { readOnlyHint: true },
   handler: (ctx, input) => {
     const preview = previewInvite(ctx.deps, ctx.actor, input.code);
@@ -510,7 +519,8 @@ const joinTeamTool = defineTool({
   name: 'join_team',
   title: 'Join team',
   description: 'Joins a team with an invite link. Does nothing if you are already a member.',
-  input: z.object({ code: inviteCodeInput }),
+  input: toolInput({ code: inviteCodeInput }),
+  annotations: { destructiveHint: false, idempotentHint: true },
   handler: (ctx, input) => {
     const result = acceptInvite(ctx.deps, ctx.actor, input.code);
     return {

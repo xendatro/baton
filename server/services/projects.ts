@@ -701,11 +701,12 @@ export function restoreProject(
   const restored = deps.db.write((tx) => {
     const key = input.key ?? project.key;
     if (takenKeys(tx, project.teamId, project.id).has(key)) {
+      const suggestion = freeKey(tx, project.teamId, key, project.id);
       throw errors.conflict(
         input.key
-          ? `Another project in this team already uses the key ${key}`
-          : `Another project now uses the key ${key}. Restore it with a different key.`,
-        { key, suggestion: freeKey(tx, project.teamId, key, project.id) },
+          ? `Another project in this team already uses the key ${key}. Try ${suggestion}.`
+          : `Another project now uses the key ${key}. Restore it with a different key, such as ${suggestion}.`,
+        { key, suggestion },
       );
     }
     claimKey(tx, project.teamId, project.id, key);

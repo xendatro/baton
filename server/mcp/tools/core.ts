@@ -1,14 +1,17 @@
 import { z } from 'zod';
 import {
+  type ActivityEntityType,
   ACTIVITY_ENTITY_TYPES,
   ACTOR_SOURCES,
   LIMITS,
   SEARCH_ENTITY_TYPES,
 } from '@shared/constants';
+import { createReplyInputSchema, updateReplyInputSchema } from '@shared/schemas/core';
 import { errors } from '../../lib/errors';
+import { parseInput } from '../../lib/validate';
 import { consumeRateLimit } from '../../middleware/rateLimit';
 import { appPaths } from '../../lib/urls';
-import { listAuditLog, listEntityActivity } from '../../services/activity';
+import { listAuditLog, listEntityActivityPage } from '../../services/activity';
 import { resolveAuditLogKey } from '../../services/admin';
 import {
   deleteAttachment,
@@ -19,12 +22,26 @@ import {
 import { findItem } from '../../services/items';
 import { listNotifications, markNotificationsRead } from '../../services/notifications';
 import { resolveProject, resolveTeam, resolveUser } from '../../services/refs';
-import { createReply, deleteReply, editReply, getReply, listReplies } from '../../services/replies';
+import {
+  createReply,
+  deleteReply,
+  editReply,
+  getReply,
+  listReplyPage,
+  type ReplyWithContext,
+} from '../../services/replies';
 import { search } from '../../services/search';
 import { setSubscription } from '../../services/subscriptions';
 import { getMe } from '../../services/users';
-import { toAbsolute, withAbsoluteUrls, resolveItemRef } from '../util';
-import { defineTool, type McpTool, type ToolContext } from './define';
+import {
+  qualifyRef,
+  resolveItemRef,
+  teamSlugs,
+  toAbsolute,
+  withAbsoluteUrls,
+  withQualifiedRefs,
+} from '../util';
+import { defineTool, toolInput, type McpTool, type ToolContext } from './define';
 
 /**
  * Core MCP tools (SPEC §5.1 [core]): whoami, search, notifications, replies, attachments,
@@ -35,6 +52,18 @@ const itemRef = z
   .string()
   .min(1)
   .describe('Task or issue: a ref like KEY-12 (task), KEY#51 (issue), team-slug/KEY-12, or an id');
+
+const orderField = z.enum(['asc', 'desc']).describe('asc: oldest first; desc: newest first');
+
+/** A reply as add_reply / edit_reply return it: team-qualified ref, absolute file URLs. */
+function replyForAgent(ctx: ToolContext, reply: ReplyWithContext) {
+  const teamSlug = teamSlugs(ctx.deps, [reply.teamId]).get(reply.teamId) ?? '';
+  return {
+    ...reply,
+    ref: qualifyRef(teamSlug, reply.ref),
+    attachments: withAbsoluteUrls(ctx.deps, reply.attachments),
+  };
+}
 
 function itemContext(ctx: ToolContext, ref: string) {
   const resolved = resolveItemRef(ctx.deps, ctx.actor, ref);
@@ -48,7 +77,7 @@ const whoami = defineTool({
   title: 'Who am I',
   description:
     'The user this API key acts for, the key itself, and the teams (with your permissions) and projects you can access. Call this first to learn team slugs and project keys (and the upload size limit).',
-  input: z.object({}),
+  input: toolInput({}),
   annotations: { readOnlyHint: true },
   handler: (ctx) => {
     const me = getMe(ctx.deps, ctx.actor);
@@ -86,7 +115,7 @@ const searchTool = defineTool({
   title: 'Search',
   description:
     'Full-text search over tasks, issues and replies in your teams (prefix matching, best matches first).',
-  input: z.object({
+  input: toolInput({
     query: z
       .string()
       .min(LIMITS.searchQuery.min)
@@ -111,7 +140,7 @@ const searchTool = defineTool({
       types: input.types ?? [...SEARCH_ENTITY_TYPES],
       limit: input.limit,
     });
-    return { results: withAbsoluteUrls(ctx.deps, results) };
+    return { results: withQualifiedRefs(ctx.deps, withAbsoluteUrls(ctx.deps, results)) };
   },
 });
 
@@ -119,7 +148,7 @@ const listNotificationsTool = defineTool({
   name: 'list_notifications',
   title: 'List notifications',
   description: 'Your inbox, newest first: mentions, assignments, replies, resolutions.',
-  input: z.object({
+  input: toolInput({
     unreadOnly: z.boolean().default(false).describe('Only unread notifications'),
     limit: z.number().int().min(1).max(LIMITS.page.maxSize).default(20).describe('Page size'),
     cursor: z.string().optional().describe('nextCursor from a previous call, for the next page'),
@@ -139,7 +168,8 @@ const markNotificationsReadTool = defineTool({
   name: 'mark_notifications_read',
   title: 'Mark notifications read',
   description: 'Marks the given notifications, or all of them, as read.',
-  input: z.object({
+  annotations: { destructiveHint: false, idempotentHint: true },
+  input: toolInput({
     ids: z
       .array(z.string())
       .min(1)
@@ -158,23 +188,41 @@ const markNotificationsReadTool = defineTool({
 const listRepliesTool = defineTool({
   name: 'list_replies',
   title: 'List replies',
-  description: 'The reply thread of a task or issue, oldest first.',
-  input: z.object({ item: itemRef }),
+  description:
+    'The reply thread of a task or issue, one page at a time: oldest first by default, or newest first with order: "desc" (the latest replies). `total` counts every reply; pass nextCursor back for the next page.',
+  input: toolInput({
+    item: itemRef,
+    order: orderField.default('asc'),
+    limit: z
+      .number()
+      .int()
+      .min(1)
+      .max(LIMITS.page.maxSize)
+      .default(50)
+      .describe(`Page size (1–${LIMITS.page.maxSize}, default 50)`),
+    cursor: z.string().optional().describe('nextCursor from a previous call, for the next page'),
+  }),
   annotations: { readOnlyHint: true },
   handler: (ctx, input) => {
     const item = itemContext(ctx, input.item);
-    const { items } = listReplies(ctx.deps, ctx.actor, {
+    const page = listReplyPage(ctx.deps, ctx.actor, {
       parentType: item.type,
       parentId: item.id,
+      limit: input.limit,
+      cursor: input.cursor,
+      order: input.order,
     });
+    const teamSlug = teamSlugs(ctx.deps, [item.teamId]).get(item.teamId) ?? '';
     return {
       item: {
         type: item.type,
-        ref: item.ref,
+        ref: qualifyRef(teamSlug, item.ref),
         title: item.title,
         url: toAbsolute(ctx.deps, item.path),
       },
-      replies: items.map((reply) => ({
+      total: page.total,
+      nextCursor: page.nextCursor,
+      replies: page.items.map((reply) => ({
         ...reply,
         url: toAbsolute(ctx.deps, appPaths.reply(item.path, reply.id)),
         attachments: withAbsoluteUrls(ctx.deps, reply.attachments),
@@ -188,7 +236,7 @@ const addReply = defineTool({
   title: 'Add reply',
   description:
     'Replies to a task or issue (markdown; mention people with @username and roles with @&role-slug). Subscribers and mentioned members are notified.',
-  input: z.object({
+  input: toolInput({
     item: itemRef,
     body: z
       .string()
@@ -201,14 +249,16 @@ const addReply = defineTool({
       .optional()
       .describe('Ids of pending uploads (from upload_attachment without an item) to attach'),
   }),
+  annotations: { destructiveHint: false },
   handler: (ctx, input) => {
     const item = resolveItemRef(ctx.deps, ctx.actor, input.item);
-    return createReply(ctx.deps, ctx.actor, {
+    const data = parseInput(createReplyInputSchema, {
       parentType: item.type,
       parentId: item.id,
-      body: input.body.trim(),
+      body: input.body,
       attachmentIds: input.attachmentIds,
     });
+    return replyForAgent(ctx, createReply(ctx.deps, ctx.actor, data));
   },
 });
 
@@ -216,7 +266,7 @@ const editReplyTool = defineTool({
   name: 'edit_reply',
   title: 'Edit reply',
   description: 'Replaces the text of a reply (your own, or any with EDIT_ANY_CONTENT).',
-  input: z.object({
+  input: toolInput({
     reply: z.string().min(1).describe('Reply id'),
     body: z
       .string()
@@ -224,7 +274,11 @@ const editReplyTool = defineTool({
       .max(LIMITS.replyBody.max)
       .describe('New reply text in markdown'),
   }),
-  handler: (ctx, input) => editReply(ctx.deps, ctx.actor, input.reply, { body: input.body.trim() }),
+  annotations: { destructiveHint: false, idempotentHint: true },
+  handler: (ctx, input) => {
+    const data = parseInput(updateReplyInputSchema, { body: input.body });
+    return replyForAgent(ctx, editReply(ctx.deps, ctx.actor, input.reply, data));
+  },
 });
 
 const deleteReplyTool = defineTool({
@@ -232,10 +286,10 @@ const deleteReplyTool = defineTool({
   title: 'Delete reply',
   description:
     'Moves a reply to Trash (your own, or any with DELETE_ANY_CONTENT). Restorable for 30 days.',
-  input: z.object({ reply: z.string().min(1).describe('Reply id') }),
+  input: toolInput({ reply: z.string().min(1).describe('Reply id') }),
   annotations: { destructiveHint: true },
   handler: (ctx, input) => {
-    const reply = getReply(ctx.deps, ctx.actor, input.reply);
+    const reply = replyForAgent(ctx, getReply(ctx.deps, ctx.actor, input.reply));
     deleteReply(ctx.deps, ctx.actor, input.reply);
     return { ok: true, deleted: { id: reply.id, ref: reply.ref } };
   },
@@ -246,7 +300,7 @@ const uploadAttachment = defineTool({
   title: 'Upload attachment',
   description:
     'Uploads a file as base64 or plain text, up to the server upload limit (MAX_UPLOAD_MB, see whoami). With `item` it is attached to that task or issue; otherwise it stays pending in `team` and can be attached by passing its id in attachmentIds (e.g. add_reply) within 24 hours. Counts against the same per-user upload rate limit as web uploads (30 per minute).',
-  input: z.object({
+  input: toolInput({
     filename: z.string().min(1).max(LIMITS.filename.max).describe('File name, e.g. notes.md'),
     contentBase64: z.string().optional().describe('File content, base64-encoded (binary files)'),
     text: z.string().optional().describe('File content as UTF-8 text (text files)'),
@@ -256,6 +310,7 @@ const uploadAttachment = defineTool({
       .optional()
       .describe('Team (slug or id) for a pending upload; not needed with item'),
   }),
+  annotations: { destructiveHint: false },
   handler: async (ctx, input) => {
     if ((input.contentBase64 === undefined) === (input.text === undefined)) {
       throw errors.validation('Pass exactly one of contentBase64 or text');
@@ -287,7 +342,7 @@ const listAttachmentsTool = defineTool({
   name: 'list_attachments',
   title: 'List attachments',
   description: 'Files attached to a task, issue, reply or project.',
-  input: z.object({
+  input: toolInput({
     item: itemRef.optional().describe('Task or issue (ref or id)'),
     reply: z.string().optional().describe('Reply id'),
     project: z.string().optional().describe('Project (KEY, team-slug/KEY or id)'),
@@ -317,8 +372,8 @@ const getAttachment = defineTool({
   name: 'get_attachment',
   title: 'Get attachment',
   description:
-    'Metadata and download URL of an attachment; for text files up to 256 KB also the content.',
-  input: z.object({ attachment: z.string().min(1).describe('Attachment id') }),
+    'Metadata and download URL of an attachment; for text files up to 256 KB (source code, diffs, logs, anything uploaded as text) also the content.',
+  input: toolInput({ attachment: z.string().min(1).describe('Attachment id') }),
   annotations: { readOnlyHint: true },
   handler: (ctx, input) => {
     const attachment = getAttachmentWithContent(ctx.deps, ctx.actor, input.attachment);
@@ -331,7 +386,7 @@ const deleteAttachmentTool = defineTool({
   title: 'Delete attachment',
   description:
     'Moves an attachment to Trash (your own, or any with DELETE_ANY_CONTENT). Restorable for 30 days.',
-  input: z.object({ attachment: z.string().min(1).describe('Attachment id') }),
+  input: toolInput({ attachment: z.string().min(1).describe('Attachment id') }),
   annotations: { destructiveHint: true },
   handler: (ctx, input) => deleteAttachment(ctx.deps, ctx.actor, input.attachment),
 });
@@ -340,8 +395,8 @@ const getActivity = defineTool({
   name: 'get_activity',
   title: 'Get activity',
   description:
-    'History of one task, issue, reply or attachment (who changed what, oldest first; every member can read it), or — with VIEW_AUDIT_LOG — the history of any other team entity (entityType + entityId, e.g. project or role) or, with `team`, the team audit log (newest first, paginated, filterable by project, actor, source, API key, entity type, action and time; get_audit_log_facets lists the values present).',
-  input: z.object({
+    'History of one task, issue, reply or attachment (who changed what, oldest first by default, paginated; every member can read it), or — with VIEW_AUDIT_LOG — the history of any other team entity (entityType + entityId, e.g. project or role) or, with `team`, the team audit log (newest first, paginated, filterable by project, actor, source, API key, entity type, action and time; get_audit_log_facets lists the values present).',
+  input: toolInput({
     item: itemRef.optional().describe('Task or issue whose history to show (ref or id)'),
     entityType: z
       .enum(ACTIVITY_ENTITY_TYPES)
@@ -372,32 +427,37 @@ const getActivity = defineTool({
       .datetime({ offset: true })
       .optional()
       .describe('Audit log: to (exclusive), ISO 8601'),
+    order: orderField
+      .optional()
+      .describe(
+        'History of an item or entity: asc (default, oldest first) or desc (newest first). The audit log is always newest first',
+      ),
     limit: z
       .number()
       .int()
       .min(1)
       .max(LIMITS.page.maxSize)
       .default(50)
-      .describe('Audit log page size'),
-    cursor: z.string().optional().describe('Audit log: nextCursor from a previous call'),
+      .describe('Page size (history or audit log)'),
+    cursor: z.string().optional().describe('nextCursor from a previous call, for the next page'),
   }),
   annotations: { readOnlyHint: true },
   handler: (ctx, input) => {
+    const history = (entityType: ActivityEntityType, entityId: string) => {
+      const page = listEntityActivityPage(ctx.deps, ctx.actor, {
+        entityType,
+        entityId,
+        limit: input.limit,
+        cursor: input.cursor,
+        order: input.order ?? 'asc',
+      });
+      return { items: withAbsoluteUrls(ctx.deps, page.items), nextCursor: page.nextCursor };
+    };
     if (input.item) {
       const item = resolveItemRef(ctx.deps, ctx.actor, input.item);
-      const { items } = listEntityActivity(ctx.deps, ctx.actor, {
-        entityType: item.type,
-        entityId: item.id,
-      });
-      return { items: withAbsoluteUrls(ctx.deps, items) };
+      return history(item.type, item.id);
     }
-    if (input.entityType && input.entityId) {
-      const { items } = listEntityActivity(ctx.deps, ctx.actor, {
-        entityType: input.entityType,
-        entityId: input.entityId,
-      });
-      return { items: withAbsoluteUrls(ctx.deps, items) };
-    }
+    if (input.entityType && input.entityId) return history(input.entityType, input.entityId);
     if (!input.team) throw errors.validation('Pass item, entityType + entityId, or team');
     const { team } = resolveTeam(ctx.deps, ctx.actor, input.team);
     const page = listAuditLog(ctx.deps, ctx.actor, team.id, {
@@ -428,7 +488,8 @@ function subscriptionTool(name: 'subscribe' | 'unsubscribe') {
     description: subscribed
       ? 'Get notified about new replies on a task or issue.'
       : 'Stop reply notifications for a task or issue (mentions still notify).',
-    input: z.object({ item: itemRef }),
+    input: toolInput({ item: itemRef }),
+    annotations: { destructiveHint: false, idempotentHint: true },
     handler: (ctx, input) => {
       const item = resolveItemRef(ctx.deps, ctx.actor, input.item);
       return setSubscription(ctx.deps, ctx.actor, {

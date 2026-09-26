@@ -160,12 +160,12 @@ describe('task MCP tools', () => {
       issues: [{ issue: 'API#1' }],
     });
     expect(created).toMatchObject({
-      ref: 'API-1',
+      ref: 'acme/API-1',
       url: `${ctx.env.baseUrl}/t/acme/p/API/tasks/1`,
       priority: 3,
       labels: [{ name: 'Backend' }],
       assignees: { users: [{ username: 'mia' }] },
-      issues: [{ ref: 'API#1', kind: 'fixes', resolved: false }],
+      issues: [{ ref: 'acme/API#1', kind: 'fixes', resolved: false }],
     });
     expect(created).not.toHaveProperty('path');
 
@@ -175,7 +175,7 @@ describe('task MCP tools', () => {
       leaseMinutes: 45,
     });
     expect(claimed.task).toMatchObject({
-      ref: 'API-1',
+      ref: 'acme/API-1',
       status: { name: 'In Progress' },
       claim: { user: { username: 'mia' }, via: { keyName: 'Claude on laptop' } },
     });
@@ -222,19 +222,19 @@ describe('task MCP tools', () => {
       project: 'API',
       assignee: ['@&backend'],
     });
-    expect(byRole.tasks.map((task) => task.ref)).toEqual(['API-2']);
+    expect(byRole.tasks.map((task) => task.ref)).toEqual(['acme/API-2']);
     expect(byRole.tasks[0]).not.toHaveProperty('position');
     const blocked = await call<{ tasks: TaskOut[] }>(client, 'list_tasks', {
       project: 'API',
       blocked: 'yes',
     });
-    expect(blocked.tasks.map((task) => task.ref)).toEqual(['API-2']);
+    expect(blocked.tasks.map((task) => task.ref)).toEqual(['acme/API-2']);
     const unassigned = await call<{ tasks: TaskOut[] }>(client, 'list_tasks', {
       project: 'API',
       assignee: ['unassigned'],
       status: ['open'],
     });
-    expect(unassigned.tasks.map((task) => task.ref)).toEqual(['API-1']);
+    expect(unassigned.tasks.map((task) => task.ref)).toEqual(['acme/API-1']);
 
     const updated = await call<TaskOut>(client, 'update_task', {
       task: 'API-2',
@@ -250,17 +250,17 @@ describe('task MCP tools', () => {
     expect(updated.blockedBy).toEqual([]);
 
     const moved = await call<TaskOut>(client, 'move_task', { task: 'API-2', before: 'API-1' });
-    expect(moved.ref).toBe('API-2');
+    expect(moved.ref).toBe('acme/API-2');
     const order = await call<{ tasks: TaskOut[] }>(client, 'list_tasks', { project: 'API' });
-    expect(order.tasks.map((task) => task.ref)).toEqual(['API-2', 'API-1']);
+    expect(order.tasks.map((task) => task.ref)).toEqual(['acme/API-2', 'acme/API-1']);
 
     expect(await call(client, 'delete_task', { task: a.ref })).toMatchObject({
       ok: true,
-      ref: 'API-1',
+      ref: 'acme/API-1',
     });
     expect(await callError(client, 'get_task', { task: 'API-1' })).toMatch(/not_found/);
     const restored = await call<TaskOut>(client, 'restore_task', { task: 'API-1' });
-    expect(restored.ref).toBe('API-1');
+    expect(restored.ref).toBe('acme/API-1');
     expect(await callError(client, 'restore_task', { task: 'API-1' })).toMatch(/not in Trash/);
     expect(
       await callError(client, 'create_task', { project: 'API', title: 'X', priority: 'huge' }),
@@ -274,7 +274,7 @@ describe('task MCP tools', () => {
       issue: 'API#1',
     });
     expect(task.description).toContain('From issue [API#1]');
-    expect(task.issues).toEqual([expect.objectContaining({ ref: 'API#1', kind: 'fixes' })]);
+    expect(task.issues).toEqual([expect.objectContaining({ ref: 'acme/API#1', kind: 'fixes' })]);
     await call(client, 'claim_task', { task: task.ref, leaseMinutes: 10 });
     const renewed = await call<TaskOut & { claim: { expiresAt: string } }>(client, 'renew_claim', {
       task: task.ref,
@@ -325,7 +325,9 @@ describe('task MCP tools', () => {
       }),
     ).toMatch(/relates/);
     const fromIssue = await call<TaskOut>(client, 'create_task_from_issue', { issue: 'API#1' });
-    expect(fromIssue.issues).toEqual([expect.objectContaining({ ref: 'API#1', kind: 'relates' })]);
+    expect(fromIssue.issues).toEqual([
+      expect.objectContaining({ ref: 'acme/API#1', kind: 'relates' }),
+    ]);
     await call(client, 'move_task', { task: task.ref, status: 'Done' });
     await call(client, 'move_task', { task: fromIssue.ref, status: 'Done' });
     const row = ctx.db.orm.select().from(s.issue).where(eq(s.issue.id, issue.id)).get();

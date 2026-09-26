@@ -55,6 +55,8 @@ export const errors = {
   forbidden: (message = "You don't have permission to do that") => make('forbidden', message),
   /** Also used for resources in teams the caller doesn't belong to (never leak existence). */
   notFound: (what = 'Resource') => make('not_found', `${what} not found`),
+  /** `not_found` with a specific message (e.g. naming the ref and the valid values). */
+  notFoundWith: (message: string, details?: unknown) => make('not_found', message, details),
   validation: (message: string, details?: unknown) => make('validation_failed', message, details),
   conflict: (message: string, details?: unknown) => make('conflict', message, details),
   rateLimited: (message = 'Too many requests, slow down') => make('rate_limited', message),

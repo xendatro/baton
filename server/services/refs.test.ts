@@ -69,7 +69,9 @@ describe('team, project, task and issue refs', () => {
     expect(resolveTask(ctx.deps, actorOf(me), 'acme/api-1').task.id).toBe(task.id);
     expect(resolveTask(ctx.deps, actorOf(me), task.id).task.number).toBe(1);
     expect(resolveIssue(ctx.deps, actorOf(me), 'API#1').issue.id).toBe(issue.id);
-    expect(errorOf(() => resolveTask(ctx.deps, actorOf(me), 'API#1')).code).toBe('not_found');
+    expect(errorOf(() => resolveTask(ctx.deps, actorOf(me), 'API#1')).code).toBe(
+      'validation_failed',
+    );
     expect(errorOf(() => resolveTask(ctx.deps, actorOf(me), 'API-2')).code).toBe('not_found');
   });
 
@@ -98,6 +100,47 @@ describe('team, project, task and issue refs', () => {
     expect(error.code).toBe('validation_failed');
     expect(error.details).toEqual({ candidates: ['team-a/WEB', 'team-b/WEB'] });
     expect(resolveProject(ctx.deps, actorOf(me), 'team-b/WEB').team.slug).toBe('team-b');
+  });
+
+  it('names the failing ref, the wrong kind and the candidates (MCP-02, MCP-07)', () => {
+    const a = createTeam(ctx.db, { ownerId: me.id, slug: 'team-a' });
+    const b = createTeam(ctx.db, { ownerId: me.id, slug: 'team-b' });
+    const webA = createProject(ctx.db, { teamId: a.team.id, key: 'WEB', name: 'Web A' });
+    const webB = createProject(ctx.db, { teamId: b.team.id, key: 'WEB' });
+    const task = createTask(ctx.db, { project: webA.project });
+    const issue = createIssue(ctx.db, { project: webA.project });
+
+    const ambiguousTask = errorOf(() => resolveTask(ctx.deps, actorOf(me), 'WEB-1'));
+    expect(ambiguousTask.message).toBe(
+      'Task "WEB-1" is ambiguous. Use one of: team-a/WEB-1, team-b/WEB-1',
+    );
+    expect(ambiguousTask.details).toEqual({ candidates: ['team-a/WEB-1', 'team-b/WEB-1'] });
+    expect(errorOf(() => resolveIssue(ctx.deps, actorOf(me), 'WEB#1')).details).toEqual({
+      candidates: ['team-a/WEB#1', 'team-b/WEB#1'],
+    });
+
+    expect(errorOf(() => resolveTask(ctx.deps, actorOf(me), issue.id)).message).toMatch(
+      /is the id of an issue, not a task/,
+    );
+    expect(errorOf(() => resolveIssue(ctx.deps, actorOf(me), 'team-a/WEB')).message).toMatch(
+      /is a project ref; an issue ref looks like KEY#51/,
+    );
+    expect(errorOf(() => resolveTask(ctx.deps, actorOf(me), 'nope/WEB-1')).message).toBe(
+      'Task not found: "nope/WEB-1" (you are not in a team "nope"). Your teams: team-a, team-b',
+    );
+    const missing = errorOf(() => resolveProject(ctx.deps, actorOf(me), 'API'));
+    expect(missing.code).toBe('not_found');
+    expect(missing.details).toEqual({
+      ref: 'API',
+      candidates: ['team-a/WEB (Web A)', `team-b/WEB (${webB.project.name})`],
+    });
+
+    expect(
+      resolveTask(ctx.deps, actorOf(me), 'https://baton.example/t/team-a/p/WEB/tasks/1#reply-x')
+        .task.id,
+    ).toBe(task.id);
+    expect(resolveIssue(ctx.deps, actorOf(me), '/t/team-a/p/web/issues/1').issue.id).toBe(issue.id);
+    expect(resolveProject(ctx.deps, actorOf(me), '/t/team-b/p/WEB/tasks').team.slug).toBe('team-b');
   });
 
   it('keeps old keys resolving through aliases', () => {

@@ -102,24 +102,79 @@ export function sanitizeFilename(input: string): string {
   return name;
 }
 
+/**
+ * Text types by extension for files agents commonly attach whose extension `mime-types` doesn't
+ * know or maps to something else (`.ts` is MPEG transport stream, `.rs` an XML format). Used only
+ * when the content is text.
+ */
+const SOURCE_TEXT_TYPES: Readonly<Record<string, string>> = {
+  '.ts': 'text/typescript',
+  '.tsx': 'text/typescript',
+  '.mts': 'text/typescript',
+  '.cts': 'text/typescript',
+  '.jsx': 'text/javascript',
+  '.diff': 'text/x-diff',
+  '.patch': 'text/x-diff',
+  '.py': 'text/x-python',
+  '.go': 'text/x-go',
+  '.rs': 'text/x-rust',
+  '.rb': 'text/x-ruby',
+  '.kt': 'text/x-kotlin',
+  '.kts': 'text/x-kotlin',
+  '.swift': 'text/x-swift',
+  '.sh': 'text/x-shellscript',
+  '.bash': 'text/x-shellscript',
+  '.zsh': 'text/x-shellscript',
+};
+
 export interface SniffedType {
   mimeType: string;
   /** Rendered inline: a raster image recognised by its content, not just its name. */
   isImage: boolean;
 }
 
-/**
- * Determines the stored MIME type from the bytes (magic numbers) first, then the filename's
- * extension. Only content-verified PNG/JPEG/GIF/WebP count as inline images.
- */
-export async function sniffType(bytes: Uint8Array, filename: string): Promise<SniffedType> {
-  const detected = await fileTypeFromBuffer(bytes);
-  if (detected) {
-    return { mimeType: detected.mime, isImage: INLINE_IMAGE_TYPES.has(detected.mime) };
+/** Valid UTF-8 without NUL bytes: text, whatever the file is called. */
+function isUtf8Text(bytes: Uint8Array): boolean {
+  if (bytes.byteLength === 0 || bytes.includes(0)) return false;
+  try {
+    new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+    return true;
+  } catch {
+    return false;
   }
-  const byName = mime.lookup(filename);
+}
+
+/** The text type to store for a text file: by extension, else the name's text type, else plain. */
+function textTypeFor(filename: string, byName: string | null): string {
+  const known = SOURCE_TEXT_TYPES[path.extname(filename).toLowerCase()];
+  if (known) return known;
+  return byName && isTextType(byName) ? byName : 'text/plain';
+}
+
+/**
+ * Determines the stored MIME type from the bytes (magic numbers) first, then whether the content
+ * is text (valid UTF-8, no NUL bytes), then the filename's extension. Only content-verified
+ * PNG/JPEG/GIF/WebP count as inline images; a name claiming one is never trusted. `text: true`
+ * (content sent as text, e.g. MCP `upload_attachment` with `text`) stores a text type directly.
+ */
+export async function sniffType(
+  bytes: Uint8Array,
+  filename: string,
+  options: { text?: boolean } = {},
+): Promise<SniffedType> {
+  const byName = mime.lookup(filename) || null;
+  const claimsImage = byName !== null && INLINE_IMAGE_TYPES.has(byName);
+  if (!options.text) {
+    const detected = await fileTypeFromBuffer(bytes);
+    if (detected) {
+      return { mimeType: detected.mime, isImage: INLINE_IMAGE_TYPES.has(detected.mime) };
+    }
+  }
+  if (!claimsImage && (options.text || isUtf8Text(bytes))) {
+    return { mimeType: textTypeFor(filename, byName), isImage: false };
+  }
   // A name that claims a raster image without matching bytes is not trusted as one.
-  const mimeType = byName && !INLINE_IMAGE_TYPES.has(byName) ? byName : FALLBACK_TYPE;
+  const mimeType = byName && !claimsImage ? byName : FALLBACK_TYPE;
   return { mimeType, isImage: false };
 }
 
@@ -128,7 +183,12 @@ export function isInlineImage(mimeType: string): boolean {
 }
 
 function isTextType(mimeType: string): boolean {
-  return mimeType.startsWith('text/') || TEXT_TYPES.has(mimeType);
+  return (
+    mimeType.startsWith('text/') ||
+    TEXT_TYPES.has(mimeType) ||
+    mimeType.endsWith('+xml') ||
+    mimeType.endsWith('+json')
+  );
 }
 
 /** Absolute path of a stored file. `storagePath` uses forward slashes on every platform. */
@@ -383,6 +443,8 @@ export function attachToParent(
 export interface UploadInput extends UploadAttachmentFields {
   filename: string;
   bytes: Uint8Array;
+  /** The content was sent as text: store it with a text type. */
+  isText?: boolean | undefined;
 }
 
 function teamStorageUsed(db: DbExecutor, teamId: string): number {
@@ -514,7 +576,7 @@ export async function uploadAttachment(
   const id = newId();
   const now = new Date();
   const filename = sanitizeFilename(input.filename);
-  const { mimeType } = await sniffType(input.bytes, filename);
+  const { mimeType } = await sniffType(input.bytes, filename, { text: input.isText === true });
   const storagePath = [
     String(now.getUTCFullYear()),
     String(now.getUTCMonth() + 1).padStart(2, '0'),
@@ -611,6 +673,7 @@ export async function uploadAttachmentContent(
     parentId: input.parentId,
     filename: input.filename,
     bytes,
+    isText: input.text !== undefined,
   });
 }
 
@@ -731,11 +794,22 @@ export function getAttachmentWithContent(
   const { attachment, path: file } = getAttachmentFile(deps, actor, id);
   const [summary] = toAttachments(deps.db.orm, [attachment]);
   if (!summary) throw errors.internal();
-  const text =
-    isTextType(attachment.mimeType) && attachment.size <= MAX_INLINE_TEXT_BYTES
-      ? fs.readFileSync(file, 'utf8')
-      : null;
-  return { ...summary, downloadUrl: `${deps.env.baseUrl}${summary.url}`, text };
+  return {
+    ...summary,
+    downloadUrl: `${deps.env.baseUrl}${summary.url}`,
+    text: inlineText(attachment, file),
+  };
+}
+
+/**
+ * The content of a small text file: a text type, or (for files stored before text detection, or
+ * under a binary-looking type) content that is valid UTF-8 without NUL bytes.
+ */
+function inlineText(attachment: AttachmentRow, file: string): string | null {
+  if (attachment.size > MAX_INLINE_TEXT_BYTES || isInlineImage(attachment.mimeType)) return null;
+  if (isTextType(attachment.mimeType)) return fs.readFileSync(file, 'utf8');
+  const bytes = fs.readFileSync(file);
+  return isUtf8Text(bytes) ? bytes.toString('utf8') : null;
 }
 
 // ---------------------------------------------------------------------------------------------

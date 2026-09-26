@@ -130,7 +130,7 @@ describe('MCP agent workflow', () => {
         body: 'Clicking **Pay** on Safari 18 does nothing. Console shows a CSP error.',
       },
     );
-    expect(issue.ref).toBe('WEB#1');
+    expect(issue.ref).toBe('northwind/WEB#1');
     expect(issue.resolved).toBe(false);
 
     // Ethan's agent turns it into a task and claims it.
@@ -139,8 +139,10 @@ describe('MCP agent workflow', () => {
       'create_task_from_issue',
       { issue: 'WEB#1' },
     );
-    expect(fromIssue.ref).toBe('WEB-1');
-    expect(fromIssue.issues).toEqual([expect.objectContaining({ ref: 'WEB#1', kind: 'fixes' })]);
+    expect(fromIssue.ref).toBe('northwind/WEB-1');
+    expect(fromIssue.issues).toEqual([
+      expect.objectContaining({ ref: 'northwind/WEB#1', kind: 'fixes' }),
+    ]);
 
     events.length = 0;
     const claimed = await call<{
@@ -150,7 +152,7 @@ describe('MCP agent workflow', () => {
         claim: { user: { username: string }; via: { keyName: string } | null } | null;
       } | null;
     }>(agent, 'claim_next_task', { project: 'WEB', moveToStatus: 'In Progress' });
-    expect(claimed.task?.ref).toBe('WEB-1');
+    expect(claimed.task?.ref).toBe('northwind/WEB-1');
     expect(claimed.task?.status.name).toBe('In Progress');
     expect(claimed.task?.claim).toMatchObject({
       user: { username: 'ethan' },
@@ -185,7 +187,7 @@ describe('MCP agent workflow', () => {
     expect(resolved.resolved).toBe(true);
     expect(resolved.resolvedBy?.username).toBe('ethan');
     expect(resolved.linkedTasks).toMatchObject([
-      { ref: 'WEB-1', kind: 'fixes', status: { category: 'done' } },
+      { ref: 'northwind/WEB-1', kind: 'fixes', status: { category: 'done' } },
     ]);
 
     // The issue's author is told, with the key that did it.
@@ -237,9 +239,9 @@ describe('MCP agent workflow', () => {
         })
       ).results.map((result) => `${result.entityType}:${result.ref}`);
     expect(await search('invoices export')).toEqual(
-      expect.arrayContaining(['task:WEB-1', 'issue:WEB#1']),
+      expect.arrayContaining(['task:northwind/WEB-1', 'issue:northwind/WEB#1']),
     );
-    expect(await search('streaming CSV')).toEqual(['reply:WEB-1']);
+    expect(await search('streaming CSV')).toEqual(['reply:northwind/WEB-1']);
 
     await call(agent, 'delete_task', { task: 'WEB-1' });
     await call(agent, 'delete_issue', { issue: 'WEB#1' });
@@ -251,7 +253,7 @@ describe('MCP agent workflow', () => {
       { team: 'northwind' },
     );
     expect(trash.items.map((item) => `${item.type}:${item.ref}`)).toEqual(
-      expect.arrayContaining(['task:WEB-1', 'issue:WEB#1']),
+      expect.arrayContaining(['task:northwind/WEB-1', 'issue:northwind/WEB#1']),
     );
 
     const restoredIssue = await call<{ type: string; url: string | null }>(agent, 'restore_item', {
@@ -264,10 +266,12 @@ describe('MCP agent workflow', () => {
     });
     expect(restoredTask.url).toMatch(/\/t\/northwind\/p\/WEB\/tasks\/1$/);
 
-    expect(await search('invoices')).toEqual(expect.arrayContaining(['task:WEB-1', 'issue:WEB#1']));
+    expect(await search('invoices')).toEqual(
+      expect.arrayContaining(['task:northwind/WEB-1', 'issue:northwind/WEB#1']),
+    );
     const task = await call<{ issues: Array<{ ref: string }> }>(agent, 'get_task', {
       task: 'WEB-1',
     });
-    expect(task.issues.map((linked) => linked.ref)).toEqual(['WEB#1']);
+    expect(task.issues.map((linked) => linked.ref)).toEqual(['northwind/WEB#1']);
   });
 });

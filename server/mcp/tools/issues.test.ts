@@ -128,7 +128,7 @@ describe('issue MCP tools', () => {
       labels: ['bug'],
     });
     expect(created).toMatchObject({
-      ref: 'API#1',
+      ref: 'acme/API#1',
       url: `${ctx.env.baseUrl}/t/acme/p/API/issues/1`,
       via: { keyName: 'Claude on laptop' },
       labels: [{ name: 'Bug' }],
@@ -172,7 +172,10 @@ describe('issue MCP tools', () => {
       linkedTasks: Array<{ ref: string; url: string }>;
     }>(client, 'get_issue', { issue: 'API#1' });
     expect(detail.linkedTasks).toEqual([
-      expect.objectContaining({ ref: 'API-1', url: `${ctx.env.baseUrl}/t/acme/p/API/tasks/1` }),
+      expect.objectContaining({
+        ref: 'acme/API-1',
+        url: `${ctx.env.baseUrl}/t/acme/p/API/tasks/1`,
+      }),
     ]);
     expect(detail.history.map((entry) => entry.action)).toEqual([
       'issue.created',

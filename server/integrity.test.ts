@@ -488,8 +488,8 @@ describe('CDI-15: MCP list_tasks takes the caller’s date for due filters', () 
         (item) => item.ref,
       );
     };
-    expect(await refs({ due: 'today', today: '2031-03-10' })).toEqual([task.ref]);
-    expect(await refs({ due: 'overdue', today: '2031-03-11' })).toEqual([task.ref]);
+    expect(await refs({ due: 'today', today: '2031-03-10' })).toEqual([`acme/${task.ref}`]);
+    expect(await refs({ due: 'overdue', today: '2031-03-11' })).toEqual([`acme/${task.ref}`]);
     expect(await refs({ due: 'overdue', today: '2031-03-10' })).toEqual([]);
     // Without it, the server's UTC date (years before) is used.
     expect(await refs({ due: 'today' })).toEqual([]);

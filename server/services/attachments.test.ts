@@ -111,6 +111,20 @@ describe('file helpers', () => {
       isImage: false,
     });
   });
+
+  it('stores text content under a text type, whatever the extension says (MCP-06)', async () => {
+    const text = (content: string, name: string, options?: { text?: boolean }) =>
+      sniffType(Buffer.from(content), name, options).then((sniffed) => sniffed.mimeType);
+    expect(await text('--- a/x\n+++ b/x\n', 'fix.diff')).toBe('text/x-diff');
+    expect(await text('export const x = 1;', 'patch.ts')).toBe('text/typescript');
+    expect(await text('fn main() {}', 'main.rs')).toBe('text/x-rust');
+    expect(await text('FROM node:24', 'Dockerfile')).toBe('text/plain');
+    expect(await text('a = 1', 'settings.cfg')).toBe('text/plain');
+    expect(await text('{"a":1}', 'data.json')).toBe('application/json');
+    // Binary content keeps the name's type; sent-as-text content is text even if it looks binary.
+    expect((await sniffType(Buffer.from([0x47, 0, 1, 2]), 'clip.ts')).mimeType).toBe('video/mp2t');
+    expect(await text('GIF89a is how it starts', 'notes.txt', { text: true })).toBe('text/plain');
+  });
 });
 
 describe('upload', () => {

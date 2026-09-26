@@ -8,8 +8,8 @@ import {
   restoreTrashItem,
 } from '../../services/admin';
 import { resolveTeam } from '../../services/refs';
-import { toAbsolute } from '../util';
-import { defineTool, type McpTool } from './define';
+import { qualifyRef, toAbsolute, withKeyConflictHint } from '../util';
+import { defineTool, toolInput, type McpTool } from './define';
 
 /**
  * Admin MCP tools (SPEC §5.1 [admin]): list_trash, restore_item, and get_audit_log_facets (the
@@ -23,7 +23,7 @@ const listTrashTool = defineTool({
   title: 'List trash',
   description:
     "Deleted items in a team's Trash (projects, issues, tasks, replies, attachments), most recently deleted first: type, title snapshot, ref, who deleted it (and via which key) and the days left before it is purged for good (30 days after deletion). You see the items you authored; with MANAGE_TRASH you see everything. Restore one with restore_item.",
-  input: z.object({
+  input: toolInput({
     team: teamRef,
     type: z.enum(TEAM_TRASH_TYPES).optional().describe('Only items of this type'),
     limit: z
@@ -38,11 +38,16 @@ const listTrashTool = defineTool({
   annotations: { readOnlyHint: true },
   handler: (ctx, input) => {
     const { team } = resolveTeam(ctx.deps, ctx.actor, input.team);
-    return listTeamTrash(ctx.deps, ctx.actor, team.id, {
+    const page = listTeamTrash(ctx.deps, ctx.actor, team.id, {
       type: input.type,
       limit: input.limit,
       cursor: input.cursor,
     });
+    // Team-qualified refs (team/KEY-12) keep working when another team uses the same key.
+    return {
+      ...page,
+      items: page.items.map((item) => ({ ...item, ref: qualifyRef(team.slug, item.ref) })),
+    };
   },
 });
 
@@ -51,7 +56,7 @@ const restoreItemTool = defineTool({
   title: 'Restore item',
   description:
     "Restores a deleted item from Trash: a task (KEY-12), an issue (KEY#51), a project (KEY), each optionally prefixed with team-slug/, or any item's id from list_trash (replies and attachments are restored by id). Authors can restore their own items; restoring someone else's needs MANAGE_TRASH. A reply or attachment can only come back while its task or issue is live, and items of a deleted project come back by restoring the project. Returns the restored item's URL.",
-  input: z.object({
+  input: toolInput({
     item: z
       .string()
       .min(1)
@@ -64,7 +69,11 @@ const restoreItemTool = defineTool({
   annotations: { destructiveHint: false, idempotentHint: false },
   handler: (ctx, input) => {
     const ref = resolveTrashRef(ctx.deps, ctx.actor, { item: input.item, type: input.type });
-    const restored = restoreTrashItem(ctx.deps, ctx.actor, ref);
+    const restored = withKeyConflictHint(
+      () => restoreTrashItem(ctx.deps, ctx.actor, ref),
+      (suggestion) =>
+        `Restore it with restore_project, passing project "${ref.id}" and key (e.g. "${suggestion}").`,
+    );
     return { ...restored, url: toAbsolute(ctx.deps, restored.url) };
   },
 });
@@ -74,7 +83,7 @@ const auditLogFacetsTool = defineTool({
   title: 'Get audit log filters',
   description:
     "The values present in a team's audit log, to filter get_activity with: actors (usernames), sources, API keys (id, name, owner), entity types, actions and projects. Needs VIEW_AUDIT_LOG.",
-  input: z.object({ team: teamRef }),
+  input: toolInput({ team: teamRef }),
   annotations: { readOnlyHint: true },
   handler: (ctx, input) => {
     const { team } = resolveTeam(ctx.deps, ctx.actor, input.team);

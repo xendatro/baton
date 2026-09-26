@@ -1,0 +1,54 @@
+# Baton web app (API, MCP, SSE and the SPA in one Node process), as a systemd *user* unit.
+# Installed to ~/.config/systemd/user/baton.service by scripts/install-mini.sh (lingering must be
+# enabled so it runs without a login session). See docs/DEPLOY.md.
+#
+#   systemctl --user status baton      journalctl --user -u baton -f
+#   systemctl --user restart baton     (after editing ~/.config/baton/baton.env)
+
+[Unit]
+Description=Baton workspace (people + agents)
+Documentation=https://github.com/xendatro/baton/blob/main/docs/DEPLOY.md
+After=network-online.target
+Wants=network-online.target
+# Give up after 10 crashes in 5 minutes instead of restarting forever (a broken env file would
+# otherwise flood the journal); `systemctl --user reset-failed baton` clears it.
+StartLimitIntervalSec=300
+StartLimitBurst=10
+
+[Service]
+Type=simple
+# `current` is a symlink to the active release, switched atomically by scripts/deploy.sh.
+# The server resolves dist/web and the bundled migrations from here.
+WorkingDirectory=%h/apps/baton-releases/current
+Environment=NODE_ENV=production
+Environment=HOST=127.0.0.1
+EnvironmentFile=%h/.config/baton/baton.env
+ExecStart=%h/.local/node/bin/node --enable-source-maps dist/server/index.js
+Restart=always
+RestartSec=3
+# The server drains for up to 10 s on SIGTERM (graceful shutdown, SSE connections closed).
+KillSignal=SIGTERM
+TimeoutStopSec=20
+
+# Hardening that is effective in a user unit on this host. Mount-namespace options
+# (ProtectSystem, ProtectHome, PrivateTmp, ReadWritePaths, ...) are silently ignored by the user
+# manager here because Ubuntu 24.04 restricts unprivileged user namespaces
+# (kernel.apparmor_restrict_unprivileged_userns=1), so they are left out rather than pretend.
+UMask=0077
+NoNewPrivileges=yes
+LockPersonality=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged
+SystemCallErrorNumber=EPERM
+# Resource ceilings (cgroup v2 memory/pids controllers are delegated to the user manager).
+MemoryMax=1536M
+TasksMax=512
+LimitNOFILE=65536
+
+[Install]
+WantedBy=default.target

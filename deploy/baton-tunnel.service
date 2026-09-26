@@ -1,0 +1,38 @@
+# Cloudflare Tunnel that publishes Baton (http://127.0.0.1:<PORT>) at its public hostname, as a
+# systemd *user* unit. install-mini.sh installs it but leaves it disabled; scripts/cloudflare-
+# tunnel.sh creates the tunnel, writes ~/.cloudflared/config.yml and then enables it.
+# See docs/DEPLOY.md.
+#
+#   systemctl --user status baton-tunnel      journalctl --user -u baton-tunnel -f
+
+[Unit]
+Description=Cloudflare Tunnel for Baton
+Documentation=https://github.com/xendatro/baton/blob/main/docs/DEPLOY.md
+After=network-online.target baton.service
+Wants=network-online.target
+# Don't start before the tunnel exists (credentials and config are written by cloudflare-tunnel.sh).
+ConditionPathExists=%h/.cloudflared/config.yml
+StartLimitIntervalSec=300
+StartLimitBurst=10
+
+[Service]
+Type=simple
+# The tunnel id and credentials file come from config.yml; updates are done by re-running
+# cloudflare-tunnel.sh, not by cloudflared itself.
+ExecStart=%h/.local/bin/cloudflared tunnel --no-autoupdate --config %h/.cloudflared/config.yml run
+Restart=always
+RestartSec=5
+TimeoutStopSec=30
+
+UMask=0077
+NoNewPrivileges=yes
+LockPersonality=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+SystemCallArchitectures=native
+MemoryMax=512M
+
+[Install]
+WantedBy=default.target

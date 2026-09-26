@@ -61,7 +61,7 @@ describe('profile settings', () => {
     const user = userEvent.setup();
     renderSettingsPage(<ProfileSettingsPage />);
     const usernameForm = await screen.findByRole('form', { name: 'Username' }, LAZY);
-    const input = within(usernameForm).getByLabelText('Username');
+    const input = within(usernameForm).getByRole('textbox', { name: 'Username' });
     expect(input).toHaveValue('ada');
     expect(within(usernameForm).getByRole('button', { name: 'Change username' })).toBeDisabled();
     expect(availability.calls).toEqual([]);
@@ -99,7 +99,7 @@ describe('profile settings', () => {
     const user = userEvent.setup();
     renderSettingsPage(<ProfileSettingsPage />);
     const usernameForm = await screen.findByRole('form', { name: 'Username' }, LAZY);
-    const input = within(usernameForm).getByLabelText('Username');
+    const input = within(usernameForm).getByRole('textbox', { name: 'Username' });
     await user.clear(input);
     await user.type(input, 'grace');
     await within(usernameForm).findByText('@grace is available', {}, LAZY);

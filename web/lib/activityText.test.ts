@@ -177,6 +177,44 @@ describe('activity wording in the audit log', () => {
     expect(inFeed(entry({ action: 'task.link_added' }))).toBe('link added: task API-12');
   });
 
+  it('words role reorders and default statuses as the teams and projects modules record them', () => {
+    const reorder = entry({
+      entityType: 'team',
+      action: 'role.reordered',
+      meta: {},
+      changes: {
+        order: { from: ['Admin', 'Frontend', 'Backend'], to: ['Admin', 'Backend', 'Frontend'] },
+      },
+    });
+    expect(inFeed(reorder)).toBe('reordered the roles');
+    expect(diffRows(reorder)).toEqual([
+      {
+        field: 'order',
+        label: 'order',
+        kind: 'value',
+        from: 'Admin → Frontend → Backend',
+        to: 'Admin → Backend → Frontend',
+      },
+    ]);
+    const madeDefault = entry({
+      entityType: 'status',
+      action: 'status.updated',
+      meta: { name: 'Todo' },
+      changes: { isDefault: { from: false, to: true } },
+    });
+    expect(inFeed(madeDefault)).toBe('made Todo the default');
+    expect(
+      inFeed(
+        entry({
+          entityType: 'member',
+          action: 'member.account_deleted',
+          meta: { username: 'bob' },
+        }),
+      ),
+    ).toBe('deleted their account and left the team');
+    expect(onPage(madeDefault)).toBe('made this the default');
+  });
+
   it('falls back to the title or the type when no ref was recorded', () => {
     expect(entityName(entry({ meta: { title: 'Fix login' } }))).toBe('Fix login');
     expect(inFeed(entry({ entityType: 'label', action: 'label.deleted', meta: {} }))).toBe(

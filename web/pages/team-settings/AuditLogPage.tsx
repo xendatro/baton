@@ -6,8 +6,6 @@ import type { MeTeam } from '@shared/schemas/core';
 import { EmptyState } from '@web/components/common/EmptyState';
 import { ErrorState } from '@web/components/common/ErrorState';
 import { NotFound } from '@web/components/common/NotFound';
-import { PageContainer } from '@web/components/common/PageContainer';
-import { PageHeader } from '@web/components/common/PageHeader';
 import { Spinner } from '@web/components/common/Spinner';
 import { usePaletteCommands } from '@web/components/palette/registry';
 import { Button } from '@web/components/ui/button';
@@ -30,6 +28,7 @@ import {
   useNewAuditEntries,
   usePrependEntries,
 } from './audit-log/queries';
+import { SettingsHeader } from './SettingsSection';
 
 function RowsSkeleton({ rows = 6 }: { rows?: number }) {
   return (
@@ -47,20 +46,20 @@ function RowsSkeleton({ rows = 6 }: { rows?: number }) {
 
 function PageSkeleton() {
   return (
-    <PageContainer>
+    <div>
       <div className="space-y-2 pb-4" aria-busy="true" aria-label="Loading audit log">
         <Skeleton className="h-7 w-40" />
         <Skeleton className="h-4 w-72" />
       </div>
       <RowsSkeleton />
-    </PageContainer>
+    </div>
   );
 }
 
 function NoAccess({ team }: { team: MeTeam }) {
   return (
-    <PageContainer>
-      <PageHeader title="Audit log" />
+    <div>
+      <SettingsHeader title="Audit log" />
       <EmptyState
         icon={LockIcon}
         title="You can’t view the audit log"
@@ -71,7 +70,7 @@ function NoAccess({ team }: { team: MeTeam }) {
           </Button>
         }
       />
-    </PageContainer>
+    </div>
   );
 }
 
@@ -158,10 +157,13 @@ function AuditLog({ team }: { team: MeTeam }) {
   }
 
   const groups = entries ? groupByDay(entries) : [];
+  const projectNames = new Map(
+    (facets.data?.projects ?? []).map((project) => [project.id, project.name]),
+  );
 
   return (
-    <PageContainer>
-      <PageHeader
+    <div>
+      <SettingsHeader
         title="Audit log"
         description={`Every change in ${team.name}, by people and the agents working for them.`}
         actions={
@@ -176,14 +178,15 @@ function AuditLog({ team }: { team: MeTeam }) {
             Export CSV
           </Button>
         }
-      >
+      />
+      <div className="-mt-1 pb-4">
         <AuditFilterBar
           filters={filters}
           facets={facets.data}
           loading={facets.isPending}
           onChange={setFilters}
         />
-      </PageHeader>
+      </div>
 
       <div ref={topRef} aria-hidden="true" />
       {!atTop && pendingCount > 0 ? (
@@ -238,15 +241,19 @@ function AuditLog({ team }: { team: MeTeam }) {
         <div className="space-y-6" aria-live="polite" aria-relevant="additions">
           {groups.map((group) => (
             <section key={group.day} aria-labelledby={`day-${group.day}`}>
-              <h2
+              <h3
                 id={`day-${group.day}`}
                 className="mb-2 text-xs font-semibold tracking-wide text-muted-foreground uppercase"
               >
                 {group.label}
-              </h2>
+              </h3>
               <ol className="divide-y rounded-lg border bg-card">
                 {group.entries.map((entry) => (
-                  <AuditRow key={entry.id} entry={entry} />
+                  <AuditRow
+                    key={entry.id}
+                    entry={entry}
+                    projectName={entry.projectId ? projectNames.get(entry.projectId) : null}
+                  />
                 ))}
               </ol>
             </section>
@@ -270,6 +277,6 @@ function AuditLog({ team }: { team: MeTeam }) {
           </div>
         </div>
       )}
-    </PageContainer>
+    </div>
   );
 }

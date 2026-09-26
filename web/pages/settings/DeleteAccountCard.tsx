@@ -19,7 +19,6 @@ import {
 } from '@web/components/ui/dialog';
 import { Input } from '@web/components/ui/input';
 import { errorMessage, isApiError } from '@web/lib/api';
-import { queryKeys } from '@web/lib/queryKeys';
 import { deleteAccountRequest, useDeletedTeams } from './queries';
 import { SettingsCard } from './SettingsCard';
 
@@ -107,9 +106,13 @@ function DeleteAccountDialog({
     setFormError(null);
     try {
       await deleteAccountRequest(hasPassword ? { password } : { confirmUsername });
+      // Go to the login page without letting the shell's guard see a signed-out session first
+      // (it would redirect to /login?next=/settings/account). Dropping the cache doesn't notify
+      // mounted queries, and with the page's chunk loaded the navigation commits before the
+      // session is re-checked; the login page then fetches the (now empty) session itself.
+      await import('@web/pages/auth/LoginPage');
       queryClient.clear();
-      queryClient.setQueryData(queryKeys.session(), null);
-      await navigate('/login', { replace: true });
+      await navigate('/login', { replace: true, flushSync: true });
       toast.success('Your account was deleted. Thanks for using Baton.');
     } catch (cause) {
       const conflict =

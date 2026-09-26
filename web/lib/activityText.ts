@@ -131,6 +131,17 @@ function isListChange(change: FieldChange): boolean {
   return Array.isArray(change.from) || Array.isArray(change.to);
 }
 
+/** A list whose items stayed the same but moved (e.g. the role order): shown as A → B → C. */
+function isReorder(change: FieldChange): boolean {
+  if (!Array.isArray(change.from) || !Array.isArray(change.to)) return false;
+  const { added, removed } = listDelta(change);
+  return added.length === 0 && removed.length === 0;
+}
+
+function formatOrder(value: unknown): string {
+  return Array.isArray(value) ? value.map(formatValue).join(' → ') || 'none' : formatValue(value);
+}
+
 // ---------------------------------------------------------------------------------------------
 // Naming the entity
 // ---------------------------------------------------------------------------------------------
@@ -220,6 +231,16 @@ export function describeChange(
   }
   if (TEXT_FIELDS.has(field)) return [{ text: `edited the ${label}` }, ...of];
 
+  if (isReorder(change)) {
+    return [
+      { text: `changed ${label}` },
+      ...of,
+      { text: 'from' },
+      { text: formatOrder(from), emphasis: true },
+      { text: 'to' },
+      { text: formatOrder(to), emphasis: true },
+    ];
+  }
   if (isListChange(change)) {
     const { added, removed } = listDelta(change);
     if (TOKEN_FIELDS.has(field)) {
@@ -260,6 +281,12 @@ export function describeChange(
       { text: 'to' },
       { text: formatValue(to), emphasis: true },
     ];
+  }
+  if (field === 'isDefault' && typeof to === 'boolean') {
+    const target = object.length ? object : [{ text: 'this' }];
+    return to
+      ? [{ text: 'made' }, ...target, { text: 'the default' }]
+      : [{ text: 'unset the default' }];
   }
   if (NAME_FIELDS.has(field) && !isEmpty(from) && !isEmpty(to)) {
     return [
@@ -356,6 +383,8 @@ function specialFeedSentence(entry: ActivityEntry, verb: string): ActivityPart[]
       return [{ text: 'joined the team' }];
     case 'member.left':
       return [{ text: 'left the team' }];
+    case 'member.account_deleted':
+      return [{ text: 'deleted their account and left the team' }];
     case 'member.removed':
       return [{ text: 'removed' }, ...phrase(), { text: 'from the team' }];
     case 'team.created':
@@ -364,6 +393,8 @@ function specialFeedSentence(entry: ActivityEntry, verb: string): ActivityPart[]
       return [{ text: 'deleted the team' }];
     case 'team.restored':
       return [{ text: 'restored the team' }];
+    case 'team.reordered':
+      return [{ text: 'reordered the roles' }];
     case 'invite.created':
       return [{ text: 'created' }, ...entityPhrase(entry, { withNoun: true, withTitle: false })];
     default:
@@ -449,6 +480,15 @@ export type DiffRow =
 export function diffRows(entry: ActivityEntry): DiffRow[] {
   return Object.entries(entry.changes).map(([field, change]): DiffRow => {
     const label = fieldLabel(field, entry.entityType);
+    if (isReorder(change)) {
+      return {
+        field,
+        label,
+        kind: 'value',
+        from: formatOrder(change.from),
+        to: formatOrder(change.to),
+      };
+    }
     if (isListChange(change)) return { field, label, kind: 'list', ...listDelta(change) };
     const kind = TEXT_FIELDS.has(field) ? 'text' : 'value';
     return { field, label, kind, from: formatValue(change.from), to: formatValue(change.to) };

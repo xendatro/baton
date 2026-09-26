@@ -25,6 +25,7 @@ serves the API, MCP, SSE and the built SPA.
 npm install
 cp .env.example .env          # optional: development defaults work without it
 npm run db:migrate            # creates ./data/baton.db (the server also migrates on start)
+npm run db:seed               # optional: demo users (ethan, caden, … / password123), teams, projects
 npm run dev                   # API on :3000, web on http://localhost:5173
 ```
 
@@ -43,6 +44,7 @@ Open http://localhost:5173. Vite proxies `/api`, `/mcp` and `/healthz` to the se
 | `npm run typecheck`               | `tsc` for shared (isomorphic check), server, web and config files                                     |
 | `npm run db:generate`             | Generates a SQL migration from `server/db/schema.ts`                                                  |
 | `npm run db:migrate`              | Applies pending migrations to `DATA_DIR/baton.db`                                                     |
+| `npm run db:seed`                 | Development demo data (`-- --reset` starts over); prints an API key per user; refused in production   |
 
 `.env.example` documents every environment variable.
 

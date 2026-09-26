@@ -16,6 +16,7 @@ npm run format       # prettier (single quotes, width 100, tailwind class sortin
 npm run build        # dist/web + dist/server
 npm run db:generate  # after editing server/db/schema.ts → new SQL migration (commit it)
 npm run db:migrate   # apply migrations to DATA_DIR/baton.db
+npm run db:seed      # dev demo data (users ethan/caden/… password123, teams, projects, API keys); -- --reset
 ```
 
 All of lint, typecheck, test and build must pass before you commit (CI runs the same steps).

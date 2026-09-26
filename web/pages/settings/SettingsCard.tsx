@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { useId, type ReactNode } from 'react';
 import { Skeleton } from '@web/components/ui/skeleton';
 import { useDocumentTitle } from '@web/lib/title';
 import { cn } from '@web/lib/utils';
@@ -53,8 +53,10 @@ export function SettingsCard({
   contentClassName,
   children,
 }: SettingsCardProps) {
+  const titleId = useId();
   return (
     <section
+      aria-labelledby={titleId}
       className={cn(
         'rounded-lg border bg-card text-card-foreground',
         tone === 'danger' && 'border-destructive/40',
@@ -63,7 +65,10 @@ export function SettingsCard({
     >
       <div className="flex flex-col gap-3 px-4 pt-4 sm:flex-row sm:items-start sm:justify-between sm:px-5 sm:pt-5">
         <div className="min-w-0 flex-1 space-y-1">
-          <h3 className={cn('text-sm font-semibold', tone === 'danger' && 'text-destructive')}>
+          <h3
+            id={titleId}
+            className={cn('text-sm font-semibold', tone === 'danger' && 'text-destructive')}
+          >
             {title}
           </h3>
           {description ? <p className="text-sm text-muted-foreground">{description}</p> : null}

@@ -149,7 +149,19 @@ describe('account settings', () => {
         'GET /api/me/deleted-teams': () => jsonResponse({ items }),
         'POST /api/teams/t9/restore': () => {
           items = [];
-          return jsonResponse({ id: 't9' });
+          return jsonResponse({
+            id: 't9',
+            slug: 'old-crew',
+            name: 'Old crew',
+            description: '',
+            icon: null,
+            color: '#6366f1',
+            ownerId: 'u1',
+            owner: null,
+            memberCount: 1,
+            createdAt: deletedTeam.deletedAt,
+            updatedAt: deletedTeam.deletedAt,
+          });
         },
       }),
     );
@@ -157,7 +169,7 @@ describe('account settings', () => {
     renderSettingsPage(<AccountSettingsPage />);
     expect(await screen.findByText('Old crew', {}, LAZY)).toBeInTheDocument();
     expect(screen.getByText(/purged in 28 days/)).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: 'Restore' }));
+    await user.click(screen.getByRole('button', { name: 'Restore Old crew' }));
     expect(await screen.findByText('Old crew restored')).toBeInTheDocument();
     expect(await screen.findByText(/No deleted teams/)).toBeInTheDocument();
     expect(fetchMock.mock.calls.some(([url]) => requestUrl(url) === '/api/teams/t9/restore')).toBe(

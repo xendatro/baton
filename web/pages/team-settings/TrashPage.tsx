@@ -20,8 +20,6 @@ import type { MeTeam, TrashItem } from '@shared/schemas/core';
 import { EmptyState } from '@web/components/common/EmptyState';
 import { ErrorState } from '@web/components/common/ErrorState';
 import { NotFound } from '@web/components/common/NotFound';
-import { PageContainer } from '@web/components/common/PageContainer';
-import { PageHeader } from '@web/components/common/PageHeader';
 import { RelativeTime } from '@web/components/common/RelativeTime';
 import { Spinner } from '@web/components/common/Spinner';
 import { UserName } from '@web/components/common/UserName';
@@ -51,6 +49,7 @@ import { useRouteContext } from '@web/lib/routeContext';
 import { useDocumentTitle } from '@web/lib/title';
 import { useInView } from '@web/lib/useInView';
 import { cn } from '@web/lib/utils';
+import { SettingsHeader } from './SettingsSection';
 import { useRestoreItem, useTrash } from './trash/queries';
 
 const TYPES: Record<TrashableType, { label: string; plural: string; icon: LucideIcon }> = {
@@ -148,13 +147,13 @@ export default function TrashPage() {
   useDocumentTitle(['Trash', team?.name]);
   if (isLoading) {
     return (
-      <PageContainer>
+      <div>
         <div className="space-y-2 pb-4">
           <Skeleton className="h-7 w-24" />
           <Skeleton className="h-4 w-80" />
         </div>
         <TableSkeleton />
-      </PageContainer>
+      </div>
     );
   }
   if (!team) return <NotFound what="Team" />;
@@ -247,8 +246,8 @@ function Trash({ team }: { team: MeTeam }) {
   };
 
   return (
-    <PageContainer>
-      <PageHeader
+    <div>
+      <SettingsHeader
         title="Trash"
         description={`Deleted items stay here for ${TRASH_RETENTION_DAYS} days before they’re removed for good.`}
         actions={
@@ -270,15 +269,14 @@ function Trash({ team }: { team: MeTeam }) {
             </SelectContent>
           </Select>
         }
-      >
-        {!seesAll ? (
-          <p className="flex items-start gap-2 rounded-md border bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
-            <InfoIcon className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
-            You see the items you created. Members with the “Manage trash” permission see and
-            restore everything deleted in {team.name}.
-          </p>
-        ) : null}
-      </PageHeader>
+      />
+      {!seesAll ? (
+        <p className="mb-4 flex items-start gap-2 rounded-md border bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
+          <InfoIcon className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+          You see the items you created. Members with the “Manage trash” permission see and restore
+          everything deleted in {team.name}.
+        </p>
+      ) : null}
 
       {trash.isPending ? (
         <TableSkeleton />
@@ -388,6 +386,6 @@ function Trash({ team }: { team: MeTeam }) {
           </div>
         </>
       )}
-    </PageContainer>
+    </div>
   );
 }

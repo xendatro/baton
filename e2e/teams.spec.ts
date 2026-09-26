@@ -183,6 +183,9 @@ test('roles: create, grant permissions, assign to a member, reorder', async ({ p
     'aria-pressed',
     'true',
   );
+  // dnd-kit's keyboard sensor starts listening for arrow keys on a timer after the pick-up;
+  // a timer queued now runs after it.
+  await page.evaluate(() => new Promise((resolve) => setTimeout(resolve, 0)));
   await page.keyboard.press('ArrowUp');
   await expect(page.getByText(/Navigators is over position 1/)).toBeAttached();
   await page.keyboard.press('Space');

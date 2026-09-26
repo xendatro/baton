@@ -1,0 +1,137 @@
+import { randomInt } from 'node:crypto';
+import type { Browser, Page } from '@playwright/test';
+import { E2E_BASE_URL } from './support/env.ts';
+import { expect, ORIGIN, signedInUser, test } from './support/fixtures.ts';
+
+/**
+ * Flows that cross module boundaries: the team home's "New project" opening the projects
+ * module's dialog, the team settings layout hosting the admin module's Audit log and Trash (with
+ * permission-based navigation), project restores from Trash, and deleted teams restored from
+ * account settings.
+ */
+
+test.use({ colorScheme: 'light' });
+
+async function createTeam(page: Page, name: string): Promise<{ id: string; slug: string }> {
+  const res = await page.request.post('/api/teams', { data: { name }, headers: ORIGIN });
+  expect(res.status()).toBe(201);
+  return (await res.json()) as { id: string; slug: string };
+}
+
+/** A second signed-in person in their own browser context (own client IP). */
+async function secondUser(browser: Browser): Promise<Page> {
+  const context = await browser.newContext({
+    baseURL: E2E_BASE_URL,
+    extraHTTPHeaders: {
+      'CF-Connecting-IP': `10.${randomInt(256)}.${randomInt(256)}.${randomInt(1, 255)}`,
+    },
+  });
+  const page = await context.newPage();
+  await signedInUser(page);
+  return page;
+}
+
+function settingsNav(page: Page) {
+  return page.getByRole('navigation', { name: 'Team settings' });
+}
+
+test('the team home creates a project through the projects dialog; Trash restores it', async ({
+  page,
+}) => {
+  await signedInUser(page);
+  const team = await createTeam(page, 'Integration Crew');
+
+  await page.goto(`/t/${team.slug}`);
+  await expect(page.getByText('No projects yet')).toBeVisible();
+  await page.getByRole('button', { name: 'New project' }).first().click();
+  const dialog = page.getByRole('dialog', { name: 'New project' });
+  await expect(dialog.getByText('In Integration Crew.')).toBeVisible();
+  // The team comes from the team home, so the dialog doesn't ask for one.
+  await expect(dialog.getByLabel('Team')).toHaveCount(0);
+  await dialog.getByLabel('Name').fill('Mission Control');
+  await dialog.getByRole('button', { name: 'Create project' }).click();
+  await expect(page).toHaveURL(new RegExp(`/t/${team.slug}/p/MC$`));
+  await expect(page.getByRole('heading', { level: 1, name: 'Mission Control' })).toBeVisible();
+  await expect(
+    page.locator('[data-sidebar="menu-sub-button"]').filter({ hasText: 'Mission Control' }),
+  ).toBeVisible();
+
+  await page.goto(`/t/${team.slug}`);
+  await expect(page.locator('#main').getByRole('link', { name: /Mission Control/ })).toBeVisible();
+
+  // Owner: every settings section, including the admin module's pages.
+  await page.goto(`/t/${team.slug}/settings/general`);
+  const nav = settingsNav(page);
+  for (const section of ['General', 'Members', 'Roles', 'Invites', 'Audit log', 'Trash']) {
+    await expect(nav.getByRole('link', { name: section })).toBeVisible();
+  }
+  await nav.getByRole('link', { name: 'Audit log' }).click();
+  await expect(page.getByRole('heading', { level: 2, name: 'Audit log' })).toBeVisible();
+  await expect(page.getByText('created project Mission Control')).toBeVisible();
+  await expect(page.getByText('created the team')).toBeVisible();
+
+  // Delete the project from its settings, then restore it from the team Trash.
+  await page.goto(`/t/${team.slug}/p/MC/settings/general`);
+  await page.getByRole('button', { name: 'Delete project' }).click();
+  const confirm = page.getByRole('alertdialog');
+  await confirm.getByRole('textbox').fill('MC');
+  await confirm.getByRole('button', { name: 'Delete project' }).click();
+  await expect(page).toHaveURL(new RegExp(`/t/${team.slug}$`));
+
+  await page.goto(`/t/${team.slug}/settings/trash`);
+  await expect(page.getByRole('heading', { level: 2, name: 'Trash' })).toBeVisible();
+  await page.getByRole('button', { name: 'Restore project Mission Control' }).first().click();
+  await expect(page.getByText('Restored project Mission Control')).toBeVisible();
+  await page.getByRole('button', { name: 'Open' }).click();
+  await expect(page).toHaveURL(new RegExp(`/t/${team.slug}/p/MC$`));
+  await expect(page.getByRole('heading', { level: 1, name: 'Mission Control' })).toBeVisible();
+});
+
+test('members see Trash but not the Audit log, and no New project without the permission', async ({
+  page,
+  browser,
+}) => {
+  await signedInUser(page);
+  const team = await createTeam(page, 'Plain Members');
+  const invite = await page.request.post(`/api/teams/${team.id}/invites`, {
+    data: {},
+    headers: ORIGIN,
+  });
+  const { code } = (await invite.json()) as { code: string };
+
+  const guest = await secondUser(browser);
+  await guest.goto(`/join/${code}`);
+  await guest.getByRole('button', { name: 'Join Plain Members' }).click();
+  await expect(guest).toHaveURL(new RegExp(`/t/${team.slug}$`));
+  await expect(guest.getByText('No projects yet')).toBeVisible();
+  await expect(guest.getByRole('button', { name: 'New project' })).toHaveCount(0);
+
+  await guest.goto(`/t/${team.slug}/settings/general`);
+  const nav = settingsNav(guest);
+  await expect(nav.getByRole('link', { name: 'Trash' })).toBeVisible();
+  await expect(nav.getByRole('link', { name: 'Audit log' })).toHaveCount(0);
+  await nav.getByRole('link', { name: 'Trash' }).click();
+  await expect(guest.getByText('You see the items you created.')).toBeVisible();
+
+  // Opened from a link anyway, the audit log explains what is missing.
+  await guest.goto(`/t/${team.slug}/settings/audit-log`);
+  await expect(guest.getByText('You can’t view the audit log')).toBeVisible();
+  await guest.context().close();
+});
+
+test('a deleted team is listed in account settings and restores from there', async ({ page }) => {
+  await signedInUser(page);
+  const team = await createTeam(page, 'Phoenix Crew');
+  const removed = await page.request.delete(`/api/teams/${team.id}`, { headers: ORIGIN });
+  expect(removed.status()).toBe(200);
+
+  await page.goto('/settings/account');
+  const card = page.getByRole('region', { name: 'Deleted teams' });
+  await expect(card.getByText('Phoenix Crew')).toBeVisible();
+  await card.getByRole('button', { name: 'Restore Phoenix Crew' }).click();
+  await expect(page.getByText('Phoenix Crew restored')).toBeVisible();
+  await expect(card.getByText('No deleted teams')).toBeVisible();
+  await expect(
+    page.locator('[data-sidebar="menu-button"]').filter({ hasText: 'Phoenix Crew' }),
+  ).toBeVisible();
+});

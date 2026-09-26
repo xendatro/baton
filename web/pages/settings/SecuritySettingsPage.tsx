@@ -44,8 +44,16 @@ function sessionName(session: AccountSession): string {
   return session.browser ?? session.os ?? 'Unknown device';
 }
 
-function SessionRow({ session }: { session: AccountSession }) {
-  const revoke = useRevokeSession();
+function SessionRow({
+  session,
+  revoking,
+  onRevoke,
+}: {
+  session: AccountSession;
+  /** This session's sign-out is in flight. */
+  revoking: boolean;
+  onRevoke: () => void;
+}) {
   const Icon = DEVICE_ICONS[session.device];
   const name = sessionName(session);
   return (
@@ -84,13 +92,11 @@ function SessionRow({ session }: { session: AccountSession }) {
           variant="outline"
           size="sm"
           className="max-sm:ml-13"
-          disabled={revoke.isPending}
+          disabled={revoking}
           aria-label={`Sign out ${name}`}
-          onClick={() =>
-            revoke.mutate(session.id, { onSuccess: () => toast.success(`Signed out ${name}`) })
-          }
+          onClick={onRevoke}
         >
-          {revoke.isPending ? <Spinner /> : <LogOutIcon aria-hidden="true" />}
+          {revoking ? <Spinner /> : <LogOutIcon aria-hidden="true" />}
           Sign out
         </Button>
       )}
@@ -101,6 +107,9 @@ function SessionRow({ session }: { session: AccountSession }) {
 function SessionsCard() {
   const sessions = useSessions();
   const revokeOthers = useRevokeOtherSessions();
+  // Owned by the list: the revoked row disappears when the list refreshes, and callbacks of an
+  // unmounted observer never run.
+  const revoke = useRevokeSession();
   const [confirming, setConfirming] = useState(false);
   const others = sessions.data?.items.filter((session) => !session.current).length ?? 0;
 
@@ -134,7 +143,16 @@ function SessionsCard() {
       ) : (
         <ul className="divide-y" aria-label="Active sessions">
           {sessions.data.items.map((session) => (
-            <SessionRow key={session.id} session={session} />
+            <SessionRow
+              key={session.id}
+              session={session}
+              revoking={revoke.isPending && revoke.variables === session.id}
+              onRevoke={() =>
+                revoke.mutate(session.id, {
+                  onSuccess: () => toast.success(`Signed out ${sessionName(session)}`),
+                })
+              }
+            />
           ))}
         </ul>
       )}

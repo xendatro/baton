@@ -66,14 +66,14 @@ test('edits the profile: display name, username and picture', async ({ page }) =
   await expect(page).toHaveTitle('Profile · Settings · Baton');
 
   const nameForm = page.getByRole('form', { name: 'Display name' });
-  await nameForm.getByLabel('Name').fill('Ada Lovelace');
+  await nameForm.getByLabel('Name', { exact: true }).fill('Ada Lovelace');
   await nameForm.getByRole('button', { name: 'Save' }).click();
   await expect(page.getByText('Display name saved')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Account menu' })).toContainText('Ada Lovelace');
 
   const username = `ada_${Date.now().toString(36)}`;
   const usernameForm = page.getByRole('form', { name: 'Username' });
-  await usernameForm.getByLabel('Username').fill(username);
+  await usernameForm.getByRole('textbox', { name: 'Username' }).fill(username);
   await expect(usernameForm.getByText(`@${username} is available`)).toBeVisible();
   await expect(usernameForm.getByRole('note')).toContainText('will stop pointing at you');
   await usernameForm.getByRole('button', { name: 'Change username' }).click();
@@ -183,7 +183,10 @@ test('changes the password, signs out other sessions and logs it all', async ({
     ).toHaveCount(2);
     await page.getByRole('button', { name: 'Sign out other sessions' }).click();
     await page.getByRole('alertdialog').getByRole('button', { name: 'Sign out others' }).click();
-    await expect(page.getByText('Signed out 1 other session')).toBeVisible();
+    // The toast (the security log below gets the same words once it refreshes).
+    await expect(
+      page.locator('[data-sonner-toast]').filter({ hasText: 'Signed out 1 other session' }),
+    ).toBeVisible();
     expect((await laptop.get('/api/me')).status()).toBe(401);
 
     const log = page.getByRole('list', { name: 'Security log' });

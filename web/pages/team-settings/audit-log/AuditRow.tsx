@@ -88,7 +88,7 @@ function DiffLine({ row }: { row: DiffRow }) {
               </Badge>
             ))}
             {row.added.length === 0 && row.removed.length === 0 ? (
-              <span className="text-muted-foreground italic">reordered</span>
+              <span className="text-muted-foreground italic">no change</span>
             ) : null}
           </span>
         ) : (
@@ -117,13 +117,15 @@ function DiffLine({ row }: { row: DiffRow }) {
 
 export interface AuditRowProps {
   entry: ActivityEntry;
+  /** Name of the entry's project, shown for rows about something inside a project. */
+  projectName?: string | null;
 }
 
 /**
  * One audit entry: time, actor (+ "via <key>"), the sentence with a link to the entity, and an
  * expandable panel with the field diff and the raw action, source and time.
  */
-export function AuditRow({ entry }: AuditRowProps) {
+export function AuditRow({ entry, projectName }: AuditRowProps) {
   const fresh = useIsFresh(entry.id);
   const [open, setOpen] = useState(false);
   const panelId = useId();
@@ -175,6 +177,11 @@ export function AuditRow({ entry }: AuditRowProps) {
                 <Part part={part} url={entry.url} />
               </Fragment>
             ))}
+            {projectName && entry.entityType !== 'project' ? (
+              <span className="ml-1.5 text-xs whitespace-nowrap text-muted-foreground/80">
+                · in {projectName}
+              </span>
+            ) : null}
           </p>
           <time
             dateTime={entry.createdAt}

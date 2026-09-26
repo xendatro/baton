@@ -1,5 +1,6 @@
 import { differenceInCalendarDays, parseISO } from 'date-fns';
 import { ArchiveRestoreIcon, UsersIcon } from 'lucide-react';
+import { useNavigate } from 'react-router';
 import { toast } from 'sonner';
 import type { DeletedTeam } from '@shared/schemas/teams';
 import { EntityIcon } from '@web/components/common/EntityIcon';
@@ -16,8 +17,16 @@ function daysLeft(team: DeletedTeam): number {
   return Math.max(0, differenceInCalendarDays(parseISO(team.purgeAt), new Date()));
 }
 
-function DeletedTeamRow({ team }: { team: DeletedTeam }) {
-  const restore = useRestoreTeam();
+function DeletedTeamRow({
+  team,
+  restoring,
+  onRestore,
+}: {
+  team: DeletedTeam;
+  /** This team's restore is in flight. */
+  restoring: boolean;
+  onRestore: () => void;
+}) {
   const left = daysLeft(team);
   return (
     <li className="flex flex-wrap items-center gap-3 py-3 first:pt-0 last:pb-0">
@@ -42,12 +51,11 @@ function DeletedTeamRow({ team }: { team: DeletedTeam }) {
         type="button"
         variant="outline"
         size="sm"
-        disabled={restore.isPending}
-        onClick={() =>
-          restore.mutate(team.id, { onSuccess: () => toast.success(`${team.name} restored`) })
-        }
+        disabled={restoring}
+        onClick={onRestore}
+        aria-label={`Restore ${team.name}`}
       >
-        {restore.isPending ? <Spinner /> : <ArchiveRestoreIcon aria-hidden="true" />}
+        {restoring ? <Spinner /> : <ArchiveRestoreIcon aria-hidden="true" />}
         Restore
       </Button>
     </li>
@@ -57,6 +65,17 @@ function DeletedTeamRow({ team }: { team: DeletedTeam }) {
 /** Teams the user owns that are in Trash, restorable for 30 days (teams module contract). */
 export function DeletedTeamsCard() {
   const deleted = useDeletedTeams();
+  // The mutation lives here, not in the row: the optimistic update removes the row at once, and
+  // callbacks of an unmounted observer never run.
+  const restore = useRestoreTeam();
+  const navigate = useNavigate();
+  const restoreTeam = (team: DeletedTeam) =>
+    restore.mutate(team.id, {
+      onSuccess: (restored) =>
+        toast.success(`${restored.name} restored`, {
+          action: { label: 'Open', onClick: () => void navigate(`/t/${restored.slug}`) },
+        }),
+    });
   return (
     <SettingsCard
       title="Deleted teams"
@@ -81,7 +100,12 @@ export function DeletedTeamsCard() {
       ) : (
         <ul className="divide-y">
           {deleted.data.items.map((team) => (
-            <DeletedTeamRow key={team.id} team={team} />
+            <DeletedTeamRow
+              key={team.id}
+              team={team}
+              restoring={restore.isPending && restore.variables === team.id}
+              onRestore={() => restoreTeam(team)}
+            />
           ))}
         </ul>
       )}

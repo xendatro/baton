@@ -28,7 +28,11 @@ import {
   type CreateApiKeyInput,
   type MeResponse,
 } from '@shared/schemas/core';
-import { deletedTeamsResponseSchema, type DeletedTeamsResponse } from '@shared/schemas/teams';
+import {
+  deletedTeamsResponseSchema,
+  teamDetailSchema,
+  type DeletedTeamsResponse,
+} from '@shared/schemas/teams';
 import { api, uploadFile } from '@web/lib/api';
 import { queryKeys } from '@web/lib/queryKeys';
 
@@ -163,7 +167,10 @@ export function useDeletedTeams() {
 export function useRestoreTeam() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (teamId: string) => api.post(`/api/teams/${encodeURIComponent(teamId)}/restore`),
+    mutationFn: (teamId: string) =>
+      api.post(`/api/teams/${encodeURIComponent(teamId)}/restore`, undefined, {
+        schema: teamDetailSchema,
+      }),
     onMutate: async (teamId) => {
       const key = queryKeys.account.deletedTeams();
       await queryClient.cancelQueries({ queryKey: key });

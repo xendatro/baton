@@ -1,0 +1,243 @@
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import type { LiveEvent } from '@shared/events';
+import type { Actor } from './context';
+import { registerTools } from './mcp/tools';
+import {
+  bearer,
+  createApiKey,
+  createTestContext,
+  createUser,
+  json,
+  signIn,
+  web,
+  type TestContext,
+  type UserRow,
+} from './test/helpers';
+
+/**
+ * Wave A contracts end to end, through the real REST routes and MCP tools of several modules:
+ * teams ↔ account (deleted teams, account deletion), teams/projects ↔ admin (Trash handlers,
+ * restore_item, audit-log facets) and the live events the web client invalidates on.
+ */
+
+let ctx: TestContext;
+let owner: UserRow;
+let member: UserRow;
+let ownerKey: string;
+let memberKey: string;
+let clients: Client[];
+let events: LiveEvent[];
+
+beforeEach(() => {
+  ctx = createTestContext();
+  owner = createUser(ctx.db, { username: 'ethan' });
+  member = createUser(ctx.db, { username: 'caden' });
+  ownerKey = createApiKey(ctx.db, { userId: owner.id, name: 'Claude on laptop' }).key;
+  memberKey = createApiKey(ctx.db, { userId: member.id, name: 'Codex' }).key;
+  clients = [];
+  events = [];
+  ctx.deps.events.subscribe((event) => events.push(event));
+});
+
+afterEach(async () => {
+  for (const client of clients) await client.close();
+  ctx.close();
+});
+
+async function call<T = Record<string, unknown>>(
+  key: string,
+  method: string,
+  path: string,
+  body?: unknown,
+): Promise<{ status: number; body: T }> {
+  const init =
+    body === undefined ? { method, headers: bearer(key) } : json(method, body, bearer(key));
+  const res = await ctx.app.request(`/api${path}`, init);
+  return { status: res.status, body: (await res.json()) as T };
+}
+
+async function mcpAs(user: UserRow) {
+  const actor: Actor = { userId: user.id, source: 'mcp', key: { id: 'key', name: 'Claude' } };
+  const server = new McpServer({ name: 'baton-test', version: '0.0.0' });
+  registerTools(server, { deps: ctx.deps, actor });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  await server.connect(serverTransport);
+  const client = new Client({ name: 'test-client', version: '0.0.0' });
+  await client.connect(clientTransport);
+  clients.push(client);
+  return async (name: string, args: Record<string, unknown>) => {
+    const result = await client.callTool({ name, arguments: args });
+    expect(result.isError, JSON.stringify(result.content)).toBeFalsy();
+    return result.structuredContent as Record<string, unknown>;
+  };
+}
+
+/** Creates a team (owner) with the member joined through an invite link, and one project. */
+async function setup() {
+  const team = await call<{ id: string; slug: string }>(ownerKey, 'POST', '/teams', {
+    name: 'Northwind',
+  });
+  expect(team.status).toBe(201);
+  const invite = await call<{ code: string }>(
+    ownerKey,
+    'POST',
+    `/teams/${team.body.id}/invites`,
+    {},
+  );
+  expect(invite.status).toBe(201);
+  expect((await call(memberKey, 'POST', `/invites/${invite.body.code}/accept`)).status).toBe(200);
+  const project = await call<{ id: string; key: string }>(
+    ownerKey,
+    'POST',
+    `/teams/${team.body.id}/projects`,
+    { name: 'Web App' },
+  );
+  expect(project.status).toBe(201);
+  return { team: team.body, project: project.body };
+}
+
+describe('teams ↔ account: deleted teams', () => {
+  it('lists a deleted team for its owner, blocks account deletion, and restores through restore_item', async () => {
+    const { team } = await setup();
+    expect((await call(ownerKey, 'DELETE', `/teams/${team.id}`)).status).toBe(200);
+
+    const deleted = await call<{ items: Array<{ id: string; slug: string }> }>(
+      ownerKey,
+      'GET',
+      '/me/deleted-teams',
+    );
+    expect(deleted.body.items.map((item) => item.id)).toEqual([team.id]);
+    // Other members don't own it, and no longer see it.
+    expect(
+      (await call<{ items: unknown[] }>(memberKey, 'GET', '/me/deleted-teams')).body.items,
+    ).toEqual([]);
+    expect((await call(memberKey, 'GET', `/teams/${team.id}`)).status).toBe(404);
+
+    // The account page's delete is blocked while the owner has the team in Trash.
+    const cookie = await signIn(ctx, owner, 'password123');
+    const blocked = await ctx.app.request(
+      '/api/me/delete',
+      json('POST', { password: 'password123' }, web(ctx, cookie)),
+    );
+    expect(blocked.status).toBe(409);
+    const conflict = (await blocked.json()) as {
+      error: { details: { teams: Array<{ id: string }> } };
+    };
+    expect(conflict.error.details.teams.map((item) => item.id)).toEqual([team.id]);
+
+    // The admin module's restore_item restores teams through the teams module's Trash handler.
+    const tool = await mcpAs(owner);
+    const restored = await tool('restore_item', { item: team.id });
+    expect(restored).toMatchObject({ type: 'team', id: team.id });
+    expect(restored.url).toBe(`${ctx.env.baseUrl}/t/${team.slug}`);
+    expect((await call(memberKey, 'GET', `/teams/${team.id}`)).status).toBe(200);
+    expect(
+      (await call<{ items: unknown[] }>(ownerKey, 'GET', '/me/deleted-teams')).body.items,
+    ).toEqual([]);
+  });
+
+  it('restores from account settings (POST /teams/:id/restore) and tells the owner’s other tabs', async () => {
+    const { team } = await setup();
+    await call(ownerKey, 'DELETE', `/teams/${team.id}`);
+    events.length = 0;
+    const restored = await call<{ id: string }>(ownerKey, 'POST', `/teams/${team.id}/restore`);
+    expect(restored.status).toBe(200);
+    expect(events.map((event) => event.type)).toEqual(
+      expect.arrayContaining(['member.updated', 'me.updated']),
+    );
+    expect(events.find((event) => event.type === 'me.updated')?.userId).toBe(owner.id);
+  });
+});
+
+describe('projects ↔ admin: Trash', () => {
+  it('lists a deleted project in the team Trash and restores it by key over MCP', async () => {
+    const { team, project } = await setup();
+    expect((await call(ownerKey, 'DELETE', `/projects/${project.id}`)).status).toBe(200);
+
+    const trash = await call<{ items: Array<{ type: string; id: string; title: string }> }>(
+      ownerKey,
+      'GET',
+      `/teams/${team.id}/trash`,
+    );
+    expect(trash.body.items).toEqual([
+      expect.objectContaining({ type: 'project', id: project.id, title: 'Web App' }),
+    ]);
+    // The member didn't delete it and has no MANAGE_TRASH: nothing to see.
+    expect(
+      (await call<{ items: unknown[] }>(memberKey, 'GET', `/teams/${team.id}/trash`)).body.items,
+    ).toEqual([]);
+
+    const tool = await mcpAs(owner);
+    const restored = await tool('restore_item', { item: `${team.slug}/${project.key}` });
+    expect(restored.url).toBe(`${ctx.env.baseUrl}/t/${team.slug}/p/${project.key}`);
+    expect((await call(memberKey, 'GET', `/projects/${project.id}`)).status).toBe(200);
+  });
+
+  it('restores through the Trash page endpoint and records both sides in the audit log', async () => {
+    const { team, project } = await setup();
+    await call(ownerKey, 'DELETE', `/projects/${project.id}`);
+    const restored = await call<{ ok: boolean; url: string | null }>(
+      ownerKey,
+      'POST',
+      '/trash/restore',
+      {
+        type: 'project',
+        id: project.id,
+      },
+    );
+    expect(restored.body).toMatchObject({ ok: true, url: `/t/${team.slug}/p/${project.key}` });
+
+    const facets = await call<{ actions: string[]; entityTypes: string[] }>(
+      ownerKey,
+      'GET',
+      `/teams/${team.id}/audit-log/facets`,
+    );
+    expect(facets.body.actions).toEqual(
+      expect.arrayContaining([
+        'team.created',
+        'invite.created',
+        'member.joined',
+        'project.created',
+        'project.deleted',
+        'project.restored',
+      ]),
+    );
+    const log = await call<{ items: Array<{ action: string; url: string | null }> }>(
+      ownerKey,
+      'GET',
+      `/teams/${team.id}/audit-log?action=project.`,
+    );
+    expect(log.body.items.map((entry) => entry.action)).toEqual([
+      'project.restored',
+      'project.deleted',
+      'project.created',
+    ]);
+  });
+});
+
+describe('live events the web invalidates on', () => {
+  it('announces joins, projects and role changes to the team', async () => {
+    const { team, project } = await setup();
+    const types = events.map((event) => `${event.type}:${event.teamId === team.id}`);
+    expect(types).toEqual(
+      expect.arrayContaining([
+        'member.joined:true',
+        'invite.changed:true',
+        'project.created:true',
+        'activity.created:true',
+      ]),
+    );
+    events.length = 0;
+    const role = await call<{ id: string }>(ownerKey, 'POST', `/teams/${team.id}/roles`, {
+      name: 'Frontend',
+    });
+    await call(ownerKey, 'PUT', `/teams/${team.id}/members/${member.id}/roles/${role.body.id}`);
+    await call(ownerKey, 'PATCH', `/projects/${project.id}`, { name: 'Web' });
+    expect(events.map((event) => event.type)).toEqual(
+      expect.arrayContaining(['role.changed', 'member.updated', 'project.updated']),
+    );
+  });
+});

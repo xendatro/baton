@@ -259,7 +259,8 @@ describe('issues ↔ core and admin', () => {
       'GET',
       '/notifications',
     );
-    expect(mentioned.body.items.map((item) => item.type)).toEqual(['mention']);
+    // BAT-6: the owner's own reply went through their key, so it reaches their inbox too.
+    expect(mentioned.body.items.map((item) => item.type)).toEqual(['reply', 'mention']);
     const found = await call<{ results: Array<{ ref: string }> }>(
       ownerKey,
       'GET',
@@ -451,9 +452,13 @@ describe('wave B: issues ↔ tasks ↔ work', () => {
       title: `${issue.body.ref}: Search ignores accents`,
       viaKeyName: 'Claude on laptop',
     });
+    // BAT-6: the owner moved it through a key, so the owner (the task's author) hears too.
     expect(
-      events.filter((event) => event.type === 'notification.created').map((event) => event.userId),
-    ).toEqual([member.id]);
+      events
+        .filter((event) => event.type === 'notification.created')
+        .map((event) => event.userId)
+        .sort(),
+    ).toEqual([member.id, owner.id].sort());
     expect(events.map((event) => event.type)).toEqual(
       expect.arrayContaining(['task.updated', 'issue.updated']),
     );
@@ -525,7 +530,9 @@ describe('wave B: issues ↔ tasks ↔ work', () => {
       'GET',
       '/notifications',
     );
+    // BAT-6: the member's own "On it." went through their key, so it is in their inbox too.
     expect(inbox.body.items.map((item) => item.type)).toEqual([
+      'reply',
       'reply',
       'role_mention',
       'assigned',

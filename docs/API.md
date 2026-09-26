@@ -79,6 +79,7 @@ search and the audit log use core services, but their routes belong to admin.
 | `GET /api/subscriptions`              | `?entityType=issue\|task&entityId`                                                                                                                     | `{ subscribed }`                                                                                                                                                                                                                      | core                          |
 | `POST /api/subscriptions`             | `{ entityType, entityId, subscribed }`                                                                                                                 | `{ subscribed }`                                                                                                                                                                                                                      | core                          |
 | `GET /api/events`                     | – (SSE)                                                                                                                                                | stream of `LiveEvent`                                                                                                                                                                                                                 | core                          |
+| `GET /api/events/poll`                | `?cursor` (optional)                                                                                                                                   | `{ events: LiveEvent[], cursor, reset }` (long-poll, waits ≤ 25 s)                                                                                                                                                                    | core                          |
 
 `ApiKey` = `{ id, name, prefix, lastUsedAt, expiresAt, revokedAt, createdAt }`.
 
@@ -106,6 +107,8 @@ replies).
 - `GET /api/attachments/:id/:filename`: only PNG, JPEG, GIF and WebP whose bytes match are served
   `inline`; everything else, SVG and HTML included, is `attachment`. `Cache-Control: private,
 max-age=31536000, immutable`, an `ETag` (`If-None-Match` → 304) and `X-Content-Type-Options: nosniff`.
+  Scripts and agents download with `Authorization: Bearer bat_…` like any other endpoint (a plain
+  GET without a session cookie or key is `401`).
 
 ### `GET /api/events` (Server-Sent Events)
 
@@ -118,6 +121,18 @@ max-age=31536000, immutable`, an `ETag` (`If-None-Match` → 304) and `X-Content
   type to the TanStack Query keys it invalidates).
 - `parentType`/`parentId` name the parent item for `reply.*` and `attachment.changed`, and the
   entity the row is about for `activity.created`.
+- Right after the `retry` hint the server sends one `ready` event (`event: ready`, `data: {}`). The
+  web app waits up to 8 s after opening the stream for it; some proxies (Cloudflare quick tunnels)
+  pass the headers through but hold the body back, and then it long-polls instead (below).
+
+### `GET /api/events/poll` (long-poll fallback)
+
+- The same events as the stream, as ordinary JSON responses: `{ events, cursor, reset }`.
+- Without `cursor` it answers at once with `events: []` and a cursor to start from. With one it
+  answers as soon as there are events after it, or with `events: []` after 25 s. Pass the returned
+  `cursor` to the next poll.
+- `reset: true` means events may have been missed (the server restarted, or more than the last
+  1000 events went by): refetch everything. Cursors are opaque.
 
 ### Auth (`/api/auth/*`, Better Auth)
 
@@ -172,8 +187,16 @@ Conventions shared by every tool:
 - `list_replies` pages a thread (`limit`, `cursor`, `order` asc/desc → `{ item, total, nextCursor,
 replies }`); `get_activity` with `item` or `entityType` + `entityId` pages the history the same
   way. `add_reply` and `edit_reply` validate like REST (a whitespace-only body is `validation_failed`)
-  and return absolute file URLs. `get_attachment` returns the text of any file up to 256 KB whose
-  content is UTF-8 text (source files, diffs, logs), whatever its extension.
+  and return absolute file URLs. `wait_for_mentions` (`{ timeoutSeconds = 50, max 110 }`) returns
+  the replies that @mentioned the key's agent (`@claude`; `whoami.via.mentionHandle`) on tasks and
+  issues the key replied to or created, each once: at once when some are pending, else the first to
+  arrive within the timeout (`{ mentions: [{ item: { type, ref }, reply }] }`). `get_attachment` returns the text of any file up to 256 KB whose
+  content is UTF-8 text (source files, diffs, logs), whatever its extension. For PNG, JPEG, GIF and
+  WebP images it adds the picture as an MCP `image` content block after the JSON: as it is when it
+  fits 1568 px on the long side and 1 MB, else scaled down (PNG kept when it fits, JPEG otherwise;
+  animations keep their first frame). `image` in the JSON gives `{ mimeType, width, height,
+resized }` (null for other files). Its `downloadUrl` works with the same
+  `Authorization: Bearer bat_…` key.
 
 ## Feature endpoints
 

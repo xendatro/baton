@@ -1,6 +1,13 @@
 import { useQueryClient, type QueryClient, type QueryKey } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
-import { liveEventSchema, type LiveEvent, type LiveEventType } from '@shared/events';
+import {
+  liveEventSchema,
+  livePollResponseSchema,
+  type LiveEvent,
+  type LiveEventType,
+  type LivePollResponse,
+} from '@shared/events';
+import { api } from './api';
 import { queryKeys } from './queryKeys';
 
 /**
@@ -204,11 +211,31 @@ export function reconnectDelay(attempt: number, random: () => number = Math.rand
   return Math.round(base * (0.8 + random() * 0.4));
 }
 
+/**
+ * How long a new stream may take to deliver its `ready` event. Some proxies (Cloudflare quick
+ * tunnels) pass the SSE headers through but hold the body back, so the stream looks open and never
+ * delivers; without `ready` in time the client long-polls instead.
+ */
+export const LIVE_READY_TIMEOUT_MS = 8_000;
+
+/** One long-poll request (`GET /api/events/poll`); null cursor = "from now". */
+export type LivePoll = (cursor: string | null, signal: AbortSignal) => Promise<LivePollResponse>;
+
+const defaultPoll: LivePoll = (cursor, signal) =>
+  api.get('/api/events/poll', {
+    query: cursor ? { cursor } : undefined,
+    schema: livePollResponseSchema,
+    signal,
+    routeAuthErrors: false,
+  });
+
 export interface LiveConnectionOptions {
   queryClient: QueryClient;
   url?: string;
   /** Test seam: the EventSource constructor. */
   createEventSource?: (url: string) => EventSource;
+  /** Test seam: one long-poll request. */
+  poll?: LivePoll;
   onStateChange?: (state: LiveConnectionState) => void;
 }
 
@@ -217,6 +244,8 @@ export interface LiveConnectionOptions {
  * invalidations (batched, see `LIVE_INVALIDATION_DELAY_MS`) and handed to the listeners. When the
  * browser gives up on the stream (HTTP errors close it for good) it reconnects with backoff. After
  * a reconnect every query is invalidated, since events may have been missed while offline.
+ * If a stream's `ready` event doesn't arrive in time (a proxy that holds the stream back), it
+ * switches to long-polling `GET /api/events/poll` for the rest of the page's life (BAT-1).
  * Returns the close function.
  */
 export function connectLiveEvents(options: LiveConnectionOptions): () => void {
@@ -224,15 +253,18 @@ export function connectLiveEvents(options: LiveConnectionOptions): () => void {
     queryClient,
     url = '/api/events',
     createEventSource = (target) => new EventSource(target, { withCredentials: true }),
+    poll = defaultPoll,
     onStateChange,
   } = options;
   let source: EventSource | null = null;
   let timer: ReturnType<typeof setTimeout> | null = null;
+  let readyTimer: ReturnType<typeof setTimeout> | null = null;
   let attempt = 0;
   let hasConnected = false;
   let closed = false;
   let pendingKeys: QueryKey[] = [];
   let flushTimer: ReturnType<typeof setTimeout> | null = null;
+  const polling = new AbortController();
 
   const setState = (state: LiveConnectionState) => onStateChange?.(state);
 
@@ -248,6 +280,13 @@ export function connectLiveEvents(options: LiveConnectionOptions): () => void {
     flushTimer ??= setTimeout(flushInvalidations, LIVE_INVALIDATION_DELAY_MS);
   };
 
+  const handleEvent = (payload: unknown) => {
+    const parsed = liveEventSchema.safeParse(payload);
+    if (!parsed.success) return;
+    queueInvalidations(LIVE_INVALIDATIONS[parsed.data.type](parsed.data));
+    for (const listener of eventListeners) listener(parsed.data);
+  };
+
   const handleMessage = (message: MessageEvent<unknown>) => {
     if (typeof message.data !== 'string') return;
     let payload: unknown;
@@ -256,10 +295,12 @@ export function connectLiveEvents(options: LiveConnectionOptions): () => void {
     } catch {
       return;
     }
-    const parsed = liveEventSchema.safeParse(payload);
-    if (!parsed.success) return;
-    queueInvalidations(LIVE_INVALIDATIONS[parsed.data.type](parsed.data));
-    for (const listener of eventListeners) listener(parsed.data);
+    handleEvent(payload);
+  };
+
+  const clearReadyTimer = () => {
+    if (readyTimer !== null) clearTimeout(readyTimer);
+    readyTimer = null;
   };
 
   const scheduleReconnect = () => {
@@ -272,23 +313,67 @@ export function connectLiveEvents(options: LiveConnectionOptions): () => void {
     attempt += 1;
   };
 
+  /** Long-polls until closed; network and server errors back off like stream reconnects. */
+  async function pollLoop() {
+    let cursor: string | null = null;
+    let failures = 0;
+    // Events may have been missed while the stream looked open.
+    void queryClient.invalidateQueries();
+    while (!closed) {
+      try {
+        const result = await poll(cursor, polling.signal);
+        if (closed) return;
+        if (cursor !== null && result.reset) void queryClient.invalidateQueries();
+        if (failures > 0) void queryClient.invalidateQueries();
+        failures = 0;
+        cursor = result.cursor;
+        setState('open');
+        for (const payload of result.events) handleEvent(payload);
+      } catch {
+        if (closed) return;
+        setState('reconnecting');
+        await new Promise((resolve) => setTimeout(resolve, reconnectDelay(failures)));
+        failures += 1;
+      }
+    }
+  }
+
+  const switchToPolling = () => {
+    clearReadyTimer();
+    if (timer !== null) clearTimeout(timer);
+    timer = null;
+    source?.close();
+    source = null;
+    void pollLoop();
+  };
+
   function open() {
     if (closed) return;
     setState(hasConnected ? 'reconnecting' : 'connecting');
     const current = createEventSource(url);
     source = current;
+    clearReadyTimer();
+    readyTimer = setTimeout(() => {
+      if (source === current) switchToPolling();
+    }, LIVE_READY_TIMEOUT_MS);
     current.onopen = () => {
       attempt = 0;
       setState('open');
       if (hasConnected) void queryClient.invalidateQueries();
       hasConnected = true;
     };
+    current.addEventListener('ready', () => {
+      if (source === current) clearReadyTimer();
+    });
     current.onmessage = handleMessage;
     current.onerror = () => {
       // CONNECTING: the browser is retrying on its own (network blip). CLOSED: it gave up.
       if (current.readyState === EVENT_SOURCE_CLOSED) {
         current.close();
-        if (source === current) source = null;
+        if (source === current) {
+          source = null;
+          clearReadyTimer();
+        }
         scheduleReconnect();
       } else {
         setState('reconnecting');
@@ -302,6 +387,8 @@ export function connectLiveEvents(options: LiveConnectionOptions): () => void {
     closed = true;
     if (timer !== null) clearTimeout(timer);
     if (flushTimer !== null) clearTimeout(flushTimer);
+    clearReadyTimer();
+    polling.abort();
     source?.close();
     source = null;
   };

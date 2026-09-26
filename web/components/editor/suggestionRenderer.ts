@@ -33,6 +33,10 @@ export function suggestionRenderer<I extends SuggestionItem>(options: {
           props: toProps(props),
           editor: props.editor,
         });
+        // The popup is mounted on <body>: sit above modal dialogs and sheets (fixed z-50), and
+        // stay clickable while a modal Radix dialog sets `pointer-events: none` on body.
+        renderer.element.style.zIndex = '60';
+        renderer.element.style.pointerEvents = 'auto';
         unmount = props.mount(renderer.element);
       },
       onUpdate: (props) => renderer?.updateProps(toProps(props)),

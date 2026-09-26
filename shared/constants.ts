@@ -113,6 +113,13 @@ export const RESERVED_USERNAMES: ReadonlySet<string> = new Set([
   'user',
   'users',
   'www',
+  // @agent mention handles (BAT-6, shared/agents.ts).
+  'claude',
+  'codex',
+  'copilot',
+  'cursor',
+  'gemini',
+  'windsurf',
 ]);
 
 /** The 12-color palette offered for labels, statuses, roles, teams and projects. */

@@ -1,4 +1,5 @@
 import {
+  BellIcon,
   KeyRoundIcon,
   LinkIcon,
   PaletteIcon,
@@ -47,6 +48,12 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
     label: 'Appearance',
     icon: PaletteIcon,
     keywords: ['theme', 'dark mode', 'light mode'],
+  },
+  {
+    to: '/settings/notifications',
+    label: 'Notifications',
+    icon: BellIcon,
+    keywords: ['desktop notifications', 'sound', 'alerts', 'chime'],
   },
   {
     to: '/settings/security',

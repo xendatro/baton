@@ -52,8 +52,10 @@ export type NotifiedSet = Set<string>;
 const SNIPPET_LENGTH = 200;
 
 /**
- * Notifies `userIds` (members of the target's team only), skipping the actor and anyone in
- * `notified`. Returns the ids notified by this call and adds them to `notified`.
+ * Notifies `userIds` (members of the target's team only), skipping anyone in `notified` and the
+ * actor, unless the actor worked through an API key: an agent's replies and mentions reach the
+ * key's owner too, since the owner didn't write them (BAT-6). Returns the ids notified by this
+ * call and adds them to `notified`.
  */
 export function notifyUsers(
   tx: Tx,
@@ -64,7 +66,7 @@ export function notifyUsers(
   notified: NotifiedSet = new Set(),
 ): string[] {
   const candidates = [...new Set(userIds)].filter(
-    (id) => id !== actor?.userId && !notified.has(id),
+    (id) => (id !== actor?.userId || Boolean(actor.key)) && !notified.has(id),
   );
   if (candidates.length === 0) return [];
   const members = new Set(
@@ -89,6 +91,7 @@ export function notifyUsers(
     entityId: target.entityId,
     actorId: actor?.userId ?? null,
     viaKeyName: actor?.key?.name ?? null,
+    viaAgentName: actor?.key?.agentName ?? null,
     title: target.title,
     snippet,
     url: target.url,
@@ -235,6 +238,7 @@ function toNotifications(db: DbExecutor, rows: readonly NotificationRow[]): Noti
     entityId: row.entityId,
     actor: row.actorId ? (actors.get(row.actorId) ?? null) : null,
     viaKeyName: row.viaKeyName,
+    viaAgentName: row.viaAgentName,
     title: row.title,
     snippet: row.snippet,
     url: row.url,

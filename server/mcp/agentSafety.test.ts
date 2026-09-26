@@ -2,6 +2,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { eq } from 'drizzle-orm';
+import sharp from 'sharp';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import * as s from '../db/schema';
 import {
@@ -336,6 +337,81 @@ describe('MCP-06: get_attachment returns text for source files and diffs', () =>
       (await call<{ text: string | null }>(client, 'get_attachment', { attachment: files[1]?.id }))
         .text,
     ).toBe('export const x = 1;\n');
+  });
+});
+
+// BAT-5: an agent couldn't see a screenshot that was a bug report's only evidence.
+describe('BAT-5: get_attachment shows agents the image itself', () => {
+  const png = (width: number, height: number, noise = false) => {
+    const channels = 3;
+    const raw = Buffer.alloc(width * height * channels);
+    for (let i = 0; i < raw.length; i += 1) {
+      raw[i] = noise ? Math.floor(Math.random() * 256) : (i * 7) % 256;
+    }
+    return sharp(raw, { raw: { width, height, channels } }).png().toBuffer();
+  };
+
+  async function uploadImage(client: Client, filename: string, bytes: Buffer) {
+    return call<{ id: string; mimeType: string }>(client, 'upload_attachment', {
+      item: 'WEB-1',
+      filename,
+      contentBase64: bytes.toString('base64'),
+    });
+  }
+
+  async function getImage(client: Client, id: string) {
+    const result = await client.callTool({ name: 'get_attachment', arguments: { attachment: id } });
+    expect(result.isError, JSON.stringify(result.content)).toBeFalsy();
+    const blocks = result.content as Array<{ type: string; data?: string; mimeType?: string }>;
+    const image = blocks.find((block) => block.type === 'image');
+    return { json: result.structuredContent as Json, image };
+  }
+
+  it('returns a small image as it is', async () => {
+    const client = await connect(ethan);
+    await call(client, 'create_task', { project: 'WEB', title: 'Screenshot' });
+    const bytes = await png(40, 20);
+    const upload = await uploadImage(client, 'shot.png', bytes);
+    const { json, image } = await getImage(client, upload.id);
+    expect(image?.mimeType).toBe('image/png');
+    expect(Buffer.from(image?.data ?? '', 'base64').equals(bytes)).toBe(true);
+    expect(json.image).toEqual({ mimeType: 'image/png', width: 40, height: 20, resized: false });
+    expect(json.text).toBeNull();
+  });
+
+  it('scales big images down to 1568 px and 1 MB', async () => {
+    const client = await connect(ethan);
+    await call(client, 'create_task', { project: 'WEB', title: 'Screenshots' });
+    const wide = await uploadImage(client, 'wide.png', await png(3136, 400));
+    const shrunk = await getImage(client, wide.id);
+    expect(shrunk.json.image).toEqual({
+      mimeType: 'image/png',
+      width: 1568,
+      height: 200,
+      resized: true,
+    });
+    const shrunkMeta = await sharp(Buffer.from(shrunk.image?.data ?? '', 'base64')).metadata();
+    expect([shrunkMeta.width, shrunkMeta.height]).toEqual([1568, 200]);
+
+    // Noise doesn't compress: the PNG would stay over 1 MB, so it becomes a JPEG.
+    const noisy = await uploadImage(client, 'noise.png', await png(1400, 1000, true));
+    const jpeg = await getImage(client, noisy.id);
+    expect(jpeg.image?.mimeType).toBe('image/jpeg');
+    expect(Buffer.from(jpeg.image?.data ?? '', 'base64').length).toBeLessThanOrEqual(1_000_000);
+    expect(jpeg.json.image).toMatchObject({ mimeType: 'image/jpeg', resized: true });
+  });
+
+  it('sends no image for other files', async () => {
+    const client = await connect(ethan);
+    await call(client, 'create_task', { project: 'WEB', title: 'Notes' });
+    const text = await call<{ id: string }>(client, 'upload_attachment', {
+      item: 'WEB-1',
+      filename: 'notes.txt',
+      text: 'hello',
+    });
+    const { json, image } = await getImage(client, text.id);
+    expect(image).toBeUndefined();
+    expect(json).toMatchObject({ text: 'hello', image: null });
   });
 });
 

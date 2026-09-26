@@ -16,7 +16,13 @@ import {
   type TestContext,
   type UserRow,
 } from '../test/helpers';
-import { emitAfterCommit, emitEvent, subscribeUserEvents, type LiveEventInput } from './events';
+import {
+  emitAfterCommit,
+  emitEvent,
+  pollUserEvents,
+  subscribeUserEvents,
+  type LiveEventInput,
+} from './events';
 
 let ctx: TestContext;
 let alice: UserRow;
@@ -177,12 +183,17 @@ describe('GET /api/events (SSE)', () => {
     };
 
     await readUntil('retry: 3000');
+    // BAT-1: a `ready` event right away lets clients detect a proxy that holds the stream back.
+    await readUntil('event: ready');
+    expect(res.headers.get('cache-control')).toBe('no-cache, no-transform');
     await vi.waitFor(() => expect(ctx.deps.events.listenerCount).toBe(baseline + 1));
     emitEvent(ctx.deps, event({ teamId: teamB, entityId: 'hidden' }));
     emitEvent(ctx.deps, event({ entityId: 'visible' }));
     await readUntil('visible');
     const payloads = buffer
-      .split('\n')
+      .split('\n\n')
+      .filter((block) => !block.includes('event: ready'))
+      .flatMap((block) => block.split('\n'))
       .filter((line) => line.startsWith('data: '))
       .map((line) => liveEventSchema.parse(JSON.parse(line.slice(6))));
     expect(payloads.map((p) => p.entityId)).toEqual(['visible']);
@@ -238,5 +249,67 @@ describe('GET /api/events (SSE)', () => {
     ctx.db.orm.delete(s.session).where(eq(s.session.userId, alice.id)).run();
     emitEvent(ctx.deps, event({ entityId: 'after-sign-out' }));
     expect(await readToEnd(res)).not.toContain('after-sign-out');
+  });
+});
+
+// BAT-1: behind a proxy that buffers streamed responses the SSE stream never delivers, so the
+// web app long-polls instead.
+describe('GET /api/events/poll (long-poll fallback)', () => {
+  const poll = async (key: string, cursor?: string) => {
+    const query = cursor ? `?cursor=${encodeURIComponent(cursor)}` : '';
+    const res = await ctx.app.request(`/api/events/poll${query}`, { headers: bearer(key) });
+    expect(res.status).toBe(200);
+    return (await res.json()) as { events: LiveEvent[]; cursor: string; reset: boolean };
+  };
+
+  it('starts with a cursor, then returns only the caller’s events after it', async () => {
+    const { key } = createApiKey(ctx.db, { userId: alice.id });
+    const start = await poll(key);
+    expect(start).toMatchObject({ events: [], reset: false });
+
+    emitEvent(ctx.deps, event({ teamId: teamB, entityId: 'hidden' }));
+    emitEvent(ctx.deps, event({ entityId: 'first' }));
+    emitEvent(ctx.deps, event({ type: 'notification.created', userId: bob.id, entityId: 'bobs' }));
+    emitEvent(ctx.deps, event({ entityId: 'second' }));
+    const next = await poll(key, start.cursor);
+    expect(next.events.map((e) => e.entityId)).toEqual(['first', 'second']);
+    expect(next.reset).toBe(false);
+
+    emitEvent(ctx.deps, event({ entityId: 'third' }));
+    const after = await poll(key, next.cursor);
+    expect(after.events.map((e) => e.entityId)).toEqual(['third']);
+  });
+
+  it('waits for the next visible event when there is none yet', async () => {
+    const start = ctx.deps.events.since(null).cursor;
+    const pending = pollUserEvents(ctx.deps, alice.id, start, { waitMs: 5_000 });
+    emitEvent(ctx.deps, event({ teamId: teamB, entityId: 'hidden' }));
+    emitEvent(ctx.deps, event({ entityId: 'wake' }));
+    const result = await pending;
+    expect(result.events.map((e) => e.entityId)).toEqual(['wake']);
+  });
+
+  it('answers with no events when the wait runs out or the client goes away', async () => {
+    const start = ctx.deps.events.since(null).cursor;
+    const baseline = ctx.deps.events.listenerCount;
+    expect(await pollUserEvents(ctx.deps, alice.id, start, { waitMs: 10 })).toMatchObject({
+      events: [],
+      reset: false,
+    });
+    const controller = new AbortController();
+    const pending = pollUserEvents(ctx.deps, alice.id, start, { signal: controller.signal });
+    controller.abort();
+    expect((await pending).events).toEqual([]);
+    expect(ctx.deps.events.listenerCount).toBe(baseline);
+  });
+
+  it('flags a reset for a cursor from another server run', async () => {
+    const { key } = createApiKey(ctx.db, { userId: alice.id });
+    expect(await poll(key, 'deadbeef.3')).toMatchObject({ events: [], reset: true });
+  });
+
+  it('requires authentication', async () => {
+    const res = await ctx.app.request('/api/events/poll');
+    expect(res.status).toBe(401);
   });
 });

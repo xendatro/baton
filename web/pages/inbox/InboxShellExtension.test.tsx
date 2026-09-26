@@ -101,11 +101,14 @@ describe('InboxShellExtension', () => {
     );
     await new Promise((resolve) => setTimeout(resolve, 0));
     source?.emit({ ...created, entityId: 'n10' });
+    // BAT-2: it is looked up (for the chime), but the inbox shows it in place: no toast.
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.some(([input]) => requestUrl(input).startsWith('/api/notifications?')),
+      ).toBe(true),
+    );
     await new Promise((resolve) => setTimeout(resolve, 50));
-    // The notification is never looked up, so no toast can follow.
-    expect(
-      fetchMock.mock.calls.some(([input]) => requestUrl(input).startsWith('/api/notifications?')),
-    ).toBe(false);
+    expect(screen.queryByText('Ada Lovelace mentioned you')).not.toBeInTheDocument();
 
     // Elsewhere, the same listener toasts.
     await act(() => router.navigate('/my-tasks'));

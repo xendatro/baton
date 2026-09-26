@@ -22,6 +22,13 @@
       "when": 1790400900298,
       "tag": "0002_activity_facets",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1790460295874,
+      "tag": "0003_agent_identity",
+      "breakpoints": true
     }
   ]
 }

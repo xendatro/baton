@@ -3,9 +3,9 @@ import { useState } from 'react';
 import { toast } from 'sonner';
 import type { Reply } from '@shared/schemas/core';
 import { AttachmentList } from '@web/components/attachments/AttachmentList';
+import { ActorAvatar } from '@web/components/common/AgentAvatar';
 import { ConfirmDialog } from '@web/components/common/ConfirmDialog';
 import { RelativeTime } from '@web/components/common/RelativeTime';
-import { UserAvatar } from '@web/components/common/UserAvatar';
 import { UserName } from '@web/components/common/UserName';
 import { RichTextEditor } from '@web/components/editor/RichTextEditor';
 import { MarkdownView } from '@web/components/markdown/MarkdownView';
@@ -60,7 +60,12 @@ export function ReplyItem({ reply }: ReplyItemProps) {
       className="group/reply flex scroll-mt-20 gap-3 rounded-lg border bg-card p-3 outline-none"
       aria-label={`Reply by ${reply.author?.name ?? 'deleted user'}`}
     >
-      <UserAvatar user={reply.author} size="lg" className="mt-0.5" />
+      <ActorAvatar
+        user={reply.author}
+        agentName={reply.via?.agentName}
+        size="lg"
+        className="mt-0.5"
+      />
       <div className="min-w-0 flex-1 space-y-2">
         <header className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-sm">
           <UserName user={reply.author} via={reply.via} />

@@ -9,6 +9,8 @@ export interface ToolContext {
   deps: AppDeps;
   /** Always `{ source: 'mcp', key }` — MCP requires an API key. */
   actor: Actor;
+  /** Aborted when the HTTP request goes away (for tools that wait, like `wait_for_mentions`). */
+  signal?: AbortSignal;
 }
 
 export interface ToolDefinition<Input extends z.ZodObject> {
@@ -26,7 +28,10 @@ export interface ToolDefinition<Input extends z.ZodObject> {
    * system); a tool that isn't `readOnlyHint: true` must say whether it is destructive.
    */
   annotations?: ToolAnnotations;
-  /** Calls services only. Returns a JSON-serialisable value (sent as text + structuredContent). */
+  /**
+   * Calls services only. Returns a JSON-serialisable value (sent as text + structuredContent), or
+   * `withContent(value, blocks)` to add content blocks such as an image.
+   */
   handler: (ctx: ToolContext, input: z.output<Input>) => unknown;
 }
 
@@ -119,6 +124,21 @@ export function toolInput<Shape extends z.ZodRawShape>(shape: Shape) {
 // Results
 // ---------------------------------------------------------------------------------------------
 
+type ContentBlock = CallToolResult['content'][number];
+
+/** A handler result with extra MCP content blocks (such as an image) after the JSON text. */
+export class ToolReply {
+  constructor(
+    readonly value: unknown,
+    readonly content: readonly ContentBlock[],
+  ) {}
+}
+
+/** Returns `value` as usual (JSON text + structuredContent), followed by `content`. */
+export function withContent(value: unknown, content: readonly ContentBlock[]): ToolReply {
+  return new ToolReply(value, content);
+}
+
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -162,11 +182,13 @@ export async function toToolResult(
       'mcp tool call',
     );
   try {
-    const value = await run();
+    const result = await run();
+    const value = result instanceof ToolReply ? result.value : result;
+    const extra = result instanceof ToolReply ? result.content : [];
     const structuredContent = isPlainObject(value) ? value : { result: value ?? null };
     log('ok');
     return {
-      content: [{ type: 'text', text: JSON.stringify(value ?? null) }],
+      content: [{ type: 'text', text: JSON.stringify(value ?? null) }, ...extra],
       structuredContent,
     };
   } catch (error) {

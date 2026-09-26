@@ -11,6 +11,8 @@ import type { Logger } from './logger';
 export interface ActorKey {
   id: string;
   name: string;
+  /** The agent using the key ("Claude"), once an MCP client has introduced itself (BAT-6). */
+  agentName?: string | null;
 }
 
 /**

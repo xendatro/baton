@@ -1,6 +1,7 @@
 import { Avatar, AvatarFallback, AvatarImage } from '@web/components/ui/avatar';
 import { hueFromString, initials } from '@web/lib/format';
 import { cn } from '@web/lib/utils';
+import { AVATAR_SIZE_CLASSES } from './avatarSizes';
 
 export interface AvatarUser {
   id: string;
@@ -8,14 +9,6 @@ export interface AvatarUser {
   username?: string | null;
   image?: string | null;
 }
-
-const SIZES = {
-  xs: 'size-4',
-  sm: 'size-5',
-  md: 'size-6',
-  lg: 'size-8',
-  xl: 'size-12',
-} as const;
 
 /** Initials text per size (the fallback has its own text size, so it is set there). */
 const TEXT = {
@@ -26,7 +19,7 @@ const TEXT = {
   xl: 'text-base',
 } as const;
 
-export type AvatarSize = keyof typeof SIZES;
+export type AvatarSize = keyof typeof AVATAR_SIZE_CLASSES;
 
 export interface UserAvatarProps {
   /** Null renders a neutral placeholder for deleted users. */
@@ -40,7 +33,7 @@ export function UserAvatar({ user, size = 'md', className }: UserAvatarProps) {
   const label = user ? user.name || user.username || 'User' : 'Deleted user';
   const hue = user ? hueFromString(user.id) : 0;
   return (
-    <Avatar className={cn(SIZES[size], className)} aria-hidden="true" title={label}>
+    <Avatar className={cn(AVATAR_SIZE_CLASSES[size], className)} aria-hidden="true" title={label}>
       {user?.image ? <AvatarImage src={user.image} alt="" referrerPolicy="no-referrer" /> : null}
       <AvatarFallback
         className={cn('leading-none font-semibold tracking-tight text-white', TEXT[size])}
@@ -77,7 +70,7 @@ export function AvatarStack({ users, max = 3, size = 'md', className }: AvatarSt
         <span
           aria-hidden="true"
           className={cn(
-            SIZES[size],
+            AVATAR_SIZE_CLASSES[size],
             TEXT[size],
             'relative inline-flex shrink-0 items-center justify-center rounded-full bg-muted font-medium text-muted-foreground ring-2 ring-background',
           )}

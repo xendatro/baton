@@ -1,8 +1,9 @@
-import { BellOffIcon, CheckCheckIcon, CheckIcon, InboxIcon } from 'lucide-react';
-import { Fragment, useEffect, useRef } from 'react';
+import { BellOffIcon, BellRingIcon, CheckCheckIcon, CheckIcon, InboxIcon } from 'lucide-react';
+import { Fragment, useEffect, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router';
 import { toast } from 'sonner';
 import type { MeTeam, Notification } from '@shared/schemas/core';
+import { ActorAvatar } from '@web/components/common/AgentAvatar';
 import { EmptyState } from '@web/components/common/EmptyState';
 import { EntityIcon } from '@web/components/common/EntityIcon';
 import { ErrorState } from '@web/components/common/ErrorState';
@@ -10,13 +11,19 @@ import { PageContainer } from '@web/components/common/PageContainer';
 import { PageHeader } from '@web/components/common/PageHeader';
 import { RelativeTime } from '@web/components/common/RelativeTime';
 import { Spinner } from '@web/components/common/Spinner';
-import { UserAvatar } from '@web/components/common/UserAvatar';
 import { useNow } from '@web/components/common/useNow';
 import { useUnreadCount } from '@web/components/layout/useUnreadCount';
 import { Button } from '@web/components/ui/button';
 import { Skeleton } from '@web/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@web/components/ui/tabs';
 import { useMe } from '@web/lib/auth';
+import {
+  desktopPermission,
+  requestDesktopPermission,
+  setAlertPrefs,
+  useAlertPrefs,
+  type DesktopPermission,
+} from '@web/lib/desktopNotifications';
 import { useInView } from '@web/lib/useInView';
 import { cn } from '@web/lib/utils';
 import { TeamIcon } from '@web/pages/teams/TeamIcon';
@@ -47,15 +54,18 @@ export default function InboxPage() {
         title="Inbox"
         description="Mentions, assignments, replies and updates on your work."
         actions={
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={markAllRead}
-            disabled={unread === 0 || markRead.isPending}
-          >
-            <CheckCheckIcon aria-hidden="true" />
-            Mark all as read
-          </Button>
+          <>
+            <EnableDesktopNotifications />
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={markAllRead}
+              disabled={unread === 0 || markRead.isPending}
+            >
+              <CheckCheckIcon aria-hidden="true" />
+              Mark all as read
+            </Button>
+          </>
         }
       />
       <Tabs value={tab} onValueChange={setTab} className="gap-4">
@@ -236,9 +246,25 @@ function NotificationRow({ notification, teams, onRead }: NotificationRowProps) 
         >
           <span className="sr-only">{unread ? 'Unread: ' : ''}</span>
           <span className="flex min-w-0 flex-wrap items-center gap-x-1.5 text-sm text-muted-foreground">
-            <UserAvatar user={notification.actor} size="sm" />
-            <span className="font-medium text-foreground">{actorName(notification)}</span>
-            {notification.viaKeyName ? <span>via {notification.viaKeyName}</span> : null}
+            <ActorAvatar
+              user={notification.actor}
+              agentName={notification.viaAgentName}
+              size="sm"
+            />
+            {notification.viaAgentName ? (
+              // BAT-6: "Claude via Ethan's MSI".
+              <>
+                <span className="font-medium text-foreground">{notification.viaAgentName}</span>
+                <span>
+                  via {actorName(notification)}’s {notification.viaKeyName}
+                </span>
+              </>
+            ) : (
+              <>
+                <span className="font-medium text-foreground">{actorName(notification)}</span>
+                {notification.viaKeyName ? <span>via {notification.viaKeyName}</span> : null}
+              </>
+            )}
             <span>{kind.verb}</span>
           </span>
           <span
@@ -313,5 +339,32 @@ function InboxSkeleton() {
         </div>
       ))}
     </div>
+  );
+}
+
+/**
+ * BAT-2: offers desktop notifications until they're on or blocked (the browser asks on click;
+ * Settings → Notifications has the switch and the sound).
+ */
+function EnableDesktopNotifications() {
+  const prefs = useAlertPrefs();
+  const [permission, setPermission] = useState<DesktopPermission>(desktopPermission);
+  if (permission === 'unsupported' || permission === 'denied') return null;
+  if (prefs.desktop && permission === 'granted') return null;
+  return (
+    <Button
+      variant="ghost"
+      size="sm"
+      onClick={() =>
+        void requestDesktopPermission().then((result) => {
+          setPermission(result);
+          setAlertPrefs({ desktop: result === 'granted' });
+          if (result === 'granted') toast.success('Desktop notifications on');
+        })
+      }
+    >
+      <BellRingIcon aria-hidden="true" />
+      Enable desktop notifications
+    </Button>
   );
 }

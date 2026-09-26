@@ -2,9 +2,11 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js';
 import { Hono, type Context, type MiddlewareHandler } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
+import { agentNameFromClient } from '@shared/agents';
 import type { AppEnv } from '../context';
 import type { Env } from '../env';
 import { requireActor } from '../middleware/actor';
+import { recordKeyAgent } from '../services/apiKeys';
 import { byApiKey, rateLimit } from '../middleware/rateLimit';
 import { VERSION } from '../version';
 import { mcpAuth } from './auth';
@@ -71,11 +73,17 @@ mcpRoutes.post('/mcp', mcpBodyLimit, async (c) => {
       'Invalid Request: JSON-RPC batches are not supported; send one message per request',
     );
   }
+  // The client names itself only in `initialize`; the key remembers it for later requests.
+  const agentName = initializeAgentName(message);
+  if (agentName && actor.key) {
+    recordKeyAgent(c.var.deps, actor.key.id, agentName);
+    actor.key.agentName = agentName;
+  }
   const server = new McpServer(
     { name: 'baton', title: 'Baton', version: VERSION },
     { instructions: INSTRUCTIONS },
   );
-  registerTools(server, { deps: c.var.deps, actor });
+  registerTools(server, { deps: c.var.deps, actor, signal: c.req.raw.signal });
   const transport = new WebStandardStreamableHTTPServerTransport({
     sessionIdGenerator: undefined,
     enableJsonResponse: true,
@@ -87,6 +95,16 @@ mcpRoutes.post('/mcp', mcpBodyLimit, async (c) => {
     await server.close();
   }
 });
+
+/** The agent name of an `initialize` request's `clientInfo`, if the message is one. */
+function initializeAgentName(message: unknown): string | null {
+  if (typeof message !== 'object' || message === null) return null;
+  const { method, params } = message as { method?: unknown; params?: unknown };
+  if (method !== 'initialize' || typeof params !== 'object' || params === null) return null;
+  const { clientInfo } = params as { clientInfo?: unknown };
+  if (typeof clientInfo !== 'object' || clientInfo === null) return null;
+  return agentNameFromClient(clientInfo);
+}
 
 mcpRoutes.on(['GET', 'DELETE'], '/mcp', (c) =>
   c.json(

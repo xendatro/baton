@@ -6,11 +6,11 @@ import type { Attachment } from '@shared/schemas/core';
 import type { Issue } from '@shared/schemas/issues';
 import { AttachmentList } from '@web/components/attachments/AttachmentList';
 import { AttachmentUploader } from '@web/components/attachments/AttachmentUploader';
+import { ActorAvatar } from '@web/components/common/AgentAvatar';
 import { ConfirmDialog } from '@web/components/common/ConfirmDialog';
 import { Kbd } from '@web/components/common/Kbd';
 import { RelativeTime } from '@web/components/common/RelativeTime';
 import { Spinner } from '@web/components/common/Spinner';
-import { UserAvatar } from '@web/components/common/UserAvatar';
 import { UserName } from '@web/components/common/UserName';
 import { RichTextEditor } from '@web/components/editor/RichTextEditor';
 import { MarkdownView } from '@web/components/markdown/MarkdownView';
@@ -57,7 +57,7 @@ export function IssuePost({
       className="rounded-lg border bg-card"
     >
       <header className="flex flex-wrap items-center gap-x-2 gap-y-1 border-b px-4 py-2.5 text-sm">
-        <UserAvatar user={issue.author} size="md" />
+        <ActorAvatar user={issue.author} agentName={issue.via?.agentName} size="md" />
         <UserName user={issue.author} via={issue.via} />
         <span className="text-muted-foreground">opened</span>
         <RelativeTime value={issue.createdAt} className="text-sm" />

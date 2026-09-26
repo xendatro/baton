@@ -46,14 +46,25 @@ export class FakeEventSource {
   onmessage: ((event: MessageEvent<unknown>) => void) | null = null;
   onerror: ((event: Event) => void) | null = null;
   closed = false;
+  private readonly listeners = new Map<string, Array<(event: Event) => void>>();
 
   constructor(readonly url: string) {
     FakeEventSource.instances.push(this);
   }
 
-  open(): void {
+  addEventListener(type: string, listener: (event: Event) => void): void {
+    this.listeners.set(type, [...(this.listeners.get(type) ?? []), listener]);
+  }
+
+  /** Opens the stream; like the server, sends the `ready` event unless `ready` is false. */
+  open(ready = true): void {
     this.readyState = 1;
     this.onopen?.(new Event('open'));
+    if (ready) this.dispatch('ready');
+  }
+
+  dispatch(type: string): void {
+    for (const listener of this.listeners.get(type) ?? []) listener(new MessageEvent(type));
   }
 
   emit(data: unknown): void {

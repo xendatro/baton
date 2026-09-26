@@ -49,6 +49,8 @@ const DOCUMENTED_ADDITIONS = [
   'set_avatar',
   'remove_avatar',
   'get_security_log',
+  // core (DECISIONS 2026-09-26 BAT-6)
+  'wait_for_mentions',
 ].sort();
 
 let ctx: TestContext;

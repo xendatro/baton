@@ -5,6 +5,7 @@ import type { UserSummary, ViaKey } from '@shared/schemas/core';
 import { HoverCard, HoverCardContent, HoverCardTrigger } from '@web/components/ui/hover-card';
 import { useReadableTextColor } from '@web/lib/colors';
 import { cn } from '@web/lib/utils';
+import { ActorAvatar, AgentMark } from './AgentAvatar';
 import { UserAvatar, type AvatarSize } from './UserAvatar';
 
 export interface UserNameProps {
@@ -50,6 +51,23 @@ export function UserName({
       {user.name}
     </span>
   );
+  if (via?.agentName) {
+    // BAT-6: "Claude via Ethan's MSI" — the agent wrote it, through Ethan's key.
+    return (
+      <span className={cn('inline-flex min-w-0 items-center gap-1.5', className)}>
+        {avatar ? <ActorAvatar user={user} agentName={via.agentName} size={avatar} /> : null}
+        <span className="truncate font-medium text-foreground">{via.agentName}</span>
+        <span
+          className="inline-flex min-w-0 items-center gap-1 text-muted-foreground"
+          title={`Written by ${via.agentName}, an agent using ${user.name}’s API key “${via.keyName}”`}
+        >
+          <span>via</span>
+          {hovercard ? <UserHoverCard user={user}>{name}</UserHoverCard> : name}
+          <span className="-ml-1 truncate">’s {via.keyName}</span>
+        </span>
+      </span>
+    );
+  }
   return (
     <span className={cn('inline-flex min-w-0 items-center gap-1.5', className)}>
       {avatar ? <UserAvatar user={user} size={avatar} /> : null}
@@ -60,14 +78,21 @@ export function UserName({
 }
 
 export function ViaKeyLabel({ via, className }: { via: ViaKey; className?: string }) {
+  const agent = via.agentName ? `${via.agentName}, an agent` : 'an agent';
   return (
     <span
       className={cn('inline-flex min-w-0 items-center gap-1 text-muted-foreground', className)}
-      title={`Done by an agent using the API key “${via.keyName}”`}
+      title={`Done by ${agent} using the API key “${via.keyName}”`}
     >
       <span>via</span>
-      <BotIcon className="size-3.5 shrink-0" aria-label="agent" />
-      <span className="truncate">{via.keyName}</span>
+      {via.agentName ? (
+        <AgentMark agentName={via.agentName} className="size-3.5 shrink-0" />
+      ) : (
+        <BotIcon className="size-3.5 shrink-0" aria-label="agent" />
+      )}
+      <span className="truncate">
+        {via.agentName ? `${via.agentName} · ${via.keyName}` : via.keyName}
+      </span>
     </span>
   );
 }

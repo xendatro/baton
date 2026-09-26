@@ -32,8 +32,16 @@ export const userSummarySchema = z.object({
 });
 export type UserSummary = z.infer<typeof userSummarySchema>;
 
-/** The API key a write was made through ("ethan via Claude on laptop"). */
-export const viaKeySchema = z.object({ keyId: z.string(), keyName: z.string() });
+/**
+ * The API key a write was made through ("ethan via Claude on laptop"), and the agent last seen
+ * using it ("Claude"; null before an MCP client introduced itself), shown as "Claude via Ethan's
+ * <key>" (BAT-6).
+ */
+export const viaKeySchema = z.object({
+  keyId: z.string(),
+  keyName: z.string(),
+  agentName: z.string().nullable().optional(),
+});
 export type ViaKey = z.infer<typeof viaKeySchema>;
 
 /** Who did something. `user` is null for system actions and deleted accounts. */
@@ -96,6 +104,8 @@ export const notificationSchema = z.object({
   entityId: z.string(),
   actor: userSummarySchema.nullable(),
   viaKeyName: z.string().nullable(),
+  /** The agent behind the key ("Claude"), when known (BAT-6). */
+  viaAgentName: z.string().nullable().optional(),
   title: z.string(),
   snippet: z.string(),
   /** Relative app URL to open. */

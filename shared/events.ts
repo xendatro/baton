@@ -97,3 +97,19 @@ const PERSONAL_SET: ReadonlySet<LiveEventType> = new Set(PERSONAL_EVENT_TYPES);
 export function isPersonalEvent(event: Pick<LiveEvent, 'type'>): boolean {
   return PERSONAL_SET.has(event.type);
 }
+
+/** `GET /api/events/poll` (long-poll fallback for clients whose SSE stream never delivers). */
+export const livePollQuerySchema = z.object({
+  cursor: z.string().min(1).max(64).optional(),
+});
+
+export const livePollResponseSchema = z.object({
+  /** LiveEvents (validate each: a newer server may send types this client doesn't know). */
+  events: z.array(z.unknown()),
+  /** Pass back as `cursor` on the next poll. */
+  cursor: z.string(),
+  /** Events may have been missed (server restart, long gap): refetch everything. */
+  reset: z.boolean(),
+});
+
+export type LivePollResponse = z.infer<typeof livePollResponseSchema>;

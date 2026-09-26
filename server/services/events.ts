@@ -3,7 +3,7 @@ import { isPersonalEvent, type LiveEvent } from '@shared/events';
 import type { AppDeps } from '../context';
 import { queueLiveEvent, type Tx } from '../db';
 import * as s from '../db/schema';
-import { liveEvent } from '../lib/eventBus';
+import { liveEvent, type RecentEvents } from '../lib/eventBus';
 import { memberTeamIds } from './access';
 
 /**
@@ -43,20 +43,70 @@ export function subscribeUserEvents(
   userId: string,
   listener: (event: LiveEvent) => void,
 ): () => void {
-  let teams = new Set(memberTeamIds(deps.db.orm, userId));
-
+  const canSee = userEventFilter(deps, userId);
   return deps.events.subscribe((event) => {
-    if (isPersonalEvent(event) || event.teamId === null) {
-      if (event.userId === userId) listener(event);
-      return;
-    }
+    if (canSee(event)) listener(event);
+  });
+}
+
+/**
+ * Is `event` one `userId` may see? The filter remembers the user's teams, reloading them on
+ * member and team-deletion events (see `subscribeUserEvents`).
+ */
+export function userEventFilter(
+  deps: Pick<AppDeps, 'db'>,
+  userId: string,
+): (event: LiveEvent) => boolean {
+  let teams = new Set(memberTeamIds(deps.db.orm, userId));
+  return (event) => {
+    if (isPersonalEvent(event) || event.teamId === null) return event.userId === userId;
     let visible = teams.has(event.teamId);
     if (changesMembership(event)) {
       teams = new Set(memberTeamIds(deps.db.orm, userId));
       visible ||= teams.has(event.teamId);
     }
-    if (visible) listener(event);
+    return visible;
+  };
+}
+
+/** How long `GET /api/events/poll` waits for an event before answering with none. */
+export const POLL_WAIT_MS = 25_000;
+
+/**
+ * Long-poll fallback for clients whose SSE stream never delivers (a proxy that buffers streamed
+ * responses, such as a Cloudflare quick tunnel). Answers at once with the events `userId` may see
+ * after `cursor`; when there are none, waits up to `waitMs` for the next one. A null cursor
+ * answers at once with the current cursor, to start from.
+ */
+export async function pollUserEvents(
+  deps: Pick<AppDeps, 'db' | 'events'>,
+  userId: string,
+  cursor: string | null,
+  options: { waitMs?: number; signal?: AbortSignal } = {},
+): Promise<RecentEvents> {
+  const canSee = userEventFilter(deps, userId);
+  const visible = (batch: RecentEvents): RecentEvents => ({
+    ...batch,
+    events: batch.events.filter(canSee),
   });
+  const first = visible(deps.events.since(cursor));
+  if (cursor === null || first.reset || first.events.length > 0) return first;
+
+  const { waitMs = POLL_WAIT_MS, signal } = options;
+  await new Promise<void>((resolve) => {
+    let unsubscribe: () => void = () => undefined;
+    const finish = () => {
+      clearTimeout(timer);
+      unsubscribe();
+      signal?.removeEventListener('abort', finish);
+      resolve();
+    };
+    const timer = setTimeout(finish, waitMs);
+    signal?.addEventListener('abort', finish, { once: true });
+    unsubscribe = subscribeUserEvents(deps, userId, finish);
+    if (signal?.aborted) finish();
+  });
+  return visible(deps.events.since(cursor));
 }
 
 /** What an open event stream was authenticated with: an API key, or a web session. */

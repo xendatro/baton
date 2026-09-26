@@ -295,3 +295,50 @@ test('account deletion is blocked by an owned team, then deletes the account', a
     await client.dispose();
   }
 });
+
+// BAT-2: desktop notifications and the notification sound are per-device settings.
+test('turns on desktop notifications and the sound in Settings → Notifications', async ({
+  page,
+}) => {
+  // Headless Chromium always reports notifications as denied, so the browser's prompt is faked.
+  await page.addInitScript(() => {
+    // Kept across reloads, like a real browser's answer. (No DOM types in e2e/.)
+    const storage = (
+      globalThis as unknown as {
+        sessionStorage: {
+          getItem(key: string): string | null;
+          setItem(key: string, value: string): void;
+        };
+      }
+    ).sessionStorage;
+    class FakeNotification {
+      static get permission(): string {
+        return storage.getItem('fake-permission') === 'granted' ? 'granted' : 'default';
+      }
+      static requestPermission(): Promise<string> {
+        storage.setItem('fake-permission', 'granted');
+        return Promise.resolve('granted');
+      }
+    }
+    Object.defineProperty(globalThis, 'Notification', { value: FakeNotification });
+  });
+  await signedInUser(page);
+  await page.goto('/settings/notifications');
+  await expect(page.getByRole('heading', { name: 'Notifications', level: 2 })).toBeVisible();
+  const desktop = page.getByRole('switch', { name: 'Show desktop notifications' });
+  const sound = page.getByRole('switch', { name: 'Play a sound' });
+  await expect(desktop).not.toBeChecked();
+  await expect(sound).toBeChecked();
+
+  await desktop.click();
+  await expect(desktop).toBeChecked();
+  await sound.click();
+  await expect(sound).not.toBeChecked();
+  await page.reload();
+  await expect(page.getByRole('switch', { name: 'Show desktop notifications' })).toBeChecked();
+  await expect(page.getByRole('switch', { name: 'Play a sound' })).not.toBeChecked();
+
+  await page.goto('/inbox');
+  await expect(page.getByRole('heading', { name: 'Inbox' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Enable desktop notifications' })).toBeHidden();
+});

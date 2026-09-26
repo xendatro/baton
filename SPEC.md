@@ -412,7 +412,7 @@ soft-deletable rows have `deletedAt`, `deletedById`, `deletedViaKeyId`; every FK
 - Tool catalog (owner module in brackets):
   - [core] `whoami`, `search`, `list_notifications`, `mark_notifications_read`, `list_replies`,
     `add_reply`, `edit_reply`, `delete_reply`, `upload_attachment` (base64 or text content),
-    `list_attachments`, `get_attachment` (text content for text files, metadata + url otherwise),
+    `list_attachments`, `get_attachment` (text content for text files, the image itself for raster images, metadata + url otherwise),
     `delete_attachment`, `get_activity` (entity history, or team audit log if permitted),
     `subscribe`, `unsubscribe`
   - [teams] `list_teams`, `get_team`, `create_team`, `update_team`, `list_members`,

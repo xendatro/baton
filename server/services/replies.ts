@@ -23,6 +23,7 @@ import {
   requirePermission,
 } from './access';
 import { recordActivity } from './activity';
+import { recordAgentMentions } from './agentMentions';
 import { attachmentsByParent, attachToParent, referencedPendingUploads } from './attachments';
 import { emitAfterCommit } from './events';
 import { findItem, itemResolvers, requireItem, type ItemInfo } from './items';
@@ -299,6 +300,13 @@ export function insertReply(tx: Tx, actor: Actor, prepared: PreparedReply): Repl
   const notified = new Set<string>();
   notifyMentions(tx, actor, target, reply.body, { notified });
   notifyReply(tx, actor, { type: item.type, id: item.id }, target, notified);
+  recordAgentMentions(tx, actor, {
+    id: reply.id,
+    teamId: item.teamId,
+    parentType: item.type,
+    parentId: item.id,
+    body: reply.body,
+  });
   emitAfterCommit(tx, {
     type: 'reply.created',
     teamId: item.teamId,
@@ -372,6 +380,12 @@ export function editReply(
     const target = notificationTarget(item, id, next.body);
     refreshNotificationText(tx, target);
     notifyMentions(tx, actor, target, next.body, { previousBody: row.body });
+    recordAgentMentions(
+      tx,
+      actor,
+      { id, teamId: item.teamId, parentType: item.type, parentId: item.id, body: next.body },
+      row.body,
+    );
     emitAfterCommit(tx, {
       type: 'reply.updated',
       teamId: item.teamId,

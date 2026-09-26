@@ -5,6 +5,7 @@ import { LIMITS, type PriorityValue } from '@shared/constants';
 import type { Attachment, MeProject, MeTeam } from '@shared/schemas/core';
 import { createTaskInputSchema } from '@shared/schemas/tasks';
 import { AttachmentList } from '@web/components/attachments/AttachmentList';
+import { AttachmentUploader } from '@web/components/attachments/AttachmentUploader';
 import { FormError } from '@web/components/auth/FormField';
 import { EntityIcon } from '@web/components/common/EntityIcon';
 import { Kbd } from '@web/components/common/Kbd';
@@ -297,6 +298,10 @@ function TaskFields({
           onCreate={canManageLabels ? (name) => createLabel.mutateAsync({ name }) : undefined}
         />
         <DatePicker value={dueDate} onChange={setDueDate} />
+        <AttachmentUploader
+          teamId={team.id}
+          onUploaded={(attachment) => setAttachments((current) => [...current, attachment])}
+        />
       </div>
       <FormError message={formError} />
       <div className="flex flex-wrap items-center justify-between gap-3">

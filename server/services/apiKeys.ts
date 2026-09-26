@@ -1,4 +1,4 @@
-import { and, count, desc, eq, gt, isNull, lt, or } from 'drizzle-orm';
+import { and, count, desc, eq, gt, isNull, lt, ne, or } from 'drizzle-orm';
 import { LIMITS } from '@shared/constants';
 import type {
   ApiKey,
@@ -162,5 +162,24 @@ export function authenticateApiKey(
       )
       .run();
   }
-  return { userId: row.userId, key: { id: row.id, name: row.name } };
+  const key: ActorKey = { id: row.id, name: row.name };
+  if (row.agentName) key.agentName = row.agentName;
+  return { userId: row.userId, key };
+}
+
+/**
+ * Remembers which agent uses a key, from an MCP `initialize` (BAT-6). Not audited: it describes
+ * the client, like `lastUsedAt`, and changes only when a different agent connects.
+ */
+export function recordKeyAgent(deps: Pick<AppDeps, 'db'>, keyId: string, agentName: string): void {
+  deps.db.orm
+    .update(s.apiKey)
+    .set({ agentName })
+    .where(
+      and(
+        eq(s.apiKey.id, keyId),
+        or(isNull(s.apiKey.agentName), ne(s.apiKey.agentName, agentName)),
+      ),
+    )
+    .run();
 }

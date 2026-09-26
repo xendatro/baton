@@ -140,6 +140,14 @@ function TaskView({ task, team, project }: { task: Task; team: MeTeam; project: 
   const remove = useDeleteTask(project.id);
   const subscription = useTaskSubscription(task);
   const deleteAttachment = useDeleteAttachment({ type: 'task', id: task.id });
+  // Images shown inline in the description aren't listed again as files (as on issues).
+  const files = task.attachments.filter(
+    (attachment) => !(attachment.isImage && task.description.includes(attachment.url)),
+  );
+  const refreshTask = () =>
+    queryClient.invalidateQueries({
+      queryKey: queryKeys.tasks.detail(task.projectId, task.number),
+    });
   const claim = useClaimAction(task);
 
   const isAuthor = task.author?.id === viewerId;
@@ -684,20 +692,17 @@ function TaskView({ task, team, project }: { task: Task; team: MeTeam; project: 
                   teamId={team.id}
                   parentType="task"
                   parentId={task.id}
-                  onUploaded={() =>
-                    void queryClient.invalidateQueries({
-                      queryKey: queryKeys.tasks.detail(task.projectId, task.number),
-                    })
-                  }
+                  onUploaded={() => void refreshTask()}
                 />
               ) : null}
             </div>
-            {task.attachments.length ? (
+            {files.length ? (
               <AttachmentList
-                attachments={task.attachments}
+                attachments={files}
                 canDelete={(attachment) => access.canDelete(attachment.uploader?.id)}
                 onDelete={(attachment) =>
                   deleteAttachment.mutateAsync(attachment.id).then(() => {
+                    void refreshTask();
                     toast.success(`Moved ${attachment.filename} to Trash`);
                   })
                 }

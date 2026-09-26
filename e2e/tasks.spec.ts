@@ -125,6 +125,49 @@ test('creates tasks from the dialog and a column quick-add', async ({ page }) =>
   });
 });
 
+test('the slash menu opens above the New task dialog and is clickable (BAT-3)', async ({
+  page,
+}) => {
+  const project = await setup(page);
+  await page.goto(`${project.path}/tasks`);
+  await expect(page.getByRole('button', { name: 'Create a task' })).toBeVisible();
+  await page.keyboard.press('c');
+  const dialog = page.getByRole('dialog', { name: 'New task' });
+  await expect(dialog).toBeVisible();
+
+  await dialog.getByRole('textbox', { name: 'Description' }).click();
+  await page.keyboard.type('/');
+  const menu = page.getByRole('listbox', { name: 'Insert block' });
+  await expect(menu).toBeVisible();
+  // A real click lands on the menu (not the dialog underneath) and keeps the dialog open.
+  await menu.getByRole('option', { name: /Bulleted list/ }).click();
+  await expect(menu).toBeHidden();
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByRole('textbox', { name: 'Description' }).locator('ul')).toHaveCount(1);
+});
+
+test('attaches files from the New task dialog (BAT-4)', async ({ page }) => {
+  const project = await setup(page);
+  await page.goto(`${project.path}/tasks`);
+  await expect(page.getByRole('button', { name: 'Create a task' })).toBeVisible();
+  await page.keyboard.press('c');
+  const dialog = page.getByRole('dialog', { name: 'New task' });
+  await dialog.getByPlaceholder('Task title').fill('Ship the logs');
+
+  const chooser = page.waitForEvent('filechooser');
+  await dialog.getByRole('button', { name: 'Attach files' }).click();
+  await (
+    await chooser
+  ).setFiles({ name: 'build.log', mimeType: 'text/plain', buffer: Buffer.from('all green') });
+  await expect(dialog.getByText('build.log')).toBeVisible();
+  await dialog.getByRole('button', { name: 'Create task' }).click();
+  await expect(page.locator('[data-sonner-toast]', { hasText: 'Created RKT-1' })).toBeVisible();
+
+  await page.goto(`${project.path}/tasks/1`);
+  const files = page.locator('section', { has: page.getByRole('heading', { name: 'Files' }) });
+  await expect(files.getByText('build.log')).toBeVisible();
+});
+
 test('moves cards with the keyboard, within and between columns', async ({ page }) => {
   const project = await setup(page);
   for (const title of ['Alpha', 'Bravo', 'Charlie']) await createTask(page, project, { title });
@@ -368,4 +411,75 @@ test("shows an agent's claim with its key, live", async ({ page, playwright }) =
   } finally {
     await agent.dispose();
   }
+});
+
+// BAT-1: through a Cloudflare quick tunnel the event stream opened but never delivered, so pages
+// only changed on refresh. Holding the stream back here makes the app fall back to long-polling.
+test('updates live by long-polling when the event stream is held back', async ({ page }) => {
+  const project = await setup(page);
+  const task = await createTask(page, project, { title: 'Tune the tunnel' });
+  await page.route(/\/api\/events$/, () => {
+    // Never answer, like a proxy that buffers the whole stream.
+  });
+  const polled = page.waitForRequest(/\/api\/events\/poll/, { timeout: 20_000 });
+  await page.goto(task.path);
+  await expect(page.getByRole('heading', { name: 'Tune the tunnel' })).toBeVisible();
+  await polled;
+
+  const reply = await page.request.post('/api/replies', {
+    data: { parentType: 'task', parentId: task.id, body: 'Arrived without a refresh' },
+    headers: ORIGIN,
+  });
+  expect(reply.status(), await reply.text()).toBe(201);
+  await expect(page.getByText('Arrived without a refresh')).toBeVisible();
+});
+
+// BAT-6: an agent's reply reads "Claude via <owner>'s <key>" and lands in the owner's inbox.
+test("shows an agent's reply as the agent via its owner's key", async ({ page, playwright }) => {
+  const project = await setup(page);
+  const task = await createTask(page, project, { title: 'Agent identity' });
+  const created = await page.request.post('/api/me/api-keys', {
+    data: { name: 'MSI' },
+    headers: ORIGIN,
+  });
+  expect(created.status(), await created.text()).toBe(201);
+  const { key } = (await created.json()) as { key: string };
+
+  const agent = await playwright.request.newContext({
+    baseURL: E2E_BASE_URL,
+    extraHTTPHeaders: { Authorization: `Bearer ${key}` },
+  });
+  try {
+    const hello = await agent.post('/mcp', {
+      headers: { Accept: 'application/json, text/event-stream' },
+      data: {
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'initialize',
+        params: {
+          protocolVersion: '2025-06-18',
+          capabilities: {},
+          clientInfo: { name: 'claude-code', version: '2.1.0' },
+        },
+      },
+    });
+    expect(hello.status(), await hello.text()).toBe(200);
+    const reply = await agent.post('/api/replies', {
+      data: { parentType: 'task', parentId: task.id, body: 'Found the cause in the tunnel.' },
+    });
+    expect(reply.status(), await reply.text()).toBe(201);
+  } finally {
+    await agent.dispose();
+  }
+
+  await page.goto(task.path);
+  const item = page.getByRole('article', { name: /^Reply by / });
+  await expect(item.getByText('Found the cause in the tunnel.')).toBeVisible();
+  await expect(item.getByText('Claude', { exact: true })).toBeVisible();
+  await expect(item.getByText('’s MSI')).toBeVisible();
+  await item.screenshot({ path: 'test-results/bat-6-agent-reply.png' });
+
+  await page.goto('/inbox');
+  await expect(page.getByText(/via .*’s MSI/)).toBeVisible();
+  await page.screenshot({ path: 'test-results/bat-6-inbox.png' });
 });

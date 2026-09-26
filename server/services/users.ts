@@ -47,11 +47,20 @@ export function getViaKeys(
   const unique = [...new Set([...ids].filter((id): id is string => Boolean(id)))];
   if (unique.length === 0) return new Map();
   const rows = db
-    .select({ id: s.apiKey.id, name: s.apiKey.name })
+    .select({ id: s.apiKey.id, name: s.apiKey.name, agentName: s.apiKey.agentName })
     .from(s.apiKey)
     .where(inArray(s.apiKey.id, unique))
     .all();
-  return new Map(rows.map((row) => [row.id, { keyId: row.id, keyName: row.name }]));
+  return new Map(
+    rows.map((row) => [
+      row.id,
+      {
+        keyId: row.id,
+        keyName: row.name,
+        ...(row.agentName ? { agentName: row.agentName } : {}),
+      },
+    ]),
+  );
 }
 
 /** `GET /api/me`: the signed-in user, their teams (with effective permissions) and projects. */

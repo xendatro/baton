@@ -3,6 +3,7 @@ import path from 'node:path';
 import { and, asc, eq, inArray, isNull, sum } from 'drizzle-orm';
 import { fileTypeFromBuffer } from 'file-type';
 import mime from 'mime-types';
+import sharp from 'sharp';
 import type { AttachmentParentType } from '@shared/constants';
 import { LIMITS } from '@shared/constants';
 import type { Permission } from '@shared/permissions';
@@ -799,6 +800,77 @@ export function getAttachmentWithContent(
     downloadUrl: `${deps.env.baseUrl}${summary.url}`,
     text: inlineText(attachment, file),
   };
+}
+
+/** The copy of an image `get_attachment` shows agents fits these (what vision models take). */
+export const AGENT_IMAGE_MAX_SIDE = 1568;
+export const AGENT_IMAGE_MAX_BYTES = 1_000_000;
+
+export interface AgentImage {
+  /** Base64 bytes, for an MCP `image` content block. */
+  data: string;
+  mimeType: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp';
+  width: number;
+  height: number;
+  /** Downscaled or re-encoded to fit `AGENT_IMAGE_MAX_SIDE` / `AGENT_IMAGE_MAX_BYTES`. */
+  resized: boolean;
+}
+
+/**
+ * MCP `get_attachment` for an image: the picture itself, so agents can see screenshots (BAT-5).
+ * Images already within the limits go as they are; bigger ones are scaled down (PNG kept when it
+ * fits, JPEG otherwise; animations keep their first frame). Null for other files, or when the
+ * image can't be decoded.
+ */
+export async function getAgentImage(
+  deps: AppDeps,
+  actor: Actor,
+  id: string,
+): Promise<AgentImage | null> {
+  const { attachment, path: file } = getAttachmentFile(deps, actor, id);
+  if (!isInlineImage(attachment.mimeType)) return null;
+  const mimeType = attachment.mimeType as AgentImage['mimeType'];
+  try {
+    const bytes = await fs.promises.readFile(file);
+    const meta = await sharp(bytes).metadata();
+    const width = meta.width;
+    const height = meta.height;
+    if (bytes.length <= AGENT_IMAGE_MAX_BYTES && Math.max(width, height) <= AGENT_IMAGE_MAX_SIDE) {
+      return { data: bytes.toString('base64'), mimeType, width, height, resized: false };
+    }
+    const attempts: Array<{ side: number; format: 'png' | 'jpeg'; quality: number }> = [
+      ...(mimeType === 'image/png'
+        ? [{ side: AGENT_IMAGE_MAX_SIDE, format: 'png' as const, quality: 100 }]
+        : []),
+      { side: AGENT_IMAGE_MAX_SIDE, format: 'jpeg', quality: 82 },
+      { side: AGENT_IMAGE_MAX_SIDE, format: 'jpeg', quality: 65 },
+      { side: 1024, format: 'jpeg', quality: 65 },
+    ];
+    for (const attempt of attempts) {
+      const resized = sharp(bytes)
+        .rotate()
+        .resize(attempt.side, attempt.side, { fit: 'inside', withoutEnlargement: true })
+        .flatten(attempt.format === 'jpeg' ? { background: '#ffffff' } : false);
+      const { data, info } = await (
+        attempt.format === 'png'
+          ? resized.png({ compressionLevel: 9 })
+          : resized.jpeg({ quality: attempt.quality, mozjpeg: true })
+      ).toBuffer({ resolveWithObject: true });
+      if (data.length <= AGENT_IMAGE_MAX_BYTES) {
+        return {
+          data: data.toString('base64'),
+          mimeType: attempt.format === 'png' ? 'image/png' : 'image/jpeg',
+          width: info.width,
+          height: info.height,
+          resized: true,
+        };
+      }
+    }
+    return null;
+  } catch (error) {
+    deps.logger.warn({ err: error, attachmentId: id }, 'could not prepare image for an agent');
+    return null;
+  }
 }
 
 /**

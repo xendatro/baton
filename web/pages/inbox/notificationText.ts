@@ -77,12 +77,16 @@ export function actorName(notification: Pick<Notification, 'actor'>): string {
   return notification.actor?.name ?? 'Someone';
 }
 
-/** "Ada assigned you", "Ada via Claude on laptop replied". */
+/** "Ada assigned you", "Ada via Claude on laptop replied", "Claude via Ada’s MSI replied". */
 export function notificationSentence(
-  notification: Pick<Notification, 'actor' | 'viaKeyName' | 'type'>,
+  notification: Pick<Notification, 'actor' | 'viaKeyName' | 'viaAgentName' | 'type'>,
 ): string {
+  const verb = NOTIFICATION_KINDS[notification.type].verb;
+  if (notification.viaAgentName && notification.viaKeyName) {
+    return `${notification.viaAgentName} via ${actorName(notification)}’s ${notification.viaKeyName} ${verb}`;
+  }
   const via = notification.viaKeyName ? ` via ${notification.viaKeyName}` : '';
-  return `${actorName(notification)}${via} ${NOTIFICATION_KINDS[notification.type].verb}`;
+  return `${actorName(notification)}${via} ${verb}`;
 }
 
 export interface NotificationContext {

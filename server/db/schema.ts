@@ -160,6 +160,11 @@ export const apiKey = sqliteTable(
     lastUsedAt: timestamp('last_used_at'),
     expiresAt: timestamp('expires_at'),
     revokedAt: timestamp('revoked_at'),
+    /**
+     * The agent last seen using the key ("Claude", "Codex"), from the MCP client's `initialize`
+     * (BAT-6). Shown as "Claude via Ethan's <key>" and used for @claude mentions.
+     */
+    agentName: text('agent_name'),
     createdAt: createdAtColumn(),
   },
   (t) => [uniqueIndex('api_key_hash_unique').on(t.hash), index('api_key_user_idx').on(t.userId)],
@@ -705,6 +710,8 @@ export const notification = sqliteTable(
     entityId: text('entity_id').notNull(),
     actorId: text('actor_id').references(() => user.id, { onDelete: 'set null' }),
     viaKeyName: text('via_key_name'),
+    /** The key's agent at the time ("Claude"), when the action came through one. */
+    viaAgentName: text('via_agent_name'),
     title: text('title').notNull(),
     snippet: text('snippet').notNull().default(''),
     /** Relative app URL. */
@@ -717,6 +724,35 @@ export const notification = sqliteTable(
     index('notification_user_read_idx').on(t.userId, t.readAt),
     index('notification_team_idx').on(t.teamId),
     index('notification_actor_idx').on(t.actorId),
+  ],
+);
+
+/**
+ * An @agent mention waiting for its agent (BAT-6): a reply naming the agent of an API key
+ * (`@claude`) on a task or issue that key replied to or created. `wait_for_mentions` hands it
+ * to the agent once and sets `deliveredAt`.
+ */
+export const agentMention = sqliteTable(
+  'agent_mention',
+  {
+    id: idColumn(),
+    keyId: text('key_id')
+      .notNull()
+      .references(() => apiKey.id, { onDelete: 'cascade' }),
+    teamId: text('team_id')
+      .notNull()
+      .references(() => team.id, { onDelete: 'cascade' }),
+    replyId: text('reply_id')
+      .notNull()
+      .references(() => reply.id, { onDelete: 'cascade' }),
+    parentType: text('parent_type', { enum: ['issue', 'task'] }).notNull(),
+    parentId: text('parent_id').notNull(),
+    deliveredAt: timestamp('delivered_at'),
+    createdAt: createdAtColumn(),
+  },
+  (t) => [
+    index('agent_mention_key_idx').on(t.keyId, t.deliveredAt),
+    uniqueIndex('agent_mention_key_reply_unique').on(t.keyId, t.replyId),
   ],
 );
 

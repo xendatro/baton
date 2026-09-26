@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { agentHandle } from '@shared/agents';
 import {
   type ActivityEntityType,
   ACTIVITY_ENTITY_TYPES,
@@ -15,10 +16,12 @@ import { listAuditLog, listEntityActivityPage } from '../../services/activity';
 import { resolveAuditLogKey } from '../../services/admin';
 import {
   deleteAttachment,
+  getAgentImage,
   getAttachmentWithContent,
   listAttachments,
   uploadAttachmentContent,
 } from '../../services/attachments';
+import { MAX_MENTION_WAIT_SECONDS, waitForMentions } from '../../services/agentMentions';
 import { findItem } from '../../services/items';
 import { listNotifications, markNotificationsRead } from '../../services/notifications';
 import { resolveProject, resolveTeam, resolveUser } from '../../services/refs';
@@ -41,7 +44,7 @@ import {
   withAbsoluteUrls,
   withQualifiedRefs,
 } from '../util';
-import { defineTool, toolInput, type McpTool, type ToolContext } from './define';
+import { defineTool, toolInput, withContent, type McpTool, type ToolContext } from './define';
 
 /**
  * Core MCP tools (SPEC §5.1 [core]): whoami, search, notifications, replies, attachments,
@@ -88,7 +91,17 @@ const whoami = defineTool({
         name: me.user.name,
         email: me.user.email,
       },
-      via: ctx.actor.key ? { keyId: ctx.actor.key.id, keyName: ctx.actor.key.name } : null,
+      via: ctx.actor.key
+        ? {
+            keyId: ctx.actor.key.id,
+            keyName: ctx.actor.key.name,
+            agentName: ctx.actor.key.agentName ?? null,
+            // `@claude` in a reply on an item you replied to or created: see wait_for_mentions.
+            mentionHandle: ctx.actor.key.agentName
+              ? `@${agentHandle(ctx.actor.key.agentName)}`
+              : null,
+          }
+        : null,
       teams: me.teams.map((team) => ({
         id: team.id,
         slug: team.slug,
@@ -374,12 +387,27 @@ const getAttachment = defineTool({
   name: 'get_attachment',
   title: 'Get attachment',
   description:
-    'Metadata and download URL of an attachment; for text files up to 256 KB (source code, diffs, logs, anything uploaded as text) also the content.',
+    'Metadata and download URL of an attachment; for text files up to 256 KB (source code, diffs, logs, anything uploaded as text) also the content; for PNG, JPEG, GIF and WebP images the picture itself as image content (scaled down to at most 1568 px and 1 MB; `image` says its size). The download URL needs the same `Authorization: Bearer` API key.',
   input: toolInput({ attachment: z.string().min(1).describe('Attachment id') }),
   annotations: { readOnlyHint: true },
-  handler: (ctx, input) => {
+  handler: async (ctx, input) => {
     const attachment = getAttachmentWithContent(ctx.deps, ctx.actor, input.attachment);
-    return { ...attachment, url: toAbsolute(ctx.deps, attachment.url) };
+    const image = await getAgentImage(ctx.deps, ctx.actor, input.attachment);
+    const value = {
+      ...attachment,
+      url: toAbsolute(ctx.deps, attachment.url),
+      image: image
+        ? {
+            mimeType: image.mimeType,
+            width: image.width,
+            height: image.height,
+            resized: image.resized,
+          }
+        : null,
+    };
+    return image
+      ? withContent(value, [{ type: 'image', data: image.data, mimeType: image.mimeType }])
+      : value;
   },
 });
 
@@ -503,6 +531,41 @@ function subscriptionTool(name: 'subscribe' | 'unsubscribe') {
   });
 }
 
+const waitForMentionsTool = defineTool({
+  name: 'wait_for_mentions',
+  title: 'Wait for mentions',
+  description:
+    'Waits until someone @mentions your agent (e.g. @claude; `whoami` shows your handle) in a reply on a task or issue you replied to or created, and returns those replies (each one once). Returns at once when mentions are pending; otherwise waits up to timeoutSeconds. Call it again to keep listening.',
+  input: toolInput({
+    timeoutSeconds: z
+      .number()
+      .int()
+      .min(0)
+      .max(MAX_MENTION_WAIT_SECONDS)
+      .default(50)
+      .describe(
+        `Longest wait in seconds (default 50, max ${MAX_MENTION_WAIT_SECONDS}); 0 only checks`,
+      ),
+  }),
+  annotations: { readOnlyHint: true },
+  handler: async (ctx, input) => {
+    const { mentions } = await waitForMentions(ctx.deps, ctx.actor, input, ctx.signal);
+    return {
+      mentions: mentions.map(({ reply, parentType }) => ({
+        item: { type: parentType, ref: reply.ref },
+        reply: {
+          id: reply.id,
+          body: reply.body,
+          author: reply.author,
+          via: reply.via,
+          createdAt: reply.createdAt,
+          url: reply.url,
+        },
+      })),
+    };
+  },
+});
+
 export const coreTools: McpTool[] = [
   whoami,
   searchTool,
@@ -519,4 +582,5 @@ export const coreTools: McpTool[] = [
   getActivity,
   subscriptionTool('subscribe'),
   subscriptionTool('unsubscribe'),
+  waitForMentionsTool,
 ];

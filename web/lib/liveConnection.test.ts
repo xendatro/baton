@@ -5,7 +5,9 @@ import {
   coalesceQueryKeys,
   connectLiveEvents,
   LIVE_INVALIDATION_DELAY_MS,
+  LIVE_READY_TIMEOUT_MS,
   reconnectDelay,
+  type LivePoll,
   subscribeLiveEvents,
 } from './live';
 import { queryKeys } from './queryKeys';
@@ -24,11 +26,12 @@ let client: QueryClient;
 let close: () => void = () => undefined;
 let states: string[];
 
-function connect() {
+function connect(poll?: LivePoll) {
   states = [];
   close = connectLiveEvents({
     queryClient: client,
     createEventSource: (url) => new FakeEventSource(url) as unknown as EventSource,
+    poll,
     onStateChange: (state) => states.push(state),
   });
   return FakeEventSource.instances.at(-1) as FakeEventSource;
@@ -126,6 +129,75 @@ describe('connectLiveEvents', () => {
     expect(keys).toContain(JSON.stringify(queryKeys.work.all()));
     // Covered by work.all(): not invalidated a second time.
     expect(keys).not.toContain(JSON.stringify(queryKeys.work.dashboard()));
+  });
+
+  // BAT-1: a Cloudflare quick tunnel passed the SSE headers through and held back every event.
+  it('long-polls when the stream opens but never sends its ready event', async () => {
+    const responses = [
+      { events: [], cursor: 'b.1', reset: false },
+      { events: [event, { type: 'nope' }], cursor: 'b.3', reset: false },
+    ];
+    const cursors: Array<string | null> = [];
+    const poll: LivePoll = (cursor, signal) => {
+      cursors.push(cursor);
+      const next = responses.shift();
+      if (next) return Promise.resolve(next);
+      return new Promise((_, reject) =>
+        signal.addEventListener('abort', () => reject(new Error('aborted'))),
+      );
+    };
+    const source = connect(poll);
+    const listener = vi.fn();
+    const unsubscribe = subscribeLiveEvents(listener);
+    const me = queryKeys.me();
+    client.setQueryData(me, {});
+
+    source.open(false);
+    await vi.advanceTimersByTimeAsync(LIVE_READY_TIMEOUT_MS - 1);
+    expect(cursors).toEqual([]);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(source.closed).toBe(true);
+    // Everything refetches once (events may have been missed), then events arrive by polling.
+    expect(client.getQueryState(me)?.isInvalidated).toBe(true);
+    expect(cursors).toEqual([null, 'b.1', 'b.3']);
+    expect(listener).toHaveBeenCalledTimes(1);
+    expect(states.at(-1)).toBe('open');
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(FakeEventSource.instances).toHaveLength(1);
+    unsubscribe();
+  });
+
+  it('keeps the stream when its ready event arrives', async () => {
+    const poll = vi.fn<LivePoll>();
+    const source = connect(poll);
+    source.open();
+    await vi.advanceTimersByTimeAsync(LIVE_READY_TIMEOUT_MS * 2);
+    expect(poll).not.toHaveBeenCalled();
+    expect(source.closed).toBe(false);
+  });
+
+  it('refetches everything after a reset or a failed poll, backing off between failures', async () => {
+    let calls = 0;
+    const poll: LivePoll = (_cursor, signal) => {
+      calls += 1;
+      if (calls === 1) return Promise.resolve({ events: [], cursor: 'b.1', reset: false });
+      if (calls === 2) return Promise.reject(new Error('offline'));
+      if (calls === 3) return Promise.resolve({ events: [], cursor: 'c.0', reset: true });
+      return new Promise((_, reject) =>
+        signal.addEventListener('abort', () => reject(new Error('aborted'))),
+      );
+    };
+    const source = connect(poll);
+    source.open(false);
+    await vi.advanceTimersByTimeAsync(LIVE_READY_TIMEOUT_MS);
+    expect(calls).toBe(2);
+    expect(states.at(-1)).toBe('reconnecting');
+    const me = queryKeys.me();
+    client.setQueryData(me, {});
+    await vi.advanceTimersByTimeAsync(1300);
+    expect(calls).toBe(4);
+    expect(client.getQueryState(me)?.isInvalidated).toBe(true);
+    expect(states.at(-1)).toBe('open');
   });
 
   it('stops reconnecting once closed', () => {

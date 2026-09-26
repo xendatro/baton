@@ -112,7 +112,12 @@ describe('replies over REST', () => {
     });
     expect(activity?.meta).toMatchObject({ parentRef: 'API-1', parentTitle: 'Fix login' });
 
-    expect(events.map((event) => event.type).sort()).toEqual(['activity.created', 'reply.created']);
+    // BAT-6: the key's owner didn't write it, so the reply reaches their inbox too.
+    expect(events.map((event) => event.type).sort()).toEqual([
+      'activity.created',
+      'notification.created',
+      'reply.created',
+    ]);
     expect(events.find((event) => event.type === 'reply.created')).toMatchObject({
       parentType: 'task',
       parentId: task.id,

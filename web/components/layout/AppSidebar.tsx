@@ -175,111 +175,114 @@ export function AppSidebar() {
 
   return (
     <Sidebar collapsible="icon">
-      <SidebarHeader>
-        <SidebarMenu>
-          <SidebarMenuItem>
-            <SidebarMenuButton asChild size="lg" tooltip="Baton">
-              <Link
-                to="/"
-                onClick={() => setOpenMobile(false)}
-                aria-label="Baton home"
-                className="group-data-[collapsible=icon]:justify-center"
+      {/* One landmark for the whole sidebar: home, search, Inbox, My tasks, teams, account. */}
+      <nav aria-label="Main" className="flex min-h-0 w-full flex-1 flex-col">
+        <SidebarHeader>
+          <SidebarMenu>
+            <SidebarMenuItem>
+              <SidebarMenuButton asChild size="lg" tooltip="Baton">
+                <Link
+                  to="/"
+                  onClick={() => setOpenMobile(false)}
+                  aria-label="Baton home"
+                  className="group-data-[collapsible=icon]:justify-center"
+                >
+                  <LogoMark className="size-7! group-data-[collapsible=icon]:size-6!" />
+                  <span className="text-base font-semibold tracking-tight group-data-[collapsible=icon]:hidden">
+                    Baton
+                  </span>
+                </Link>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                tooltip="Search"
+                onClick={() => {
+                  setOpenMobile(false);
+                  openPalette();
+                }}
+                className="border bg-background text-muted-foreground shadow-xs group-data-[collapsible=icon]:border-0 group-data-[collapsible=icon]:bg-transparent group-data-[collapsible=icon]:shadow-none hover:text-foreground"
               >
-                <LogoMark className="size-7! group-data-[collapsible=icon]:size-6!" />
-                <span className="text-base font-semibold tracking-tight group-data-[collapsible=icon]:hidden">
-                  Baton
-                </span>
-              </Link>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-          <SidebarMenuItem>
-            <SidebarMenuButton
-              tooltip="Search"
-              onClick={() => {
-                setOpenMobile(false);
-                openPalette();
-              }}
-              className="border bg-background text-muted-foreground shadow-xs group-data-[collapsible=icon]:border-0 group-data-[collapsible=icon]:bg-transparent group-data-[collapsible=icon]:shadow-none hover:text-foreground"
-            >
-              <SearchIcon aria-hidden="true" />
-              <span>Search…</span>
-              <Kbd keys="mod+k" className="ml-auto group-data-[collapsible=icon]:hidden" />
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-        </SidebarMenu>
-      </SidebarHeader>
-      <SidebarContent>
-        <SidebarGroup>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              <NavLink
-                to="/inbox"
-                label="Inbox"
-                icon={InboxIcon}
-                active={pathname === '/inbox'}
-                badge={unread}
-                shortcut="g i"
-              />
-              <NavLink
-                to="/my-tasks"
-                label="My tasks"
-                icon={ListChecksIcon}
-                active={pathname === '/my-tasks'}
-                shortcut="g m"
-              />
-              <NavLink
-                to="/"
-                label="Dashboard"
-                icon={HomeIcon}
-                active={pathname === '/'}
-                shortcut="g d"
-              />
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
-        <SidebarGroup>
-          <SidebarGroupLabel>Teams</SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              {me.isPending ? (
-                [0, 1, 2].map((index) => (
-                  <SidebarMenuItem key={index}>
-                    <SidebarMenuSkeleton showIcon />
+                <SearchIcon aria-hidden="true" />
+                <span>Search…</span>
+                <Kbd keys="mod+k" className="ml-auto group-data-[collapsible=icon]:hidden" />
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          </SidebarMenu>
+        </SidebarHeader>
+        <SidebarContent>
+          <SidebarGroup>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                <NavLink
+                  to="/inbox"
+                  label="Inbox"
+                  icon={InboxIcon}
+                  active={pathname === '/inbox'}
+                  badge={unread}
+                  shortcut="g i"
+                />
+                <NavLink
+                  to="/my-tasks"
+                  label="My tasks"
+                  icon={ListChecksIcon}
+                  active={pathname === '/my-tasks'}
+                  shortcut="g m"
+                />
+                <NavLink
+                  to="/"
+                  label="Dashboard"
+                  icon={HomeIcon}
+                  active={pathname === '/'}
+                  shortcut="g d"
+                />
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+          <SidebarGroup>
+            <SidebarGroupLabel>Teams</SidebarGroupLabel>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                {me.isPending ? (
+                  [0, 1, 2].map((index) => (
+                    <SidebarMenuItem key={index}>
+                      <SidebarMenuSkeleton showIcon />
+                    </SidebarMenuItem>
+                  ))
+                ) : teams.length ? (
+                  teams.map((team) => <TeamItem key={team.id} team={team} pathname={pathname} />)
+                ) : (
+                  <li className="px-2 py-1.5 text-xs text-muted-foreground group-data-[collapsible=icon]:hidden">
+                    No teams yet. Create one, or ask a teammate for an invite link.
+                  </li>
+                )}
+                {canCreateTeam ? (
+                  <SidebarMenuItem>
+                    <SidebarMenuButton
+                      tooltip="New team"
+                      className="text-muted-foreground"
+                      onClick={() => {
+                        setOpenMobile(false);
+                        runShellAction('team.create');
+                      }}
+                    >
+                      <PlusIcon aria-hidden="true" />
+                      <span>New team</span>
+                    </SidebarMenuButton>
                   </SidebarMenuItem>
-                ))
-              ) : teams.length ? (
-                teams.map((team) => <TeamItem key={team.id} team={team} pathname={pathname} />)
-              ) : (
-                <li className="px-2 py-1.5 text-xs text-muted-foreground group-data-[collapsible=icon]:hidden">
-                  No teams yet. Create one, or ask a teammate for an invite link.
-                </li>
-              )}
-              {canCreateTeam ? (
-                <SidebarMenuItem>
-                  <SidebarMenuButton
-                    tooltip="New team"
-                    className="text-muted-foreground"
-                    onClick={() => {
-                      setOpenMobile(false);
-                      runShellAction('team.create');
-                    }}
-                  >
-                    <PlusIcon aria-hidden="true" />
-                    <span>New team</span>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              ) : null}
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
-      </SidebarContent>
-      <SidebarFooter>
-        <SidebarMenu>
-          <SidebarMenuItem>
-            <UserMenu />
-          </SidebarMenuItem>
-        </SidebarMenu>
-      </SidebarFooter>
+                ) : null}
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        </SidebarContent>
+        <SidebarFooter>
+          <SidebarMenu>
+            <SidebarMenuItem>
+              <UserMenu />
+            </SidebarMenuItem>
+          </SidebarMenu>
+        </SidebarFooter>
+      </nav>
       <SidebarRail />
     </Sidebar>
   );

@@ -49,6 +49,16 @@ test('the theme choice applies at once and survives a reload', async ({ page }) 
   await expect(html).not.toHaveClass(/dark/);
 });
 
+test('the sidebar is one navigation landmark (UX-15)', async ({ page }) => {
+  await openShell(page);
+  const nav = page.getByRole('navigation', { name: 'Main' });
+  await expect(nav.getByRole('link', { name: 'Baton home' })).toBeVisible();
+  await expect(nav.getByRole('button', { name: /^Search/ })).toBeVisible();
+  await expect(nav.getByRole('link', { name: /^Inbox/ })).toBeVisible();
+  await expect(nav.getByRole('link', { name: /^My tasks/ })).toBeVisible();
+  await expect(nav.getByRole('button', { name: 'Account menu' })).toBeVisible();
+});
+
 test('Ctrl+K opens the command palette', async ({ page }) => {
   await openShell(page);
   await page.keyboard.press('Control+k');

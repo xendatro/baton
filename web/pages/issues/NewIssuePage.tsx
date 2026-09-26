@@ -132,9 +132,9 @@ function NewIssueForm({ team, project }: { team: MeTeam; project: MeProject }) {
         aria-labelledby="new-issue-heading"
       >
         <div>
-          <h2 id="new-issue-heading" className="text-lg font-semibold tracking-tight">
+          <h1 id="new-issue-heading" className="text-lg font-semibold tracking-tight">
             New issue
-          </h2>
+          </h1>
           <p className="text-sm text-muted-foreground">
             Report a bug, ask a question or suggest an idea. Mention people with @.
           </p>

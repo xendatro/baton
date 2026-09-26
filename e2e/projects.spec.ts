@@ -139,6 +139,13 @@ test('manage statuses: add, set default, recategorize, reorder by keyboard, dele
   await page.goto(`/t/${team.slug}/p/BRD/settings/statuses`);
   await expect(page.getByRole('heading', { name: 'Statuses' })).toBeVisible();
   await expect(page.getByTestId('status-row')).toHaveCount(2);
+  // The rows are items of a real list inside the radio group (UX-15).
+  await expect(
+    page
+      .getByRole('radiogroup', { name: 'Default status for new tasks' })
+      .getByRole('list')
+      .getByRole('listitem'),
+  ).toHaveCount(2);
 
   await page.getByLabel('New status name').fill('In review');
   await page.getByRole('button', { name: 'Add status' }).click();

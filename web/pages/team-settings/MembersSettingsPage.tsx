@@ -33,6 +33,7 @@ import {
 } from '@web/components/ui/dropdown-menu';
 import { Input } from '@web/components/ui/input';
 import { Skeleton } from '@web/components/ui/skeleton';
+import { useReadableTextColor } from '@web/lib/colors';
 import { pluralize } from '@web/lib/format';
 import { queryKeys } from '@web/lib/queryKeys';
 import { useDocumentTitle } from '@web/lib/title';
@@ -176,6 +177,7 @@ interface MemberRowProps {
 }
 
 function MemberRow({ team, viewer, member, roles }: MemberRowProps) {
+  const nameColor = useReadableTextColor(member.color);
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const setRole = useSetMemberRole(team.id);
@@ -212,10 +214,7 @@ function MemberRow({ team, viewer, member, roles }: MemberRowProps) {
         <UserAvatar user={member.user} size="lg" />
         <div className="min-w-0">
           <p className="flex min-w-0 items-center gap-1.5">
-            <span
-              className="truncate text-sm font-medium"
-              style={member.color ? { color: member.color } : undefined}
-            >
+            <span className="truncate text-sm font-medium" style={nameColor}>
               {member.user.name}
             </span>
             {member.isOwner ? (

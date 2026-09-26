@@ -35,6 +35,11 @@ export interface PaletteSearchResult {
   icon?: LucideIcon;
   /** App path to open. */
   href: string;
+  /**
+   * Position in the provider's ranking across groups (0 = best). Groups are shown in the order
+   * of their best result, so the best match overall is on top and selected.
+   */
+  rank?: number;
 }
 
 export interface PaletteSearchProvider {

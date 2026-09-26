@@ -19,7 +19,8 @@
   --secondary: oklch(0.967 0.001 286.375);
   --secondary-foreground: oklch(0.21 0.006 285.885);
   --muted: oklch(0.967 0.001 286.375);
-  --muted-foreground: oklch(0.552 0.016 285.938);
+  /* Darker than zinc-500 so secondary text reaches AA on muted chips and tints too (UX-12). */
+  --muted-foreground: oklch(0.52 0.016 285.938);
   --accent: oklch(0.967 0.001 286.375);
   --accent-foreground: oklch(0.21 0.006 285.885);
   --destructive: oklch(0.577 0.245 27.325);
@@ -48,8 +49,13 @@
   --card-foreground: oklch(0.985 0 0);
   --popover: oklch(0.21 0.006 285.885);
   --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.585 0.233 277.117);
-  --primary-foreground: oklch(0.985 0 0);
+  /*
+   * indigo-400 with dark text: primary is both a button fill and a link/text color, and one
+   * indigo can't pass AA for white text and on the dark surfaces at once (indigo-500 was 4.4:1
+   * both ways). This one is 6.4:1 under zinc-950 text and 5.7–6.4:1 as text on cards/page (UX-08).
+   */
+  --primary: oklch(0.673 0.182 276.935);
+  --primary-foreground: oklch(0.141 0.005 285.823);
   --secondary: oklch(0.274 0.006 286.033);
   --secondary-foreground: oklch(0.985 0 0);
   --muted: oklch(0.274 0.006 286.033);
@@ -67,8 +73,8 @@
   --chart-5: oklch(0.645 0.246 16.439);
   --sidebar: oklch(0.175 0.005 285.823);
   --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.585 0.233 277.117);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-primary: oklch(0.673 0.182 276.935);
+  --sidebar-primary-foreground: oklch(0.141 0.005 285.823);
   --sidebar-accent: oklch(0.274 0.006 286.033);
   --sidebar-accent-foreground: oklch(0.985 0 0);
   --sidebar-border: oklch(1 0 0 / 10%);
@@ -136,16 +142,23 @@
   .markdown > * + * {
     @apply mt-3;
   }
-  .markdown h1 {
+  /* The editor renders h1–h4; MarkdownView renders lower tags with the markdown level's class. */
+  .markdown h1,
+  .markdown .md-h1 {
     @apply mt-6 text-xl font-semibold tracking-tight first:mt-0;
   }
-  .markdown h2 {
+  .markdown h2,
+  .markdown .md-h2 {
     @apply mt-5 text-lg font-semibold tracking-tight first:mt-0;
   }
-  .markdown h3 {
+  .markdown h3,
+  .markdown .md-h3 {
     @apply mt-4 text-base font-semibold first:mt-0;
   }
-  .markdown h4 {
+  .markdown h4,
+  .markdown .md-h4,
+  .markdown .md-h5,
+  .markdown .md-h6 {
     @apply mt-4 text-sm font-semibold first:mt-0;
   }
   .markdown a {

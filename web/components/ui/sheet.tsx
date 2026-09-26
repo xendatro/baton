@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { useReturnFocus } from '@web/lib/useReturnFocus';
 import { cn } from '@web/lib/utils';
 import { XIcon } from 'lucide-react';
 import { Dialog as SheetPrimitive } from 'radix-ui';
@@ -40,11 +41,14 @@ function SheetContent({
   children,
   side = 'right',
   showCloseButton = true,
+  onCloseAutoFocus,
   ...props
 }: React.ComponentProps<typeof SheetPrimitive.Content> & {
   side?: 'top' | 'right' | 'bottom' | 'left';
   showCloseButton?: boolean;
 }) {
+  // Closing returns focus to what was focused before, even without a SheetTrigger.
+  const returnFocus = useReturnFocus(onCloseAutoFocus);
   return (
     <SheetPortal>
       <SheetOverlay />
@@ -63,7 +67,9 @@ function SheetContent({
           className,
         )}
         {...props}
+        onCloseAutoFocus={returnFocus.onCloseAutoFocus}
       >
+        {returnFocus.capture}
         {children}
         {showCloseButton && (
           <SheetPrimitive.Close className="absolute top-4 right-4 rounded-xs opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:ring-2 focus:ring-ring focus:ring-offset-2 focus:outline-hidden disabled:pointer-events-none data-[state=open]:bg-secondary">

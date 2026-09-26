@@ -162,6 +162,7 @@ function TeamHome({ team }: { team: MeTeam }) {
           ) : overview.data.projects.length === 0 ? (
             <EmptyState
               icon={FolderKanbanIcon}
+              headingLevel={3}
               title="No projects yet"
               description={
                 canCreateProject

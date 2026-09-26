@@ -163,13 +163,14 @@ function Statuses({ teamId, projectId }: { teamId: string; projectId: string }) 
               items={items.map((status) => status.id)}
               strategy={verticalListSortingStrategy}
             >
+              {/* The radio group wraps the list (a radiogroup can't be the list itself: its items
+                  would lose their list parent). */}
               <RadioGroup
                 value={defaultId}
                 onValueChange={(id) => update.mutate({ id, input: { isDefault: true } })}
                 aria-label="Default status for new tasks"
                 disabled={!canManage}
                 className="gap-0"
-                asChild
               >
                 <ul>
                   {items.map((status) => (

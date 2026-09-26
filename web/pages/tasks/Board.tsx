@@ -7,7 +7,8 @@ import {
   DndContext,
   DragOverlay,
   KeyboardSensor,
-  PointerSensor,
+  MouseSensor,
+  TouchSensor,
   useDroppable,
   useSensor,
   useSensors,
@@ -25,7 +26,7 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { PlusIcon } from 'lucide-react';
-import { useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { Link } from 'react-router';
 import type { BoardColumn, BoardResponse, TaskCard } from '@shared/schemas/tasks';
 import { StatusIcon } from '@web/components/common/StatusBadge';
@@ -40,7 +41,17 @@ import { TaskCardBody } from './TaskCard';
  * The board (SPEC §1.9): a column per status, cards in board order. Cards are dragged within and
  * between columns with the mouse, touch or keyboard (focus a card, Space to pick it up, arrows to
  * move, Space to drop, Escape to cancel); Enter opens the task. Moves are optimistic.
+ *
+ * Touch drags start with a press-and-hold (TOUCH_DRAG_DELAY_MS), so a swipe still scrolls the board
+ * and its columns: a pointer sensor would lose every touch to the browser's pan gesture.
  */
+
+/** Hold time before a touch starts dragging a card, and how far the finger may drift meanwhile. */
+export const TOUCH_DRAG_DELAY_MS = 250;
+const TOUCH_DRAG_TOLERANCE_PX = 8;
+
+/** How long after a keyboard drop the moved card gets focus back as the board re-renders. */
+const REFOCUS_WINDOW_MS = 3000;
 
 /** Sizes the board to the rest of the viewport, so columns scroll on their own. */
 function useFillViewport() {
@@ -88,7 +99,10 @@ export function Board({ board, canMove, canCreate, onMove, onQuickAdd, filtered 
     [board],
   );
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(MouseSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(TouchSensor, {
+      activationConstraint: { delay: TOUCH_DRAG_DELAY_MS, tolerance: TOUCH_DRAG_TOLERANCE_PX },
+    }),
     useSensor(KeyboardSensor, {
       coordinateGetter: sortableKeyboardCoordinates,
       // Enter opens the task; Space picks it up and drops it.
@@ -96,6 +110,7 @@ export function Board({ board, canMove, canCreate, onMove, onQuickAdd, filtered 
     }),
   );
   const { ref, height } = useFillViewport();
+  const refocus = useRefocusMovedCard(ref);
 
   const describe = (id: UniqueIdentifier) => cards.get(String(id))?.ref ?? 'task';
   const place = (id: UniqueIdentifier) => {
@@ -173,7 +188,9 @@ export function Board({ board, canMove, canCreate, onMove, onQuickAdd, filtered 
     });
   };
 
-  const onDragEnd = ({ active, over }: DragEndEvent) => {
+  const onDragEnd = ({ active, over, activatorEvent }: DragEndEvent) => {
+    // A keyboard move re-renders the card in its new column (a new element), which drops focus.
+    if (activatorEvent instanceof KeyboardEvent) refocus(String(active.id));
     const before = layoutOf(board);
     let after = dragLayout ?? before;
     if (over) {
@@ -204,7 +221,8 @@ export function Board({ board, canMove, canCreate, onMove, onQuickAdd, filtered 
       onDragStart={onDragStart}
       onDragOver={onDragOver}
       onDragEnd={onDragEnd}
-      onDragCancel={() => {
+      onDragCancel={({ active, activatorEvent }) => {
+        if (activatorEvent instanceof KeyboardEvent) refocus(String(active.id));
         setActiveId(null);
         setDragLayout(null);
       }}
@@ -246,6 +264,34 @@ export function Board({ board, canMove, canCreate, onMove, onQuickAdd, filtered 
       </DragOverlay>
     </DndContext>
   );
+}
+
+/**
+ * Keeps focus on a card moved with the keyboard. The card is re-created in each column it passes
+ * through and again when the optimistic move lands, and focus falls to <body> each time the
+ * focused copy unmounts; for a moment after the drop, focus follows the card instead. Anything
+ * else the viewer focuses meanwhile wins.
+ */
+function useRefocusMovedCard(board: RefObject<HTMLElement | null>) {
+  const pending = useRef<{ id: string; until: number } | null>(null);
+  useLayoutEffect(() => {
+    const target = pending.current;
+    if (!target) return;
+    if (Date.now() > target.until) {
+      pending.current = null;
+      return;
+    }
+    const card = board.current?.querySelector<HTMLElement>(
+      `[data-task-id="${globalThis.CSS.escape(target.id)}"]`,
+    );
+    const active = document.activeElement;
+    const lost = !active || active === document.body;
+    if (card && card !== active && lost) card.focus();
+  });
+  // Every move of the card is a render of the board, so the effect above sees each one.
+  return (id: string) => {
+    pending.current = { id, until: Date.now() + REFOCUS_WINDOW_MS };
+  };
 }
 
 interface ColumnProps {
@@ -334,11 +380,15 @@ function SortableCard({ task, disabled }: { task: TaskCard; disabled: boolean })
       <Link
         ref={setNodeRef}
         to={task.path}
+        data-task-id={task.id}
         {...dragAttributes}
         {...listeners}
+        // Holding a card on a touch screen picks it up: no link menu over the drag.
+        onContextMenu={isDragging ? (event) => event.preventDefault() : undefined}
         className={cn(
           'block rounded-lg border bg-card p-3 shadow-xs transition-colors outline-none hover:border-foreground/20 focus-visible:ring-2 focus-visible:ring-ring',
-          !disabled && 'cursor-grab active:cursor-grabbing',
+          !disabled &&
+            'cursor-grab touch-manipulation select-none [-webkit-touch-callout:none] active:cursor-grabbing',
         )}
       >
         <TaskCardBody task={task} />

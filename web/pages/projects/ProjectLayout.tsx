@@ -81,7 +81,9 @@ function ProjectFrame({ team, project }: { team: MeTeam; project: MeProject }) {
   const queryClient = useQueryClient();
   const details = useProject(project.id);
   const base = `/t/${team.slug}/p/${project.key}`;
-  const section = pathname.slice(base.length).split('/')[1] ?? '';
+  const [section = '', item] = pathname.slice(base.length).split('/').slice(1);
+  // On a task or issue page (and New issue) the item is the page's h1; the project name is not.
+  const ProjectName = (section === 'tasks' || section === 'issues') && item ? 'p' : 'h1';
 
   // The project's counts and statuses change with its tasks, issues, statuses and labels.
   useLiveEventListener((event) => {
@@ -159,9 +161,9 @@ function ProjectFrame({ team, project }: { team: MeTeam; project: MeProject }) {
           />
           <div className="min-w-0 flex-1">
             <div className="flex min-w-0 items-center gap-2">
-              <h1 className="truncate text-lg leading-tight font-semibold tracking-tight sm:text-xl">
+              <ProjectName className="truncate text-lg leading-tight font-semibold tracking-tight sm:text-xl">
                 {project.name}
-              </h1>
+              </ProjectName>
               <span
                 className="shrink-0 rounded-md border bg-muted px-1.5 py-0.5 font-mono text-xs text-muted-foreground"
                 title="Project key"

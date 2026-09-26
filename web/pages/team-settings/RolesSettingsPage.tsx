@@ -34,6 +34,7 @@ import { Badge } from '@web/components/ui/badge';
 import { Button } from '@web/components/ui/button';
 import { Skeleton } from '@web/components/ui/skeleton';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@web/components/ui/tooltip';
+import { useReadableTextColor } from '@web/lib/colors';
 import { pluralize } from '@web/lib/format';
 import { useDocumentTitle } from '@web/lib/title';
 import { cn } from '@web/lib/utils';
@@ -195,6 +196,7 @@ function SortableRoleRow({
   draggable: boolean;
   showHandle: boolean;
 }) {
+  const nameColor = useReadableTextColor(role.color);
   const {
     attributes,
     listeners,
@@ -255,7 +257,7 @@ function SortableRoleRow({
         <Link
           to={`/t/${team.slug}/settings/roles/${role.id}`}
           className="truncate text-sm font-medium outline-none after:absolute after:inset-0 after:rounded-[inherit] focus-visible:after:ring-[3px] focus-visible:after:ring-ring/50"
-          style={role.color ? { color: role.color } : undefined}
+          style={nameColor}
         >
           {role.name}
         </Link>

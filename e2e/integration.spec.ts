@@ -121,7 +121,7 @@ test('an issue deleted from its page shows in Trash and the audit log, and resto
   await expect(page.locator('[data-sonner-toast]').getByText(/Restored HD#1/)).toBeVisible();
   await page.getByRole('button', { name: 'Open' }).click();
   await expect(page).toHaveURL(new RegExp(`/t/${team.slug}/p/HD/issues/1$`));
-  await expect(page.getByRole('heading', { level: 2, name: 'Printer on fire #1' })).toBeVisible();
+  await expect(page.getByRole('heading', { level: 1, name: 'Printer on fire #1' })).toBeVisible();
 });
 
 test('members see Trash but not the Audit log, and no New project without the permission', async ({
@@ -261,7 +261,7 @@ test('an issue becomes a task; finishing the task resolves the issue and tells i
   await expect(rows.first()).toContainText(/resolved/i);
 
   await page.goto(`/t/${team.slug}/p/SF/issues/1`);
-  await expect(page.getByRole('heading', { level: 2, name: /Coupon codes/ })).toBeVisible();
+  await expect(page.getByRole('heading', { level: 1, name: /Coupon codes/ })).toBeVisible();
   await expect(page.locator('#main').getByText('Resolved', { exact: true }).first()).toBeVisible();
   await expect(
     issueDetails.getByRole('link', { name: /SF-1\s*Coupon codes are case-sensitive/ }),

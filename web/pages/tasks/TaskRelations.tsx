@@ -28,6 +28,7 @@ import { useTeamAccess } from '@web/lib/permissions';
 import { queryKeys } from '@web/lib/queryKeys';
 import { useDebouncedValue } from '@web/lib/useDebouncedValue';
 import { cn } from '@web/lib/utils';
+import { IssueStateIcon } from '@web/pages/issues/IssueState';
 import { useTaskSearch } from './queries';
 
 /**
@@ -281,13 +282,8 @@ function IssueRow({
   return (
     <li className="group grid gap-1 py-1 text-sm">
       <div className="flex min-w-0 items-center gap-2">
-        <CircleDotIcon
-          className={cn(
-            'size-3.5 shrink-0',
-            issue.resolved ? 'text-violet-500' : 'text-emerald-600 dark:text-emerald-400',
-          )}
-          aria-label={issue.resolved ? 'Resolved' : 'Open'}
-        />
+        {/* The issues module's markers: shape and label, not just color, tell the states apart. */}
+        <IssueStateIcon resolved={issue.resolved} className="size-3.5" />
         <Link to={issue.path} className="flex min-w-0 items-center gap-1.5 hover:underline">
           <span className="shrink-0 font-mono text-xs text-muted-foreground">{issue.ref}</span>
           <span className={cn('truncate', issue.resolved && 'text-muted-foreground')}>

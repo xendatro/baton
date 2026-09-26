@@ -3,8 +3,10 @@ import { useEffect, useRef, useSyncExternalStore } from 'react';
 /**
  * Keyboard shortcuts (SPEC §1.9). Components register shortcuts with `useHotkey` for as long as
  * they are mounted, so a page's shortcuts exist only on that page and the `?` dialog lists exactly
- * what works right now. When two registrations share keys, the most recent one wins (a page can
- * shadow a global shortcut).
+ * what works right now. When two registrations share keys, the most recent one wins, except that
+ * an app-wide `fallback` registration (the shell's `/` opens the palette) always loses to any other
+ * registration of the same keys, whichever registered first: on a first page load React runs the
+ * page's effects before the shell's, so "most recent" alone would let the shell win there.
  *
  * Syntax: chords joined by spaces form a sequence (`g d`); a chord is modifiers plus a key joined
  * by `+` (`mod+k`, `shift+enter`, `?`, `escape`). `mod` is ⌘ on macOS and Ctrl elsewhere.
@@ -26,6 +28,11 @@ export interface HotkeyOptions {
   allowInDialogs?: boolean;
   /** Hide from the shortcuts dialog. */
   hidden?: boolean;
+  /**
+   * App-wide default: any other registration of the same keys shadows it, whatever the order of
+   * registration (and the shortcuts dialog then lists only the page's binding).
+   */
+  fallback?: boolean;
 }
 
 interface Chord {
@@ -126,12 +133,23 @@ let snapshot: RegisteredHotkey[] = [];
 let pending: { chords: Chord[]; at: number } | null = null;
 let installed = false;
 
+/** Keys bound by an enabled registration that is not a fallback. */
+function primaryKeys(): Set<string> {
+  const keys = new Set<string>();
+  for (const { options, keys: bound } of registrations.values()) {
+    if (!options.fallback && options.enabled !== false) keys.add(bound);
+  }
+  return keys;
+}
+
 function refreshSnapshot(): void {
   const seen = new Set<string>();
   const list: RegisteredHotkey[] = [];
+  const shadowing = primaryKeys();
   for (const registration of registrations.values()) {
     const { options, keys } = registration;
     if (options.hidden || options.enabled === false) continue;
+    if (options.fallback && shadowing.has(keys)) continue;
     const id = `${keys}\u0000${options.description}`;
     if (seen.has(id)) continue;
     seen.add(id);
@@ -153,9 +171,13 @@ function isActive(registration: Registration, event: KeyboardEvent): boolean {
   return true;
 }
 
-/** Newest registration first, so later registrations shadow earlier ones. */
+/** Newest registration first, so later registrations shadow earlier ones; fallbacks last. */
 function candidates(): Registration[] {
-  return [...registrations.values()].reverse();
+  const newestFirst = [...registrations.values()].reverse();
+  return [
+    ...newestFirst.filter(({ options }) => !options.fallback),
+    ...newestFirst.filter(({ options }) => options.fallback),
+  ];
 }
 
 function fire(registration: Registration, event: KeyboardEvent): void {
@@ -232,7 +254,7 @@ export function useHotkey(
   useEffect(() => {
     latest.current = handler;
   });
-  const { description, group, enabled, allowInInputs, allowInDialogs, hidden } = options;
+  const { description, group, enabled, allowInInputs, allowInDialogs, hidden, fallback } = options;
   useEffect(
     () =>
       registerHotkey(keys, (event) => latest.current(event), {
@@ -242,8 +264,9 @@ export function useHotkey(
         allowInInputs,
         allowInDialogs,
         hidden,
+        fallback,
       }),
-    [keys, description, group, enabled, allowInInputs, allowInDialogs, hidden],
+    [keys, description, group, enabled, allowInInputs, allowInDialogs, hidden, fallback],
   );
 }
 

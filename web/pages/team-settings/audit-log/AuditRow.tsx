@@ -178,7 +178,7 @@ export function AuditRow({ entry, projectName }: AuditRowProps) {
               </Fragment>
             ))}
             {projectName && entry.entityType !== 'project' ? (
-              <span className="ml-1.5 text-xs whitespace-nowrap text-muted-foreground/80">
+              <span className="ml-1.5 text-xs whitespace-nowrap text-muted-foreground">
                 · in {projectName}
               </span>
             ) : null}

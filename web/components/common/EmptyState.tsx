@@ -8,10 +8,23 @@ export interface EmptyStateProps {
   description?: ReactNode;
   /** Call to action (usually a Button). */
   action?: ReactNode;
+  /**
+   * Heading level of the title: 2 under a page's h1 (default), 3 inside a section with its own
+   * h2, so heading levels never skip.
+   */
+  headingLevel?: 2 | 3;
   className?: string;
 }
 
-export function EmptyState({ icon: Icon, title, description, action, className }: EmptyStateProps) {
+export function EmptyState({
+  icon: Icon,
+  title,
+  description,
+  action,
+  headingLevel = 2,
+  className,
+}: EmptyStateProps) {
+  const Heading = headingLevel === 3 ? 'h3' : 'h2';
   return (
     <div
       className={cn(
@@ -25,7 +38,7 @@ export function EmptyState({ icon: Icon, title, description, action, className }
         </span>
       ) : null}
       <div className="max-w-sm space-y-1">
-        <h3 className="text-sm font-semibold">{title}</h3>
+        <Heading className="text-sm font-semibold">{title}</Heading>
         {description ? <p className="text-sm text-muted-foreground">{description}</p> : null}
       </div>
       {action ? <div className="mt-1 flex flex-wrap justify-center gap-2">{action}</div> : null}

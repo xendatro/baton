@@ -15,7 +15,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { Command as CommandPrimitive } from 'cmdk';
-import { Fragment, useEffect, useState } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { Kbd } from '@web/components/common/Kbd';
 import { Spinner } from '@web/components/common/Spinner';
@@ -46,6 +46,8 @@ import {
 interface ProviderResults {
   id: string;
   group: string;
+  /** The query these results are for (the previous query's stay shown while the next loads). */
+  query: string;
   loading: boolean;
   results: PaletteSearchResult[];
 }
@@ -62,7 +64,15 @@ function useProviderSearch(query: string): ProviderResults[] {
     const active = providers.filter((provider) => trimmed.length >= (provider.minQueryLength ?? 2));
     const controller = new AbortController();
     const timer = setTimeout(() => {
-      setState(active.map((p) => ({ id: p.id, group: p.group, loading: true, results: [] })));
+      setState(
+        active.map((p) => ({
+          id: p.id,
+          group: p.group,
+          query: trimmed,
+          loading: true,
+          results: [],
+        })),
+      );
       for (const provider of active) {
         void provider
           .search(trimmed, controller.signal)
@@ -84,6 +94,34 @@ function useProviderSearch(query: string): ProviderResults[] {
   }, [providers, trimmed]);
 
   return trimmed ? state : [];
+}
+
+/** Groups with results in the order of their best-ranked result (unranked ones keep their place). */
+function byRank(search: ProviderResults[]): ProviderResults[] {
+  const best = (provider: ProviderResults) => provider.results[0]?.rank ?? Infinity;
+  return search
+    .map((provider, index) => ({ provider, index }))
+    .sort((a, b) => best(a.provider) - best(b.provider) || a.index - b.index)
+    .map(({ provider }) => provider);
+}
+
+/** cmdk value of a search result item. */
+const resultValue = (providerId: string, resultId: string) => `${providerId}.${resultId}`;
+
+/**
+ * The item to select once search results arrive: the first result, which the list shows above
+ * the commands. cmdk selects the best command as you type, but results are mounted later (and
+ * force-mounted, so cmdk never re-selects), which left Enter on a command below them or on
+ * nothing at all. Null while results are loading or when there are none.
+ */
+function firstResultValue(search: ProviderResults[], query: string): string | null {
+  const trimmed = query.trim();
+  if (search.some((provider) => provider.query !== trimmed || provider.loading)) return null;
+  for (const provider of search) {
+    const first = provider.results[0];
+    if (first) return resultValue(provider.id, first.id);
+  }
+  return null;
 }
 
 interface Entry {
@@ -122,7 +160,11 @@ function PaletteBody() {
   const canCreateTeam = useShellActionAvailable('team.create');
   const registered = useRegisteredCommands();
   const [query, setQuery] = useState('');
-  const search = useProviderSearch(query);
+  const search = byRank(useProviderSearch(query));
+  // The selection is controlled so it can move to the first search result when results arrive,
+  // unless the viewer already moved it (arrow keys or the pointer) for this query.
+  const [selected, setSelected] = useState('');
+  const movedByViewer = useRef(false);
 
   const run = (perform: () => void) => {
     setPaletteOpen(false);
@@ -241,6 +283,17 @@ function PaletteBody() {
     registeredGroups.set(command.group, [...(registeredGroups.get(command.group) ?? []), command]);
   }
 
+  // Typing a command's full name ("inbox", a project's name) and Enter runs that command, which
+  // cmdk selects; otherwise the first search result is selected once results arrive.
+  const typed = query.trim().toLowerCase();
+  const namesCommand = [...navigation, ...places, ...actions, ...registered].some(
+    (entry) => entry.label.toLowerCase() === typed,
+  );
+  const autoSelect = namesCommand ? null : firstResultValue(search, query);
+  useEffect(() => {
+    if (autoSelect && !movedByViewer.current) setSelected(autoSelect);
+  }, [autoSelect]);
+
   const renderEntry = (entry: Entry | PaletteCommand) => {
     const Icon = entry.icon;
     return (
@@ -265,16 +318,31 @@ function PaletteBody() {
       loop
       filter={commandFilter}
       vimBindings={false}
+      value={selected}
+      onValueChange={setSelected}
+      onKeyDown={(event) => {
+        if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
+          movedByViewer.current = true;
+        }
+      }}
       className="[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:text-xs"
     >
       <CommandInput
         value={query}
-        onValueChange={setQuery}
+        onValueChange={(next) => {
+          movedByViewer.current = false;
+          setQuery(next);
+        }}
         placeholder="Search or jump to…"
         aria-label="Search or jump to"
         className="h-12"
       />
-      <CommandList className="max-h-[min(60vh,26rem)]">
+      <CommandList
+        className="max-h-[min(60vh,26rem)]"
+        onPointerMove={() => {
+          movedByViewer.current = true;
+        }}
+      >
         {/* cmdk doesn't count force-mounted search results, so its empty state would show beside them. */}
         {search.some((provider) => provider.loading || provider.results.length > 0) ? null : (
           <CommandEmpty>No results.</CommandEmpty>
@@ -299,8 +367,8 @@ function PaletteBody() {
                 const Icon = result.icon;
                 return (
                   <CommandItem
-                    key={`${provider.id}.${result.id}`}
-                    value={`${provider.id}.${result.id}`}
+                    key={resultValue(provider.id, result.id)}
+                    value={resultValue(provider.id, result.id)}
                     keywords={[result.label]}
                     forceMount
                     onSelect={() => run(go(result.href))}

@@ -101,6 +101,33 @@ function MarkdownImage({ src, alt }: { src?: string; alt?: string }) {
   );
 }
 
+/**
+ * Markdown sits below the page's own headings (the page h1 and its section h2s), so a README's
+ * `# Title` must not become a second h1: `#` renders as an h3, `##` as an h4 and so on down to
+ * h6, each keeping the look of its markdown level (`.md-h1` … in globals.css).
+ */
+const HEADING_OFFSET = 2;
+
+function shiftedHeading(level: 1 | 2 | 3 | 4 | 5 | 6) {
+  const Tag = `h${Math.min(6, level + HEADING_OFFSET)}` as 'h3' | 'h4' | 'h5' | 'h6';
+  return function MarkdownHeading({
+    node: _node,
+    className,
+    ...props
+  }: ComponentProps<'h1'> & { node?: unknown }) {
+    return <Tag {...props} className={cn(`md-h${level}`, className)} />;
+  };
+}
+
+const headings: Components = {
+  h1: shiftedHeading(1),
+  h2: shiftedHeading(2),
+  h3: shiftedHeading(3),
+  h4: shiftedHeading(4),
+  h5: shiftedHeading(5),
+  h6: shiftedHeading(6),
+};
+
 export interface MarkdownViewProps {
   /** Markdown source. */
   markdown: string;
@@ -113,6 +140,7 @@ export function MarkdownView({ markdown, teamId, className }: MarkdownViewProps)
   const mentionables = useMentionables(teamId, markdown).data;
 
   const components: Components = {
+    ...headings,
     a: ({ href = '', children, node: _node, ...props }) => {
       if (href.startsWith('/') && !href.startsWith('//') && !href.startsWith('/api/')) {
         return (

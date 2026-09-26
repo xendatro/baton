@@ -33,7 +33,8 @@ function useGlobalHotkeys() {
     allowInInputs: true,
     allowInDialogs: true,
   });
-  useHotkey('/', () => setPaletteOpen(true), { description: 'Search' });
+  // Pages bind `/` to their own search field; the shell's binding only applies elsewhere.
+  useHotkey('/', () => setPaletteOpen(true), { description: 'Search', fallback: true });
   useHotkey('?', () => setShortcutsHelpOpen(true), { description: 'Show keyboard shortcuts' });
   useHotkey('g d', () => void navigate('/'), {
     description: 'Go to dashboard',

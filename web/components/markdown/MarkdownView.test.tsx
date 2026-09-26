@@ -46,6 +46,23 @@ describe('MarkdownView sanitization', () => {
 });
 
 describe('MarkdownView rendering', () => {
+  it('renders headings below the page’s h1 and section h2s, keeping their look (UX-15)', () => {
+    renderMarkdown(
+      ['# Web App', '## Setup', '### Details', '#### Deep', '###### Deepest'].join('\n\n'),
+    );
+    const levels = screen
+      .getAllByRole('heading')
+      .map((heading) => [heading.textContent, heading.tagName, heading.className]);
+    expect(levels).toEqual([
+      ['Web App', 'H3', 'md-h1'],
+      ['Setup', 'H4', 'md-h2'],
+      ['Details', 'H5', 'md-h3'],
+      ['Deep', 'H6', 'md-h4'],
+      ['Deepest', 'H6', 'md-h6'],
+    ]);
+    expect(screen.queryByRole('heading', { level: 1 })).toBeNull();
+  });
+
   it('opens external links in a new tab without an opener', () => {
     renderMarkdown('[docs](https://example.com) and [board](/t/acme/p/WEB/tasks)');
     const external = screen.getByRole('link', { name: 'docs' });

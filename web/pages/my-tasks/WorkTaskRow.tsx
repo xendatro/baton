@@ -49,7 +49,13 @@ export function WorkTaskRow({
           number={task.number}
           className="mt-0.5 hidden w-16 sm:mt-0 sm:inline"
         />
-        <StatusBadge status={task.status} iconOnly className="mt-0.5 sm:mt-0" />
+        {/* Phones name the status on the second line; wider screens next to the icon, since the
+            open statuses share one icon and would differ by color alone (SPEC §6). */}
+        <StatusBadge status={task.status} iconOnly className="mt-0.5 sm:hidden" />
+        <StatusBadge
+          status={task.status}
+          className="hidden w-28 shrink-0 text-xs text-muted-foreground sm:inline-flex"
+        />
         <span className="min-w-0 flex-1">
           <span className="flex min-w-0 items-center gap-2">
             <span className="truncate text-sm font-medium text-foreground group-hover:underline">

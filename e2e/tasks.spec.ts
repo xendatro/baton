@@ -140,16 +140,26 @@ test('moves cards with the keyboard, within and between columns', async ({ page 
       Open: ['Bravo', 'Alpha', 'Charlie'],
       Done: [],
     });
+  // The moved card keeps focus (UX-07).
+  await expect(open.getByRole('link', { name: /Alpha/ })).toBeFocused();
 
-  // Charlie to the Done column.
+  // Charlie to the Done column: the card is re-created there, and focus follows it.
   await keyboardMove(page, open.getByRole('link', { name: /Charlie/ }), 'ArrowRight');
-  await expect(column(page, 'Done').getByRole('link', { name: /Charlie/ })).toBeVisible();
+  const charlie = column(page, 'Done').getByRole('link', { name: /Charlie/ });
+  await expect(charlie).toBeVisible();
   await expect
     .poll(() => boardOrder(page, project))
     .toEqual({
       Open: ['Bravo', 'Alpha'],
       Done: ['Charlie'],
     });
+  await expect(charlie).toBeFocused();
+  // So the next move starts from where the last one ended, without tabbing back.
+  await page.keyboard.press('Space');
+  await announcement(page, /Picked up RKT-3 in Done/);
+  await page.keyboard.press('Escape');
+  await announcement(page, /Cancelled moving RKT-3/);
+  await expect(charlie).toBeFocused();
 
   await page.reload();
   await expect(column(page, 'Done').getByRole('link', { name: /Charlie/ })).toBeVisible();
@@ -158,6 +168,80 @@ test('moves cards with the keyboard, within and between columns', async ({ page 
   await page.keyboard.press('Enter');
   await expect(page).toHaveURL(new RegExp(`${project.path}/tasks/2$`));
   await expect(page.getByRole('heading', { level: 1, name: 'Bravo' })).toBeVisible();
+});
+
+test.describe('on a touch screen', () => {
+  test.use({ viewport: { width: 375, height: 812 }, isMobile: true, hasTouch: true });
+
+  /** Touches (CDP, as a finger would), optionally holding still before moving. */
+  async function touchDrag(
+    page: Page,
+    from: { x: number; y: number },
+    to: { x: number; y: number },
+    holdMs: number,
+  ) {
+    const cdp = await page.context().newCDPSession(page);
+    const touch = (
+      type: 'touchStart' | 'touchMove' | 'touchEnd',
+      point: { x: number; y: number },
+    ) =>
+      cdp.send('Input.dispatchTouchEvent', {
+        type,
+        touchPoints: type === 'touchEnd' ? [] : [{ x: point.x, y: point.y }],
+      });
+    await touch('touchStart', from);
+    if (holdMs) await page.waitForTimeout(holdMs);
+    const steps = 12;
+    for (let step = 1; step <= steps; step += 1) {
+      await touch('touchMove', {
+        x: from.x + ((to.x - from.x) * step) / steps,
+        y: from.y + ((to.y - from.y) * step) / steps,
+      });
+      await page.waitForTimeout(16);
+    }
+    await touch('touchEnd', to);
+    await cdp.detach();
+  }
+
+  const center = async (locator: ReturnType<Page['getByRole']>) => {
+    const box = await locator.boundingBox();
+    if (!box) throw new Error('not visible');
+    return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+  };
+
+  test('press and hold drags a card; a swipe still scrolls the board (UX-03)', async ({ page }) => {
+    const project = await setup(page);
+    for (const title of ['Alpha', 'Bravo']) await createTask(page, project, { title });
+    await page.goto(`${project.path}/tasks`);
+    const open = column(page, 'Open');
+    const alpha = open.getByRole('link', { name: /Alpha/ });
+    await expect(open.getByRole('link')).toHaveCount(2);
+
+    // Holding first picks the card up: Alpha goes below Bravo.
+    const from = await center(alpha);
+    const bravo = await center(open.getByRole('link', { name: /Bravo/ }));
+    await touchDrag(page, from, { x: from.x, y: bravo.y + 30 }, 400);
+    await expect
+      .poll(() => boardOrder(page, project))
+      .toEqual({
+        Open: ['Bravo', 'Alpha'],
+        Done: [],
+      });
+    await expect(page).toHaveURL(new RegExp(`${project.path}/tasks$`));
+    await expect(open.getByRole('link')).toHaveText([/Bravo/, /Alpha/]);
+
+    // A quick horizontal swipe on a card still pans the board to the next column.
+    // The e2e project has no DOM types: the board is read as a plain scroll box.
+    type ScrollBox = { scrollLeft: number };
+    const board = page.getByRole('region', { name: 'Board' });
+    const scrollLeft = () => board.evaluate((element) => (element as ScrollBox).scrollLeft);
+    expect(await scrollLeft()).toBe(0);
+    const start = await center(open.getByRole('link', { name: /Bravo/ }));
+    await touchDrag(page, start, { x: start.x - 200, y: start.y }, 0);
+    await expect.poll(scrollLeft).toBeGreaterThan(50);
+    expect(await boardOrder(page, project)).toEqual({ Open: ['Bravo', 'Alpha'], Done: [] });
+    await expect(page).toHaveURL(new RegExp(`${project.path}/tasks$`));
+  });
 });
 
 test('list view: toggles with b, sorts, groups and keeps filters in the URL', async ({ page }) => {

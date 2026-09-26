@@ -204,10 +204,10 @@ function IssueDetail({
           {editingTitle ? (
             <TitleEditor issue={issue} onClose={() => setEditingTitle(false)} />
           ) : (
-            <h2 className="min-w-0 grow basis-full text-xl leading-snug font-semibold tracking-tight break-words sm:basis-0 sm:text-2xl">
+            <h1 className="min-w-0 grow basis-full text-xl leading-snug font-semibold tracking-tight break-words sm:basis-0 sm:text-2xl">
               {issue.title}{' '}
               <span className="font-normal text-muted-foreground">#{issue.number}</span>
-            </h2>
+            </h1>
           )}
           {editingTitle ? null : (
             <div className="flex shrink-0 items-center gap-2">
@@ -289,10 +289,10 @@ function IssueDetail({
           aria-labelledby="issue-thread"
           className="grid min-w-0 content-start gap-4 [grid-area:thread]"
         >
-          <h3 id="issue-thread" className="flex items-center gap-2 text-sm font-semibold">
+          <h2 id="issue-thread" className="flex items-center gap-2 text-sm font-semibold">
             <MessagesSquareIcon className="size-4 text-muted-foreground" aria-hidden="true" />
             Conversation
-          </h3>
+          </h2>
           <Timeline parentType="issue" parentId={issue.id} />
           <ReplyComposer parentType="issue" parentId={issue.id} teamId={team.id} />
         </section>

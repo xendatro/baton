@@ -1,9 +1,10 @@
 import { sql } from 'drizzle-orm';
 import type { SearchEntityType } from '@shared/constants';
-import { formatIssueRef, formatTaskRef } from '@shared/refs';
+import { formatIssueRef, formatTaskRef, parseRef } from '@shared/refs';
 import type { SearchQuery, SearchResponse, SearchResult } from '@shared/schemas/core';
 import type { Actor, AppDeps } from '../context';
 import type { Tx } from '../db';
+import { excerpt } from '../lib/markdown';
 import { appPaths } from '../lib/urls';
 import { memberTeamIds } from './access';
 
@@ -77,10 +78,127 @@ interface SearchRow {
   item_title: string;
 }
 
+/** A search query that names tasks or issues by number (`WEB-14`, `WEB#7`, `acme/WEB-14`, `14`). */
+export interface RefQuery {
+  kinds: ('task' | 'issue')[];
+  teamSlug: string | null;
+  /** Null for a bare number, which matches that number in every project. */
+  projectKey: string | null;
+  number: number;
+}
+
+const MAX_ITEM_NUMBER = 999_999_999;
+
+/**
+ * Reads a query as a task or issue ref: `KEY-12` (task), `KEY#12` (issue), either with a
+ * `team-slug/` prefix, `KEY 12` (both), `#12` (issues) and `12` (both). Null for anything else.
+ */
+export function parseRefQuery(input: string): RefQuery | null {
+  const value = input.trim();
+  const bare = /^(#)?(\d{1,9})$/.exec(value);
+  if (bare) {
+    const number = Number(bare[2]);
+    if (number < 1 || number > MAX_ITEM_NUMBER) return null;
+    return {
+      kinds: bare[1] ? ['issue'] : ['task', 'issue'],
+      teamSlug: null,
+      projectKey: null,
+      number,
+    };
+  }
+  // `KEY 12` / `KEY #12`: people type the key and number apart too.
+  const spaced = /^((?:[a-z0-9]+(?:-[a-z0-9]+)*\/)?[a-z][a-z0-9]{1,5})\s+(#)?(\d{1,9})$/i.exec(
+    value,
+  );
+  const ref = parseRef(spaced ? `${spaced[1]}${spaced[2] ?? '-'}${spaced[3]}` : value);
+  if (!ref || ref.kind === 'project') return null;
+  return {
+    kinds: spaced && !spaced[2] ? ['task', 'issue'] : [ref.kind],
+    teamSlug: ref.teamSlug,
+    projectKey: ref.projectKey,
+    number: ref.number,
+  };
+}
+
+interface RefRow {
+  id: string;
+  team_id: string;
+  project_id: string;
+  number: number;
+  title: string;
+  text: string;
+  team_slug: string;
+  project_key: string;
+}
+
+/**
+ * The live tasks and issues a ref query names, in the given teams: the project key may be the
+ * current key or an old one (`project_key_alias`), as everywhere refs are accepted.
+ */
+function refMatches(
+  deps: AppDeps,
+  ref: RefQuery,
+  teamIds: readonly string[],
+  query: SearchQuery,
+): SearchResult[] {
+  const results: SearchResult[] = [];
+  for (const kind of ref.kinds) {
+    if (!query.types.includes(kind)) continue;
+    const table = kind === 'task' ? 'task' : 'issue';
+    const text = kind === 'task' ? 'item.description' : 'item.body';
+    const params: unknown[] = [ref.number, ...teamIds];
+    let where = '';
+    if (ref.projectKey) {
+      where += ` and (p.key = ? or exists (select 1 from project_key_alias a
+        where a.project_id = p.id and a.team_id = p.team_id and a.key = ?))`;
+      params.push(ref.projectKey, ref.projectKey);
+    }
+    if (ref.teamSlug) {
+      where += ' and t.slug = ?';
+      params.push(ref.teamSlug);
+    }
+    if (query.projectId) {
+      where += ' and item.project_id = ?';
+      params.push(query.projectId);
+    }
+    const rows = deps.db.sqlite
+      .prepare<unknown[], RefRow>(
+        `select item.id as id, item.team_id as team_id, item.project_id as project_id,
+          item.number as number, item.title as title, ${text} as text,
+          t.slug as team_slug, p.key as project_key
+        from ${table} item
+        join project p on p.id = item.project_id and p.deleted_at is null
+        join team t on t.id = item.team_id and t.deleted_at is null
+        where item.deleted_at is null and item.number = ?
+          and item.team_id in (${teamIds.map(() => '?').join(', ')})${where}
+        order by t.slug, p.key
+        limit ?`,
+      )
+      .all(...params, query.limit);
+    for (const row of rows) {
+      results.push({
+        entityType: kind,
+        entityId: row.id,
+        teamId: row.team_id,
+        projectId: row.project_id,
+        ref:
+          kind === 'task'
+            ? formatTaskRef(row.project_key, row.number)
+            : formatIssueRef(row.project_key, row.number),
+        title: row.title,
+        snippet: excerpt(row.text, 160),
+        url: appPaths[kind](row.team_slug, row.project_key, row.number),
+      });
+    }
+  }
+  return results;
+}
+
 /**
  * `GET /api/search`: matches in the caller's teams (optionally one team/project/types), best
- * first. Deleted items, replies of deleted items and anything in deleted projects or teams are
- * excluded.
+ * first. A query that is a task or issue ref (`WEB-14`, `WEB#7`, `acme/WEB-14`, `WEB 14`, `14`)
+ * puts the items it names first, then the full-text matches. Deleted items, replies of deleted
+ * items and anything in deleted projects or teams are excluded.
  */
 export function search(deps: AppDeps, actor: Actor, query: SearchQuery): SearchResponse {
   const match = buildFtsQuery(query.q);
@@ -88,6 +206,10 @@ export function search(deps: AppDeps, actor: Actor, query: SearchQuery): SearchR
   let teamIds = memberTeamIds(deps.db.orm, actor.userId);
   if (query.teamId) teamIds = teamIds.filter((id) => id === query.teamId);
   if (teamIds.length === 0 || query.types.length === 0) return { results: [] };
+
+  const refQuery = parseRefQuery(query.q);
+  const exact = refQuery ? refMatches(deps, refQuery, teamIds, query) : [];
+  const found = new Set(exact.map((result) => `${result.entityType}:${result.entityId}`));
 
   const placeholders = (values: readonly unknown[]) => values.map(() => '?').join(', ');
   const statement = deps.db.sqlite.prepare<unknown[], SearchRow>(`
@@ -129,8 +251,9 @@ export function search(deps: AppDeps, actor: Actor, query: SearchQuery): SearchR
     query.limit,
   );
 
-  return {
-    results: rows.map((row): SearchResult => {
+  const fullText = rows
+    .filter((row) => !found.has(`${row.entity_type}:${row.entity_id}`))
+    .map((row): SearchResult => {
       const itemPath = appPaths[row.item_type](row.team_slug, row.project_key, row.item_number);
       return {
         entityType: row.entity_type,
@@ -145,6 +268,6 @@ export function search(deps: AppDeps, actor: Actor, query: SearchQuery): SearchR
         snippet: row.snippet.replace(/\s+/g, ' ').trim(),
         url: row.entity_type === 'reply' ? appPaths.reply(itemPath, row.entity_id) : itemPath,
       };
-    }),
-  };
+    });
+  return { results: [...exact, ...fullText].slice(0, query.limit) };
 }

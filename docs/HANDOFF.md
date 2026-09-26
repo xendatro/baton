@@ -188,3 +188,12 @@ Later notes win over the module sections above where they disagree.
 - When a tool maps its parameters onto a shared REST schema, parse with `parseToolInput(schema, value, fieldNames)` so validation errors name the tool's parameters.
 - `refs.ts` resolvers throw messages that list valid values; `toToolResult` appends `AppError.details` (minus `issues`, `ref`, `candidates`, which the messages already carry) as JSON.
 - Paged reads for agents: `listReplyPage` (server/services/replies.ts), `listEntityActivityPage` (server/services/activity.ts) and `listMyTasks(…, { offset, limit })`.
+
+## UX fixes (UX-01 to UX-16)
+
+- A shell-wide shortcut that pages may override is registered with `useHotkey(keys, fn, { …, fallback: true })`; pages just use `useHotkey`. Don't rely on registration order.
+- Dialogs, alert dialogs and sheets return focus to their opener automatically (`web/lib/useReturnFocus.tsx` inside the ui wrappers). Only pass `onCloseAutoFocus` with `preventDefault()` when focus must go somewhere else.
+- Text drawn in an entity color (role-colored names) must use `useReadableTextColor(color)` or `readableTextColor(color, resolvedTheme)` from web/lib/colors.ts; never `style={{ color }}` with a raw user-picked color.
+- New theme tokens used for text should be added to the pairs in `web/styles/contrast.test.ts`.
+- Headings: a page has one h1 (the project name on project pages, the item on task/issue pages); `EmptyState` defaults to h2 (`headingLevel={3}` under a section h2); MarkdownView starts at h3.
+- Palette search providers may set `rank` on results (lower is better) to order the groups.

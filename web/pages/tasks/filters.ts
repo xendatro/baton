@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useMemo, useSyncExternalStore } from 'react';
 import { useSearchParams } from 'react-router';
 import {
   assigneeFilterSchema,
@@ -178,6 +178,27 @@ export function useTaskFilters() {
     [setParams],
   );
   return { filters, listOptions, setFilters, setListOptions };
+}
+
+// ---------------------------------------------------------------------------------------------
+// Last tasks view per project (in memory): Esc on a task page returns to it with its filters
+// ---------------------------------------------------------------------------------------------
+
+const lastTasksSearch = new Map<string, string>();
+
+/** Remembers the tasks view's query string (filters, list options) while it is shown. */
+export function useRememberTasksSearch(projectId: string): void {
+  const [params] = useSearchParams();
+  const search = params.toString();
+  useEffect(() => {
+    lastTasksSearch.set(projectId, search);
+  }, [projectId, search]);
+}
+
+/** The tasks view of a project as the viewer last left it: `/t/team/p/KEY/tasks?…`. */
+export function tasksViewPath(projectBase: string, projectId: string): string {
+  const search = lastTasksSearch.get(projectId);
+  return `${projectBase}/tasks${search ? `?${search}` : ''}`;
 }
 
 // ---------------------------------------------------------------------------------------------

@@ -24,7 +24,7 @@ export function DueDate({ value, done = false, className }: DueDateProps) {
         overdue
           ? 'font-medium text-red-600 dark:text-red-400'
           : dueToday
-            ? 'font-medium text-amber-600 dark:text-amber-400'
+            ? 'font-medium text-amber-700 dark:text-amber-400'
             : 'text-muted-foreground',
         className,
       )}

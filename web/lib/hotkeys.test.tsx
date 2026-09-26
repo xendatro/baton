@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { act, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -116,6 +117,22 @@ describe('matching', () => {
     expect(disabled).not.toHaveBeenCalled();
   });
 
+  it('lets any registration shadow a fallback, whichever registered first (UX-05)', () => {
+    // A first page load runs the page's effects before the shell's: the page registers first.
+    const page = register('/', 'Search issues');
+    const shell = register('/', 'Search', { fallback: true });
+    press('/');
+    expect(page).toHaveBeenCalledTimes(1);
+    expect(shell).not.toHaveBeenCalled();
+    // Without a page binding (or with it disabled) the fallback applies.
+    cleanups.shift()?.();
+    press('/');
+    expect(shell).toHaveBeenCalledTimes(1);
+    register('/', 'Filter', { enabled: false });
+    press('/');
+    expect(shell).toHaveBeenCalledTimes(2);
+  });
+
   it('recognises typing targets', () => {
     expect(isTypingTarget(document.createElement('input'))).toBe(true);
     const checkbox = document.createElement('input');
@@ -165,5 +182,30 @@ describe('useHotkey', () => {
       press('e');
     });
     expect(onFire).toHaveBeenCalledTimes(1);
+  });
+
+  it('lists only the page binding of a key the shell binds as a fallback', () => {
+    function Page() {
+      useHotkey('/', () => undefined, { description: 'Search issues', group: 'Issues' });
+      return null;
+    }
+    function Shell({ children }: { children: ReactNode }) {
+      useHotkey('/', () => undefined, { description: 'Search', fallback: true });
+      return children;
+    }
+    const { rerender } = render(
+      <Shell>
+        <Page />
+        <Help />
+      </Shell>,
+    );
+    expect(screen.getByText('Issues: Search issues')).toBeInTheDocument();
+    expect(screen.queryByText('General: Search')).not.toBeInTheDocument();
+    rerender(
+      <Shell>
+        <Help />
+      </Shell>,
+    );
+    expect(screen.getByText('General: Search')).toBeInTheDocument();
   });
 });

@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 import type { ActorSource } from '@shared/constants';
 import type { UserSummary, ViaKey } from '@shared/schemas/core';
 import { HoverCard, HoverCardContent, HoverCardTrigger } from '@web/components/ui/hover-card';
+import { useReadableTextColor } from '@web/lib/colors';
 import { cn } from '@web/lib/utils';
 import { UserAvatar, type AvatarSize } from './UserAvatar';
 
@@ -31,6 +32,8 @@ export function UserName({
   hovercard = true,
   className,
 }: UserNameProps) {
+  // Role colors are darkened (light theme) or lightened (dark theme) until the name is readable.
+  const colorStyle = useReadableTextColor(color);
   if (!user) {
     return (
       <span className={cn('inline-flex items-center gap-1.5 text-muted-foreground', className)}>
@@ -41,7 +44,7 @@ export function UserName({
   const name = (
     <span
       className="truncate font-medium text-foreground"
-      style={color ? { color } : undefined}
+      style={colorStyle}
       title={hovercard ? undefined : `@${user.username}`}
     >
       {user.name}

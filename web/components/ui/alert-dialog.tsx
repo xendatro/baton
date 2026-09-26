@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { useReturnFocus } from '@web/lib/useReturnFocus';
 import { cn } from '@web/lib/utils';
 import { AlertDialog as AlertDialogPrimitive } from 'radix-ui';
 
@@ -37,10 +38,14 @@ function AlertDialogOverlay({
 function AlertDialogContent({
   className,
   size = 'default',
+  onCloseAutoFocus,
+  children,
   ...props
 }: React.ComponentProps<typeof AlertDialogPrimitive.Content> & {
   size?: 'default' | 'sm';
 }) {
+  // Closing returns focus to what was focused before, even without an AlertDialogTrigger.
+  const returnFocus = useReturnFocus(onCloseAutoFocus);
   return (
     <AlertDialogPortal>
       <AlertDialogOverlay />
@@ -52,7 +57,11 @@ function AlertDialogContent({
           className,
         )}
         {...props}
-      />
+        onCloseAutoFocus={returnFocus.onCloseAutoFocus}
+      >
+        {returnFocus.capture}
+        {children}
+      </AlertDialogPrimitive.Content>
     </AlertDialogPortal>
   );
 }

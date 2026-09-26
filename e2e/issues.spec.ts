@@ -132,7 +132,7 @@ test('open an issue with a new label, then find it in the list', async ({ page }
   await expect(page).toHaveURL(new RegExp(`/t/${team.slug}/p/WEB/issues/2$`));
   await expect(page.locator('[data-sonner-toast]').getByText('Issue WEB#2 opened')).toBeVisible();
   await expect(
-    page.getByRole('heading', { level: 2, name: 'Export fails for large projects #2' }),
+    page.getByRole('heading', { level: 1, name: 'Export fails for large projects #2' }),
   ).toBeVisible();
   await expect(page.getByText('Exporting 5,000 tasks times out after 30 seconds.')).toBeVisible();
   const details = page.getByRole('complementary', { name: 'Issue details' });
@@ -196,7 +196,7 @@ test('edit, label, reply to, resolve and reopen an issue', async ({ page }) => {
   await title.press('Enter');
   await expect(page.locator('[data-sonner-toast]').getByText('Title updated')).toBeVisible();
   await expect(
-    page.getByRole('heading', { level: 2, name: 'Rate limit headers missing #1' }),
+    page.getByRole('heading', { level: 1, name: 'Rate limit headers missing #1' }),
   ).toBeVisible();
 
   // Edit the body.
@@ -244,6 +244,36 @@ test('edit, label, reply to, resolve and reopen an issue', async ({ page }) => {
   await expect(details.getByRole('button', { name: 'Subscribe' })).toBeVisible();
 });
 
+test('an unsent reply survives leaving the issue and coming back (UX-13)', async ({ page }) => {
+  const owner = await signedInUser(page);
+  const team = seedTeam(owner);
+  const project = await createProject(page, team, 'API');
+  const issue = await createIssue(page, project.id, { title: 'Draft keeper' });
+  const draft = 'draft text that should not vanish';
+
+  await page.goto(`/t/${team.slug}/p/API/issues/${issue.number}`);
+  const reply = page.getByRole('textbox', { name: 'Reply' });
+  await reply.click();
+  await page.keyboard.type(draft);
+  await page
+    .getByRole('navigation', { name: 'Project' })
+    .getByRole('link', { name: 'Issues' })
+    .click();
+  await expect(page).toHaveURL(new RegExp(`/t/${team.slug}/p/API/issues$`));
+  await page.goBack();
+  await expect(reply).toContainText(draft);
+  await page.reload();
+  await expect(reply).toContainText(draft);
+
+  // Once sent, the draft is gone.
+  await reply.click();
+  await page.keyboard.press('Control+Enter');
+  await expect(page.getByRole('article', { name: /Reply by/ })).toContainText(draft);
+  await page.reload();
+  await expect(page.getByRole('article', { name: /Reply by/ })).toContainText(draft);
+  await expect(reply).not.toContainText(draft);
+});
+
 test('delete an issue, then undo from the toast', async ({ page }) => {
   const owner = await signedInUser(page);
   const team = seedTeam(owner);
@@ -263,7 +293,7 @@ test('delete an issue, then undo from the toast', async ({ page }) => {
   const toast = page.locator('[data-sonner-toast]').filter({ hasText: 'DEL#1 moved to Trash' });
   await toast.getByRole('button', { name: 'Undo' }).click();
   await expect(page).toHaveURL(new RegExp(`/t/${team.slug}/p/DEL/issues/1$`));
-  await expect(page.getByRole('heading', { level: 2, name: 'Posted by mistake #1' })).toBeVisible();
+  await expect(page.getByRole('heading', { level: 1, name: 'Posted by mistake #1' })).toBeVisible();
 
   // A deleted issue's URL explains itself.
   await page.goto(`/t/${team.slug}/p/DEL/issues/99`);
@@ -294,7 +324,7 @@ test('members see only what their permissions allow, and the tasks addressing an
   const memberPage = other.page;
   await memberPage.goto(`/t/${team.slug}/p/SEC/issues/${issue.number}`);
   await expect(
-    memberPage.getByRole('heading', { level: 2, name: 'Owner’s issue #1' }),
+    memberPage.getByRole('heading', { level: 1, name: 'Owner’s issue #1' }),
   ).toBeVisible();
   const details = memberPage.getByRole('complementary', { name: 'Issue details' });
   await expect(

@@ -120,7 +120,9 @@ const searchTool = defineTool({
       .string()
       .min(LIMITS.searchQuery.min)
       .max(LIMITS.searchQuery.max)
-      .describe('Words to look for; every word must match (prefix matching)'),
+      .describe(
+        'Words to look for (every word must match, prefix matching), or a task/issue ref (KEY-12, KEY#51, team/KEY-12, 12) whose items come first',
+      ),
     team: z.string().optional().describe('Limit to a team (slug or id)'),
     project: z.string().optional().describe('Limit to a project (KEY, team-slug/KEY or id)'),
     types: z

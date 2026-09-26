@@ -34,7 +34,9 @@ import { Switch } from '@web/components/ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@web/components/ui/tabs';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@web/components/ui/tooltip';
 import { errorMessage } from '@web/lib/api';
+import { readableTextColor } from '@web/lib/colors';
 import { pluralize } from '@web/lib/format';
+import { useTheme } from '@web/lib/theme';
 import { useDocumentTitle } from '@web/lib/title';
 import { cn } from '@web/lib/utils';
 import {
@@ -590,6 +592,7 @@ function MembersTab({
   const members = useMembers(team.id);
   const setRole = useSetMemberRole(team.id);
   const [query, setQuery] = useState('');
+  const { resolvedTheme } = useTheme();
   if (members.isPending) {
     return (
       <div className="space-y-2">
@@ -684,7 +687,11 @@ function MembersTab({
                 <div className="min-w-0 flex-1">
                   <p
                     className="truncate text-sm font-medium"
-                    style={member.color ? { color: member.color } : undefined}
+                    style={
+                      member.color
+                        ? { color: readableTextColor(member.color, resolvedTheme) }
+                        : undefined
+                    }
                   >
                     {member.user.name}
                   </p>

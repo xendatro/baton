@@ -19,7 +19,7 @@ import {
   type UserRow,
 } from '../test/helpers';
 import { createReply } from './replies';
-import { buildFtsQuery, indexSearch, removeFromSearch, search } from './search';
+import { buildFtsQuery, indexSearch, parseRefQuery, removeFromSearch, search } from './search';
 
 let ctx: TestContext;
 let user: UserRow;
@@ -179,5 +179,88 @@ describe('search', () => {
     expect(
       (await ctx.app.request('/api/search?q=x&limit=51', { headers: bearer(key) })).status,
     ).toBe(400);
+  });
+});
+
+describe('search by ref (UX-04)', () => {
+  it('reads task and issue refs, with or without the key', () => {
+    expect(parseRefQuery('WEB-14')).toEqual({
+      kinds: ['task'],
+      teamSlug: null,
+      projectKey: 'WEB',
+      number: 14,
+    });
+    expect(parseRefQuery('acme/web#7')).toMatchObject({
+      kinds: ['issue'],
+      teamSlug: 'acme',
+      projectKey: 'WEB',
+      number: 7,
+    });
+    expect(parseRefQuery('WEB 14')).toMatchObject({ kinds: ['task', 'issue'], number: 14 });
+    expect(parseRefQuery('WEB #14')).toMatchObject({ kinds: ['issue'], number: 14 });
+    expect(parseRefQuery(' 14 ')).toMatchObject({ kinds: ['task', 'issue'], projectKey: null });
+    expect(parseRefQuery('#3')).toMatchObject({ kinds: ['issue'], number: 3 });
+    for (const input of ['WEB', 'fix login', '0', 'WEB-0', 'split the main', '14 15']) {
+      expect(parseRefQuery(input)).toBeNull();
+    }
+  });
+
+  it('puts the item a ref names first, before full-text matches', () => {
+    for (let i = 0; i < 13; i += 1) createTask(ctx.db, { project: otherProject.project });
+    const target = createTask(ctx.db, {
+      project: otherProject.project,
+      title: 'Board columns overflow',
+      body: 'See **WEB#7** for the report.',
+    });
+    index('task', target, 'See **WEB#7** for the report.');
+    expect(target.number).toBe(14);
+    for (let i = 0; i < 6; i += 1) createIssue(ctx.db, { project: otherProject.project });
+    const issue = createIssue(ctx.db, { project: otherProject.project, title: 'Overflow report' });
+    index('issue', issue, '');
+    expect(issue.number).toBe(7);
+
+    const task14 = q('WEB-14');
+    expect(task14[0]).toMatchObject({
+      entityType: 'task',
+      entityId: target.id,
+      ref: 'WEB-14',
+      title: 'Board columns overflow',
+      snippet: 'See WEB#7 for the report.',
+      url: '/t/acme/p/WEB/tasks/14',
+    });
+    expect(task14.filter((r) => r.entityId === target.id)).toHaveLength(1);
+    // The issue itself comes first; the task mentioning it follows as a full-text match.
+    expect(q('WEB#7').map((r) => r.ref)).toEqual(['WEB#7', 'WEB-14']);
+    expect(q('acme/WEB-14')[0]?.entityId).toBe(target.id);
+    expect(q('web 14')[0]?.entityId).toBe(target.id);
+    // A bare number matches that number in every project the caller can see.
+    createTask(ctx.db, { project: project.project });
+    expect(q('1').map((r) => r.ref)).toEqual(['API-1', 'WEB-1', 'WEB#1']);
+    expect(q('#7').map((r) => r.ref)).toEqual(['WEB#7', 'WEB-14']);
+    expect(q('7', { types: ['task'] }).map((r) => r.ref)).toEqual(['WEB-7', 'WEB-14']);
+    expect(q('1', { projectId: project.project.id }).map((r) => r.ref)).toEqual(['API-1']);
+    expect(q('WEB-99')).toEqual([]);
+    expect(q('other/WEB-14')).toEqual([]);
+  });
+
+  it('follows old project keys and skips deleted items and outsiders', async () => {
+    const task = createTask(ctx.db, { project: otherProject.project, title: 'Renamed' });
+    ctx.db.orm
+      .insert(s.projectKeyAlias)
+      .values({
+        projectId: otherProject.project.id,
+        teamId: otherProject.project.teamId,
+        key: 'OLD',
+      })
+      .run();
+    expect(q('OLD-1').map((r) => r.ref)).toEqual(['WEB-1']);
+
+    const outsider = createUser(ctx.db);
+    const { key } = createApiKey(ctx.db, { userId: outsider.id });
+    const res = await ctx.app.request('/api/search?q=WEB-1', { headers: bearer(key) });
+    expect(searchResponseSchema.parse(await res.json()).results).toEqual([]);
+
+    ctx.db.orm.update(s.task).set({ deletedAt: new Date() }).where(eq(s.task.id, task.id)).run();
+    expect(q('WEB-1')).toEqual([]);
   });
 });

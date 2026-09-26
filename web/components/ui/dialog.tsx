@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { useReturnFocus } from '@web/lib/useReturnFocus';
 import { cn } from '@web/lib/utils';
 import { XIcon } from 'lucide-react';
 import { Dialog as DialogPrimitive } from 'radix-ui';
@@ -41,10 +42,13 @@ function DialogContent({
   className,
   children,
   showCloseButton = true,
+  onCloseAutoFocus,
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Content> & {
   showCloseButton?: boolean;
 }) {
+  // Closing returns focus to what was focused before, even without a DialogTrigger.
+  const returnFocus = useReturnFocus(onCloseAutoFocus);
   return (
     <DialogPortal data-slot="dialog-portal">
       <DialogOverlay />
@@ -55,7 +59,9 @@ function DialogContent({
           className,
         )}
         {...props}
+        onCloseAutoFocus={returnFocus.onCloseAutoFocus}
       >
+        {returnFocus.capture}
         {children}
         {showCloseButton && (
           <DialogPrimitive.Close

@@ -182,10 +182,12 @@ describe('issue page', { timeout: 20_000 }, () => {
     expect(
       await screen.findByRole(
         'heading',
-        { level: 2, name: /Export fails for large projects/ },
+        { level: 1, name: /Export fails for large projects/ },
         LAZY,
       ),
     ).toBeVisible();
+    // The issue is the page's only h1: the project header above it is not a heading (UX-15).
+    expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1);
     expect(screen.getByText('30 seconds')).toBeVisible();
     const details = screen.getByRole('complementary', { name: 'Issue details' });
     expect(

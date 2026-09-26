@@ -45,9 +45,12 @@ function useGroupProvider(
       const results = await searchAll(query, signal);
       const highlight = searchTerms(query);
       return results
-        .filter((result) => result.entityType === type)
+        .map((result, rank) => ({ result, rank }))
+        .filter(({ result }) => result.entityType === type)
         .slice(0, PER_GROUP)
-        .map((result): PaletteSearchResult => ({
+        .map(({ result, rank }): PaletteSearchResult => ({
+          // Server order: an exact ref match (WEB#7) puts its group first.
+          rank,
           id: result.entityId,
           label: result.title,
           ref: result.ref,

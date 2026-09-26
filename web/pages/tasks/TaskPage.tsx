@@ -77,6 +77,7 @@ import {
   useTaskSubscription,
   useUpdateTask,
 } from './queries';
+import { tasksViewPath } from './filters';
 import { TaskRelations } from './TaskRelations';
 
 /**
@@ -209,6 +210,17 @@ function TaskView({ task, team, project }: { task: Task; team: MeTeam; project: 
     group: 'Task',
     enabled: canEditText && !editingTitle,
   });
+  // SPEC §1.9 "Esc close": back to the board or list, with the filters it had. Esc inside a
+  // picker, dialog or field closes that instead (hotkeys never fire there).
+  useHotkey(
+    'escape',
+    () => void navigate(tasksViewPath(`/t/${team.slug}/p/${project.key}`, project.id)),
+    {
+      description: 'Close the task',
+      group: 'Task',
+      enabled: picker === null && !editingTitle && !editingDescription && !confirmDelete,
+    },
+  );
 
   const url = `${window.location.origin}${task.path}`;
   const claimMine = task.claim?.user.id === viewerId;

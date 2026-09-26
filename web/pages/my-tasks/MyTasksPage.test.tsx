@@ -62,6 +62,21 @@ describe('MyTasksPage', () => {
     expect(screen.getByRole('link', { name: /Fix login/ })).toHaveTextContent('(overdue)');
   });
 
+  it('names each status in text on wide screens, not only by icon color (UX-10)', async () => {
+    mockApi({
+      '/api/me': meWithTwoProjects(),
+      '/api/me/tasks': { items: tasks, total: 2 },
+    });
+    renderWorkPage(<MyTasksPage />, '/my-tasks');
+    const row = await screen.findByRole('link', { name: /Fix login/ });
+    // A visible (not screen-reader-only) status name in the row's wide-screen layout.
+    const names = within(row)
+      .getAllByText('Todo')
+      .filter((element) => !element.classList.contains('sr-only'))
+      .map((element) => element.closest('[class*="sm:inline-flex"]'));
+    expect(names.some((element) => element !== null)).toBe(true);
+  });
+
   it('reads filters from the URL and sends them to the API', async () => {
     const fetchMock = mockApi({
       '/api/me': meWithTwoProjects(),

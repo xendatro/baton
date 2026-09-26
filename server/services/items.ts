@@ -7,6 +7,7 @@ import * as s from '../db/schema';
 import { errors } from '../lib/errors';
 import { appPaths } from '../lib/urls';
 import { requireMember, type Membership } from './access';
+import { renewClaimOnWrite } from './claimLease';
 
 /**
  * Issues and tasks as generic "items": the things replies, subscriptions and attachments hang
@@ -39,6 +40,11 @@ export interface ItemResolver {
   find(db: DbExecutor, id: string): ItemInfo | null;
   /** Adjusts the reply count by `delta`; a new reply (`bumpActivity`) also moves lastActivityAt. */
   adjustReplies(tx: Tx, id: string, delta: number, bumpActivity: boolean): void;
+  /**
+   * The actor wrote to the item's thread (posted or edited a reply), inside that write. Tasks
+   * renew the actor's claim here: any write by the holder renews the lease (SPEC §1.8).
+   */
+  onThreadWrite?(tx: Tx, actor: Actor, id: string): void;
 }
 
 function makeResolver(type: ItemType): ItemResolver {
@@ -96,7 +102,12 @@ function makeResolver(type: ItemType): ItemResolver {
 /** Item resolvers by type. */
 export const itemResolvers: Readonly<Record<ItemType, ItemResolver>> = {
   issue: makeResolver('issue'),
-  task: makeResolver('task'),
+  task: {
+    ...makeResolver('task'),
+    onThreadWrite: (tx, actor, id) => {
+      renewClaimOnWrite(tx, actor, id);
+    },
+  },
 };
 
 export function findItem(db: DbExecutor, type: ItemType, id: string): ItemInfo | null {

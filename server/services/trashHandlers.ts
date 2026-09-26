@@ -4,6 +4,7 @@ import { deleteAttachment, restoreAttachment } from './attachments';
 import { deleteIssue, restoreIssue } from './issues';
 import { deleteProject, restoreProject } from './projects';
 import { deleteReply, restoreReply } from './replies';
+import { deleteTask, restoreTask } from './tasks';
 import { deleteTeam, restoreTeam } from './teams';
 
 /**
@@ -22,6 +23,7 @@ export const trashHandlers: Partial<Record<TrashableType, TrashHandler>> = {
   team: { softDelete: deleteTeam, restore: restoreTeam },
   project: { softDelete: deleteProject, restore: restoreProject },
   issue: { softDelete: deleteIssue, restore: restoreIssue },
+  task: { softDelete: deleteTask, restore: restoreTask },
   reply: { softDelete: deleteReply, restore: restoreReply },
   attachment: { softDelete: deleteAttachment, restore: restoreAttachment },
 };

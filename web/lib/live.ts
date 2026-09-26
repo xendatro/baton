@@ -67,7 +67,11 @@ const replyChange: Invalidation = (e) => [
 ];
 
 export const LIVE_INVALIDATIONS: Readonly<Record<LiveEventType, Invalidation>> = {
-  'team.updated': (e) => [queryKeys.me(), ...teamKeys(e, queryKeys.teams.detail)],
+  'team.updated': (e) => [
+    queryKeys.me(),
+    ...teamKeys(e, queryKeys.teams.detail),
+    queryKeys.work.all(),
+  ],
   'team.deleted': () => [
     queryKeys.me(),
     queryKeys.teams.all(),
@@ -83,9 +87,15 @@ export const LIVE_INVALIDATIONS: Readonly<Record<LiveEventType, Invalidation>> =
   'project.updated': projectChange,
   'project.deleted': (e) => [...projectChange(e), ...trash(e)],
   'project.restored': (e) => [...projectChange(e), ...trash(e)],
-  'status.changed': (e) => projectKeys(e, queryKeys.projects.statuses, queryKeys.tasks.all),
-  'label.changed': (e) =>
-    projectKeys(e, queryKeys.projects.labels, queryKeys.tasks.all, queryKeys.issues.all),
+  // Work lists show statuses and labels, and a status's category decides what is still open.
+  'status.changed': (e) => [
+    ...projectKeys(e, queryKeys.projects.statuses, queryKeys.tasks.all),
+    queryKeys.work.all(),
+  ],
+  'label.changed': (e) => [
+    ...projectKeys(e, queryKeys.projects.labels, queryKeys.tasks.all, queryKeys.issues.all),
+    queryKeys.work.all(),
+  ],
   'issue.created': issueChange,
   'issue.updated': issueChange,
   'issue.deleted': (e) => [...issueChange(e), ...trash(e)],

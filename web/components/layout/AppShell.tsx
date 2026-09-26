@@ -16,7 +16,6 @@ import { buildCrumbs, titleParts } from './breadcrumbs';
 import { RequireAuth, RequireOnboarded } from './guards';
 import { shellExtensions } from './shellExtensions';
 import { ShortcutsDialog } from './ShortcutsDialog';
-import { useLiveNotificationToasts } from './useLiveNotificationToasts';
 
 function sidebarInitiallyOpen(): boolean {
   return !document.cookie.split('; ').includes('sidebar_state=false');
@@ -67,7 +66,6 @@ function Shell() {
   const crumbs = buildCrumbs(location.pathname, me);
   useDocumentTitle(titleParts(crumbs, location.pathname), 0);
   useSyncProfileTheme(me?.user.theme);
-  useLiveNotificationToasts(me?.user.id);
   useGlobalHotkeys();
   const [sidebarOpen] = useState(sidebarInitiallyOpen);
 

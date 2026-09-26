@@ -22,4 +22,6 @@ export const shellExtensions: ReadonlyArray<LazyExoticComponent<ComponentType>> 
   lazy(() => import('@web/pages/admin/PaletteSearch')),
   // account: saves theme changes to the profile, settings palette commands
   lazy(() => import('@web/pages/settings/AccountShellExtension')),
+  // work: toasts new notifications outside the inbox, "Mark all notifications as read"
+  lazy(() => import('@web/pages/inbox/InboxShellExtension')),
 ];

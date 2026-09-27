@@ -52,6 +52,10 @@ const shellRoutes: RouteObject[] = [
       { path: 'roles', ...page(() => import('./pages/team-settings/RolesSettingsPage')) },
       { path: 'roles/:roleId', ...page(() => import('./pages/team-settings/RoleEditPage')) },
       { path: 'invites', ...page(() => import('./pages/team-settings/InvitesSettingsPage')) },
+      {
+        path: 'integrations',
+        ...page(() => import('./pages/team-settings/IntegrationsSettingsPage')),
+      },
       // admin
       { path: 'audit-log', ...page(() => import('./pages/team-settings/AuditLogPage')) },
       { path: 'trash', ...page(() => import('./pages/team-settings/TrashPage')) },

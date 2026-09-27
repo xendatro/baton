@@ -164,6 +164,7 @@ export function createApp(options: CreateAppOptions): Hono<AppEnv> {
       version: VERSION,
       signupsEnabled: env.signupsEnabled,
       providers: { google: env.google !== null, github: env.github !== null },
+      githubReadmes: env.githubApp !== null,
       maxUploadMb: env.maxUploadMb,
     } satisfies ConfigResponse),
   );

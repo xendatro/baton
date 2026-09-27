@@ -205,6 +205,26 @@ then `GITHUB_CLIENT_ID=…` and `GITHUB_CLIENT_SECRET=…`. Set both values of a
 (the server refuses to start otherwise). OAuth needs the public https `BASE_URL`, so set up the
 tunnel first. A provider's buttons appear once both variables are set and the service restarted.
 
+**READMEs from GitHub (a GitHub App).** Projects can show a Markdown file or folder of a
+repository, private ones included, through a GitHub App the team installs on the repositories it
+chooses. The same app also does GitHub sign-in, so it replaces the OAuth App above. GitHub →
+Settings → Developer settings → GitHub Apps → New GitHub App:
+
+- Homepage URL `<BASE_URL>`.
+- Callback URLs (add both): `<BASE_URL>/api/auth/callback/github` and `<BASE_URL>/api/github/verify`.
+- Setup URL: `<BASE_URL>/api/github/setup` (leave "Redirect on update" checked; leave "Request user
+  authorization (OAuth) during installation" unchecked: Baton asks for it itself).
+- Webhook: uncheck Active.
+- Repository permissions: Contents → Read-only, Metadata → Read-only. Account permissions: Email
+  addresses → Read-only (for sign-in).
+- Where can it be installed: Any account (so other people's organizations can install it).
+
+Then set `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` to the app's Client ID and a new client
+secret, `GITHUB_APP_ID` to its App ID, `GITHUB_APP_SLUG` to the last part of its public link
+(`https://github.com/apps/<slug>`), and `GITHUB_APP_PRIVATE_KEY` to a generated private key (the
+whole `.pem`; on one line, write its newlines as `\n`). Teams connect GitHub in Team settings →
+Integrations.
+
 **BETTER_AUTH_SECRET** signs sessions. Changing it signs everyone out; never commit it.
 **BASE_URL** must be the exact origin people use (scheme + host, no trailing slash); it is used for
 CSRF checks, OAuth callbacks, email links and MCP URLs.

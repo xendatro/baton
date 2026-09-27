@@ -4,6 +4,7 @@ import type { Mailer } from './auth/mailer';
 import type { Database } from './db';
 import type { Env } from './env';
 import type { EventBus } from './lib/eventBus';
+import type { GithubClient } from './lib/github';
 import type { RateLimiter } from './lib/rateLimit';
 import type { Logger } from './logger';
 
@@ -45,6 +46,8 @@ export interface AppDeps {
   auth: Auth;
   /** In-memory token buckets for every rate limit (SPEC §5). */
   rateLimiter: RateLimiter;
+  /** The GitHub App client (repository READMEs); null when no app is configured. */
+  github: GithubClient | null;
 }
 
 /** Hono environment for every router: `c.var.deps`, `c.var.logger`, `c.var.actor`, … */

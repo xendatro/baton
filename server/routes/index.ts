@@ -18,6 +18,7 @@ import { authRoutes } from './auth';
 import { claimRoutes } from './claims';
 import { dashboardRoutes } from './dashboard';
 import { eventRoutes } from './events';
+import { githubRoutes } from './github';
 import { inviteRoutes } from './invites';
 import { issueRoutes } from './issues';
 import { labelRoutes } from './labels';
@@ -67,6 +68,7 @@ const routers: ReadonlyArray<Hono<AppEnv>> = [
   statusRoutes,
   labelRoutes,
   projectAccessRoutes,
+  githubRoutes,
   // issues
   issueRoutes,
   // tasks

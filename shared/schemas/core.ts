@@ -202,6 +202,8 @@ export const configResponseSchema = z.object({
   version: z.string(),
   signupsEnabled: z.boolean(),
   providers: z.object({ google: z.boolean(), github: z.boolean() }),
+  /** A GitHub App is configured: projects can show READMEs from repositories. */
+  githubReadmes: z.boolean().optional(),
   maxUploadMb: z.number(),
 });
 export type ConfigResponse = z.infer<typeof configResponseSchema>;

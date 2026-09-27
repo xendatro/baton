@@ -459,6 +459,28 @@ overrides. MCP tools: `list_project_roles`, `create_project_role`, `update_proje
 `remove_project_permission_override` (subjects by role slug/name, `everyone`, project role or
 username).
 
+**GitHub READMEs** (`server/routes/github.ts`, schemas in `shared/schemas/github.ts`; needs a
+GitHub App, `GET /api/config` → `githubReadmes`). `GET /api/teams/:teamId/github` →
+`{ enabled, installations: [{ id, accountLogin, accountType, settingsUrl, createdBy, createdAt }] }`
+(any member). `POST /api/teams/:teamId/github/install` → `{ url }` (`MANAGE_TEAM`, web session
+only): the browser installs the app on GitHub, which returns to `GET /api/github/setup` (the app's
+Setup URL), which sends it to GitHub's OAuth page and back to `GET /api/github/verify` (a callback
+URL); the installation is saved only when GitHub lists it among the person's installations, then
+the browser lands on `/t/:team/settings/integrations?github=connected|denied|requested`.
+`DELETE /api/teams/:teamId/github/:installationId` (`MANAGE_TEAM`) disconnects it and resets
+projects using it. `GET /api/teams/:teamId/github/repos` → `{ repos: [{ installationId, fullName,
+private, defaultBranch, htmlUrl }] }` and `GET /api/teams/:teamId/github/:installationId/contents?repo=&path=&ref=`
+→ `{ entries: [{ path, name, type: 'file'|'dir' }] }` (folders first) feed the picker
+(`MANAGE_PROJECTS`). `PUT /api/projects/:projectId/readme-source` `{ readmeSource: { kind: 'github',
+installationId, repo, ref|null, type: 'file'|'folder', path, entry|null } | null }`
+(`MANAGE_PROJECTS`; checked on GitHub: a file must be Markdown, a folder a folder); the project's
+`readmeSource` is then shown instead of `readme` (kept). `GET /api/projects/:projectId/readme/github?path=`
+→ `{ repo, ref, htmlUrl, tree: [{ path, name }]|null, doc: { path, content, htmlUrl }|null, truncated }`
+(any project member; a folder lists its Markdown files, at most 500, and `doc` is `path`, else
+`entry`, else README.md / index.md, else the first). `GET /api/projects/:projectId/readme/github/image?path=`
+serves an image (png, jpg, gif, webp, avif, svg; at most 5 MB) inside the source's folder, for
+relative `![](…)` links. GitHub reads are cached for a minute.
+
 ### Issues (issues module)
 
 Schemas: `shared/schemas/issues.ts`. `IssueSummary` = `{ id, teamId, projectId, number, ref, title, resolved, resolvedAt, labels: [{ id, name, color, description }], author, via, replyCount, lastActivityAt, createdAt, updatedAt, editedAt, path }`;

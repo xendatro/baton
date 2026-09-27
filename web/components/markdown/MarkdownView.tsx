@@ -133,16 +133,25 @@ export interface MarkdownViewProps {
   markdown: string;
   /** Resolves mentions (names, hover cards, role colors) against this team. */
   teamId?: string | null;
+  /**
+   * Rewrites a link or image URL (e.g. a repository's relative links); null keeps it. A rewritten
+   * link starting with `/` or `?` navigates inside the app.
+   */
+  rewriteUrl?: (url: string, kind: 'link' | 'image') => string | null;
   className?: string;
 }
 
-export function MarkdownView({ markdown, teamId, className }: MarkdownViewProps) {
+export function MarkdownView({ markdown, teamId, rewriteUrl, className }: MarkdownViewProps) {
   const mentionables = useMentionables(teamId, markdown).data;
 
   const components: Components = {
     ...headings,
-    a: ({ href = '', children, node: _node, ...props }) => {
-      if (href.startsWith('/') && !href.startsWith('//') && !href.startsWith('/api/')) {
+    a: ({ href: original = '', children, node: _node, ...props }) => {
+      const href = rewriteUrl?.(original, 'link') ?? original;
+      if (
+        (href.startsWith('/') && !href.startsWith('//') && !href.startsWith('/api/')) ||
+        (href.startsWith('?') && href !== original)
+      ) {
         return (
           <Link to={href} {...props}>
             {children}
@@ -161,7 +170,10 @@ export function MarkdownView({ markdown, teamId, className }: MarkdownViewProps)
       );
     },
     img: ({ src, alt }) => (
-      <MarkdownImage src={typeof src === 'string' ? src : undefined} alt={alt} />
+      <MarkdownImage
+        src={typeof src === 'string' ? (rewriteUrl?.(src, 'image') ?? src) : undefined}
+        alt={alt}
+      />
     ),
     input: ({
       node: _node,

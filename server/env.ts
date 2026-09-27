@@ -35,6 +35,10 @@ const envSchema = z
     GOOGLE_CLIENT_SECRET: optionalString,
     GITHUB_CLIENT_ID: optionalString,
     GITHUB_CLIENT_SECRET: optionalString,
+    /** GitHub App (repository READMEs): its numeric id, URL slug and private key (PEM). */
+    GITHUB_APP_ID: z.coerce.number().int().positive().optional(),
+    GITHUB_APP_SLUG: optionalString,
+    GITHUB_APP_PRIVATE_KEY: optionalString,
     SMTP_URL: z.url({ protocol: /^smtps?$/ }).optional(),
     MAIL_FROM: z.string().min(3).default('Baton <baton@localhost>'),
     SIGNUPS_ENABLED: booleanString.default(true),
@@ -76,11 +80,33 @@ const envSchema = z
         });
       }
     }
+    const app = [env.GITHUB_APP_ID, env.GITHUB_APP_SLUG, env.GITHUB_APP_PRIVATE_KEY];
+    if (app.some(Boolean) && !app.every(Boolean)) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['GITHUB_APP_ID'],
+        message: 'set GITHUB_APP_ID, GITHUB_APP_SLUG and GITHUB_APP_PRIVATE_KEY together, or none',
+      });
+    }
+    if (app.every(Boolean) && !(env.GITHUB_CLIENT_ID && env.GITHUB_CLIENT_SECRET)) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['GITHUB_CLIENT_ID'],
+        message: 'the GitHub App needs its client id and secret in GITHUB_CLIENT_ID/SECRET',
+      });
+    }
   });
 
 export interface OAuthCredentials {
   clientId: string;
   clientSecret: string;
+}
+
+export interface GithubAppCredentials {
+  appId: number;
+  slug: string;
+  /** PEM; `\n` escapes in the variable are turned into newlines. */
+  privateKey: string;
 }
 
 export type LogLevel = 'fatal' | 'error' | 'warn' | 'info' | 'debug' | 'trace' | 'silent';
@@ -99,6 +125,11 @@ export interface Env {
   usesDevelopmentSecret: boolean;
   google: OAuthCredentials | null;
   github: OAuthCredentials | null;
+  /**
+   * GitHub App for repository READMEs (null: off). Its client id and secret are `github`'s: the
+   * same app signs people in with GitHub.
+   */
+  githubApp: GithubAppCredentials | null;
   /** Null: emails are logged to the console instead of sent. */
   smtpUrl: string | null;
   mailFrom: string;
@@ -151,6 +182,14 @@ export function parseEnv(source: Record<string, string | undefined>): Env {
     usesDevelopmentSecret: env.BETTER_AUTH_SECRET === undefined,
     google: credentials(env.GOOGLE_CLIENT_ID, env.GOOGLE_CLIENT_SECRET),
     github: credentials(env.GITHUB_CLIENT_ID, env.GITHUB_CLIENT_SECRET),
+    githubApp:
+      env.GITHUB_APP_ID && env.GITHUB_APP_SLUG && env.GITHUB_APP_PRIVATE_KEY
+        ? {
+            appId: env.GITHUB_APP_ID,
+            slug: env.GITHUB_APP_SLUG,
+            privateKey: env.GITHUB_APP_PRIVATE_KEY.replace(/\\n/g, '\n'),
+          }
+        : null,
     smtpUrl: env.SMTP_URL ?? null,
     mailFrom: env.MAIL_FROM,
     signupsEnabled: env.SIGNUPS_ENABLED,

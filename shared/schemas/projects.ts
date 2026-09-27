@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { readmeSourceSchema } from './github';
 import { LIMITS, STATUS_CATEGORIES, STATUS_ICONS } from '../constants';
 import { PROJECT_KEY_PATTERN } from '../refs';
 import { emojiSchema, hexColorSchema, idSchema, projectKeySchema, timestampSchema } from './common';
@@ -188,6 +189,8 @@ export type ProjectSummary = z.infer<typeof projectSummarySchema>;
 export const projectSchema = projectSummarySchema.extend({
   /** Markdown. */
   readme: z.string(),
+  /** Shown instead of `readme` when set: a GitHub file or folder. */
+  readmeSource: readmeSourceSchema.nullable().optional(),
   createdBy: userSummarySchema.nullable(),
   /** Previous keys that still resolve (old refs and links). */
   keyAliases: z.array(z.string()),

@@ -55,6 +55,7 @@ import type {
   MoveBy,
   OnEnterRules,
 } from '../../shared/schemas/pipelines';
+import type { ReadmeSource } from '../../shared/schemas/github';
 import type { FieldChange } from '../../shared/schemas/core';
 import { newId } from '../lib/ids';
 
@@ -347,6 +348,32 @@ export const invite = sqliteTable(
 );
 
 // =============================================================================================
+// GitHub
+// =============================================================================================
+
+/** A GitHub App installation a team connected (repository READMEs). */
+export const githubInstallation = sqliteTable(
+  'github_installation',
+  {
+    id: idColumn(),
+    teamId: text('team_id')
+      .notNull()
+      .references(() => team.id, { onDelete: 'cascade' }),
+    /** GitHub's installation id. */
+    installationId: integer('installation_id').notNull(),
+    accountLogin: text('account_login').notNull(),
+    /** `User` or `Organization`. */
+    accountType: text('account_type').notNull(),
+    createdById: text('created_by_id').references(() => user.id, { onDelete: 'set null' }),
+    createdAt: createdAtColumn(),
+  },
+  (t) => [
+    uniqueIndex('github_installation_team_unique').on(t.teamId, t.installationId),
+    index('github_installation_created_by_idx').on(t.createdById),
+  ],
+);
+
+// =============================================================================================
 // Projects, statuses, labels
 // =============================================================================================
 
@@ -363,6 +390,8 @@ export const project = sqliteTable(
     description: text('description').notNull().default(''),
     /** Markdown. */
     readme: text('readme').notNull().default(''),
+    /** Show a GitHub file or folder instead of `readme` (null: `readme`). */
+    readmeSource: text('readme_source', { mode: 'json' }).$type<ReadmeSource>(),
     icon: text('icon'),
     color: text('color').notNull(),
     /** Last issue number handed out. */

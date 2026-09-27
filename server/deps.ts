@@ -4,6 +4,7 @@ import type { AppDeps } from './context';
 import { openDatabase } from './db';
 import type { Env } from './env';
 import { createEventBus } from './lib/eventBus';
+import { createGithubClient } from './lib/github';
 import { createRateLimiter } from './lib/rateLimit';
 import type { Logger } from './logger';
 
@@ -27,5 +28,14 @@ export function createAppDeps(options: {
   const mailer = createMailer(env, logger);
   const rateLimiter = createRateLimiter();
   const auth = createAuth({ env, db, logger, mailer, rateLimiter });
-  return { env, db, logger, events, mailer, auth, rateLimiter };
+  return {
+    env,
+    db,
+    logger,
+    events,
+    mailer,
+    auth,
+    rateLimiter,
+    github: createGithubClient(env, logger),
+  };
 }

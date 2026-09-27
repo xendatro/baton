@@ -32,6 +32,11 @@ export const queryKeys = {
     presence: (teamId: string) => ['teams', teamId, 'presence'] as const,
     roles: (teamId: string) => ['teams', teamId, 'roles'] as const,
     invites: (teamId: string) => ['teams', teamId, 'invites'] as const,
+    /** Connected GitHub accounts; `repos` and `contents` feed the README source picker. */
+    github: (teamId: string) => ['teams', teamId, 'github'] as const,
+    githubRepos: (teamId: string) => ['teams', teamId, 'github', 'repos'] as const,
+    githubContents: (teamId: string, installationId: string, repo: string, path: string) =>
+      ['teams', teamId, 'github', 'contents', installationId, repo, path] as const,
     projects: (teamId: string) => ['teams', teamId, 'projects'] as const,
     /** Team home (team + project cards): under `projects` so project events refresh it. */
     overview: (teamId: string) => ['teams', teamId, 'projects', 'overview'] as const,
@@ -84,6 +89,9 @@ export const queryKeys = {
     /** What copying another project's pipeline into this one would do (design §5). */
     pipelineCopy: (projectId: string, fromProjectId: string) =>
       ['projects', projectId, 'pipeline-copy', fromProjectId] as const,
+    /** A document of the project's GitHub README (`path` null: the first one). */
+    githubReadme: (projectId: string, path: string | null) =>
+      ['projects', projectId, 'readme', 'github', path] as const,
   },
 
   issues: {

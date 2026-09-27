@@ -171,6 +171,7 @@ export function toProject(db: DbExecutor, project: ProjectRow, teamSlug: string)
   return {
     ...summary,
     readme: project.readme,
+    readmeSource: project.readmeSource ?? null,
     createdBy: creator,
     keyAliases: keyAliasesOf(db, project.id),
     statuses: statusesOf(db, project.id),

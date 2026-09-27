@@ -6,6 +6,7 @@ import {
   KanbanSquareIcon,
   MessagesSquareIcon,
   PencilIcon,
+  Settings2Icon,
   TagsIcon,
 } from 'lucide-react';
 import { useState } from 'react';
@@ -16,6 +17,7 @@ import type { Project } from '@shared/schemas/projects';
 import { ConfirmDialog } from '@web/components/common/ConfirmDialog';
 import { EmptyState } from '@web/components/common/EmptyState';
 import { ErrorState } from '@web/components/common/ErrorState';
+import { GitHubIcon } from '@web/components/common/GitHubIcon';
 import { FinishedMark } from '@web/components/common/FinishedMark';
 import { Kbd } from '@web/components/common/Kbd';
 import { LabelChip } from '@web/components/common/LabelChip';
@@ -28,13 +30,16 @@ import { RichTextEditor } from '@web/components/editor/RichTextEditor';
 import { MarkdownView } from '@web/components/markdown/MarkdownView';
 import { Button } from '@web/components/ui/button';
 import { Skeleton } from '@web/components/ui/skeleton';
+import { useConfig } from '@web/lib/auth';
 import { useHotkey } from '@web/lib/hotkeys';
 import { useProjectAccess } from '@web/lib/permissions';
 import { useRouteContext } from '@web/lib/routeContext';
 import { useDocumentTitle } from '@web/lib/title';
 import { pluralize } from '@web/lib/format';
 import { cn } from '@web/lib/utils';
+import { GithubReadme } from './GithubReadme';
 import { useProject, useUpdateProject } from './queries';
+import { ReadmeSourceDialog } from './ReadmeSourceDialog';
 import { UnsavedChangesGuard } from './UnsavedChangesGuard';
 
 /**
@@ -53,9 +58,12 @@ function Overview({ team, project }: { team: MeTeam; project: MeProject }) {
   const access = useProjectAccess(team.id, project.id);
   const canEdit = access.has('MANAGE_PROJECTS');
   const [editing, setEditing] = useState(false);
+  const [choosingSource, setChoosingSource] = useState(false);
+  const githubReadmes = useConfig().data?.githubReadmes === true;
+  const fromGithub = Boolean(details.data?.readmeSource);
   const base = `/t/${team.slug}/p/${project.key}`;
   useDocumentTitle(['Overview', project.name]);
-  useHotkey('e', () => setEditing(true), {
+  useHotkey('e', () => (fromGithub ? setChoosingSource(true) : setEditing(true)), {
     description: 'Edit the README',
     group: 'Project',
     enabled: canEdit && !editing && details.isSuccess,
@@ -78,14 +86,25 @@ function Overview({ team, project }: { team: MeTeam; project: MeProject }) {
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_18rem]">
         <section aria-labelledby="readme-heading" className="min-w-0">
           {details.data ? (
-            editing ? (
+            details.data.readmeSource ? (
+              <GithubReadme
+                project={details.data}
+                canEdit={canEdit}
+                onChangeSource={() => setChoosingSource(true)}
+              />
+            ) : editing ? (
               <ReadmeEditor
                 project={details.data}
                 teamId={team.id}
                 onClose={() => setEditing(false)}
               />
             ) : (
-              <Readme project={details.data} canEdit={canEdit} onEdit={() => setEditing(true)} />
+              <Readme
+                project={details.data}
+                canEdit={canEdit}
+                onEdit={() => setEditing(true)}
+                onChooseSource={githubReadmes ? () => setChoosingSource(true) : undefined}
+              />
             )
           ) : (
             <ReadmeSkeleton />
@@ -107,6 +126,14 @@ function Overview({ team, project }: { team: MeTeam; project: MeProject }) {
           )}
         </aside>
       </div>
+      {details.data && canEdit ? (
+        <ReadmeSourceDialog
+          open={choosingSource}
+          onOpenChange={setChoosingSource}
+          project={details.data}
+          teamSlug={team.slug}
+        />
+      ) : null}
     </PageContainer>
   );
 }
@@ -135,10 +162,13 @@ function Readme({
   project,
   canEdit,
   onEdit,
+  onChooseSource,
 }: {
   project: Project;
   canEdit: boolean;
   onEdit: () => void;
+  /** Offered when the server can show READMEs from GitHub. */
+  onChooseSource?: (() => void) | undefined;
 }) {
   if (!project.readme.trim()) {
     return (
@@ -152,10 +182,18 @@ function Readme({
         }
         action={
           canEdit ? (
-            <Button onClick={onEdit}>
-              <PencilIcon aria-hidden="true" />
-              Write a README
-            </Button>
+            <div className="flex flex-wrap justify-center gap-2">
+              <Button onClick={onEdit}>
+                <PencilIcon aria-hidden="true" />
+                Write a README
+              </Button>
+              {onChooseSource ? (
+                <Button variant="outline" onClick={onChooseSource}>
+                  <GitHubIcon />
+                  Show one from GitHub
+                </Button>
+              ) : null}
+            </div>
           ) : undefined
         }
         className="py-16"
@@ -169,10 +207,18 @@ function Readme({
         title="README"
         actions={
           canEdit ? (
-            <Button variant="ghost" size="sm" onClick={onEdit} aria-keyshortcuts="e">
-              <PencilIcon aria-hidden="true" />
-              Edit
-            </Button>
+            <div className="flex items-center gap-1">
+              {onChooseSource ? (
+                <Button variant="ghost" size="sm" onClick={onChooseSource}>
+                  <Settings2Icon aria-hidden="true" />
+                  Source
+                </Button>
+              ) : null}
+              <Button variant="ghost" size="sm" onClick={onEdit} aria-keyshortcuts="e">
+                <PencilIcon aria-hidden="true" />
+                Edit
+              </Button>
+            </div>
           ) : undefined
         }
       />

@@ -1,5 +1,6 @@
 import {
   LinkIcon,
+  PlugIcon,
   ScrollTextIcon,
   Settings2Icon,
   ShieldIcon,
@@ -38,6 +39,7 @@ const ITEMS: readonly SettingsItem[] = [
     icon: LinkIcon,
     anyOf: ['CREATE_INVITES', 'MANAGE_INVITES'],
   },
+  { path: 'integrations', label: 'Integrations', icon: PlugIcon },
   { path: 'audit-log', label: 'Audit log', icon: ScrollTextIcon, anyOf: ['VIEW_AUDIT_LOG'] },
   // Everyone sees Trash: authors can always restore their own items.
   { path: 'trash', label: 'Trash', icon: Trash2Icon },

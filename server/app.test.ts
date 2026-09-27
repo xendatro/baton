@@ -59,6 +59,7 @@ describe('GET /api/config', () => {
       version: VERSION,
       signupsEnabled: true,
       providers: { google: false, github: false },
+      githubReadmes: false,
       maxUploadMb: 25,
     });
   });

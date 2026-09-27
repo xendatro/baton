@@ -73,6 +73,7 @@ function state(): DesktopState {
     pausedHere: cfg.pausedHere,
     folders: cfg.folders,
     permissionModes: cfg.permissionModes,
+    testedHarnesses: cfg.testedHarnesses ?? [],
     runner: runner?.snapshot() ?? null,
   };
 }
@@ -366,11 +367,16 @@ function registerIpc() {
   handle('testRun', async (harness: HarnessId) => {
     const adapter = adapters.get(harness);
     if (!adapter || !api) {
-      return { ok: false, outcome: 'failed', output: 'Set up this computer first.' };
+      return {
+        ok: false,
+        outcome: 'failed',
+        output: 'Connect this computer first: Set up this computer → “Run my agent here”.',
+      };
     }
     const cwd = path.join(scratchRoot(), 'test');
     mkdirSync(cwd, { recursive: true });
     const lines: string[] = [];
+    const logs: string[] = [];
     const result = await adapter.run({
       cwd,
       prompt:
@@ -390,11 +396,24 @@ function registerIpc() {
       signal: new AbortController().signal,
       onEvent: (event) => {
         if (event.type === 'session') return;
+        // The harness's own log lines (e.g. Codex's model-cache warnings) only matter on failure.
+        if (event.type === 'log') {
+          logs.push(event.text);
+          return;
+        }
         lines.push(event.text);
         window?.webContents.send('desktop:output', { jobId: 'test', text: event.text });
       },
     });
-    return { ok: result.outcome === 'done', outcome: result.outcome, output: lines.join('\n') };
+    const ok = result.outcome === 'done';
+    if (ok) {
+      const tested = new Set(config.get().testedHarnesses ?? []);
+      tested.add(harness);
+      config.update({ testedHarnesses: [...tested] });
+      broadcast();
+    }
+    const output = ok ? lines : [...lines, ...(logs.length ? ['', 'Harness log:', ...logs] : [])];
+    return { ok, outcome: result.outcome, output: output.join('\n') };
   });
   handle('kill', (jobId: string) => runner?.kill(String(jobId)));
   handle('pauseHere', (paused: boolean) => {

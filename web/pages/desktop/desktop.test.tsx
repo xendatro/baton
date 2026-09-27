@@ -10,6 +10,7 @@ import { createQueryClient } from '@web/lib/queryClient';
 import { jsonResponse, mockApi, testMe } from '@web/test/mockApi';
 import DesktopAgentsPage from './DesktopAgentsPage';
 import DesktopFoldersPage from './DesktopFoldersPage';
+import DesktopHarnessesPage from './DesktopHarnessesPage';
 import DesktopSetupPage from './DesktopSetupPage';
 
 /** The desktop app's pages inside the web app (BAT-26), with a mocked `window.batonDesktop`. */
@@ -43,6 +44,18 @@ const baseState: DesktopState = {
       },
     ],
   },
+};
+
+const claudeHarness = {
+  id: 'claude' as const,
+  label: 'Claude Code',
+  headless: 'claude -p',
+  installed: true,
+  path: '/usr/bin/claude',
+  version: '2.0.0',
+  models: [] as string[],
+  modes: [{ id: 'default', label: 'Ask', description: 'Asks first', unattended: false }],
+  mode: 'default',
 };
 
 function mockBridge(state: DesktopState = baseState) {
@@ -160,5 +173,26 @@ describe('desktop pages', () => {
       expect.any(String),
       'https://github.com/x/y',
     );
+  });
+
+  it('offers a test run only once this computer is connected', async () => {
+    mockApi({ '/api/me': testMe() });
+    const bridge = mockBridge({ ...baseState, connected: false, runner: null });
+    bridge.harnesses.mockImplementation(() => Promise.resolve([claudeHarness]) as never);
+    renderPage(<DesktopHarnessesPage />);
+    expect(await screen.findByRole('button', { name: 'Run a test' })).toBeDisabled();
+    expect(screen.getByText(/First connect this computer/)).toBeInTheDocument();
+  });
+
+  it('counts the setup steps, step 3 by a successful test run', async () => {
+    mockApi({ '/api/me': testMe() });
+    mockBridge({
+      ...baseState,
+      folders: { p1: { path: null, label: 'acme/WEB' } },
+      permissionModes: { claude: 'default' },
+      testedHarnesses: [],
+    });
+    renderPage(<DesktopSetupPage />);
+    expect(await screen.findByText('2 of 3 steps done.')).toBeInTheDocument();
   });
 });

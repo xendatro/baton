@@ -147,7 +147,11 @@ export function claudeAdapter(): HarnessAdapter {
             limited = true;
             result.resetAt = parseResetAt(line) ?? result.resetAt;
           }
-          if (stream === 'stderr') lastError = line;
+          if (stream === 'stderr') {
+            lastError = line;
+            options.onEvent({ type: 'log', text: line });
+            return;
+          }
           options.onEvent({ type: 'output', text: line });
           return;
         }

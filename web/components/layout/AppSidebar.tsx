@@ -332,14 +332,13 @@ function ThisComputer({ pathname }: { pathname: string }) {
             icon={TerminalIcon}
             active={pathname === '/desktop/harnesses'}
           />
-          {state && !state.connected ? (
-            <NavLink
-              to="/desktop/setup"
-              label="Set up this computer"
-              icon={SettingsIcon}
-              active={pathname === '/desktop/setup'}
-            />
-          ) : null}
+          {/* Always there: setup has more steps than connecting, and they can be revisited. */}
+          <NavLink
+            to="/desktop/setup"
+            label="Set up this computer"
+            icon={SettingsIcon}
+            active={pathname === '/desktop/setup'}
+          />
         </SidebarMenu>
       </SidebarGroupContent>
     </SidebarGroup>

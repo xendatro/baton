@@ -34,7 +34,8 @@ function Step({
   children,
 }: {
   number: number;
-  done: boolean;
+  /** null: an optional step, with no done state. */
+  done: boolean | null;
   title: string;
   children: ReactNode;
 }) {
@@ -43,10 +44,15 @@ function Step({
       <h2 className="flex items-center gap-2 font-medium">
         {done ? (
           <CheckCircle2Icon className="size-5 text-primary" aria-label="Done" />
-        ) : (
+        ) : done === false ? (
           <CircleIcon className="size-5 text-muted-foreground" aria-label="To do" />
+        ) : (
+          <CircleIcon className="size-5 text-muted-foreground/40" aria-label="Optional" />
         )}
         {number}. {title}
+        {done === null ? (
+          <span className="text-xs font-normal text-muted-foreground">Optional</span>
+        ) : null}
       </h2>
       <div className="mt-2 grid gap-2 pl-7 text-sm">{children}</div>
     </li>
@@ -58,6 +64,9 @@ function Setup() {
   const createKey = useCreateApiKey();
   const [connecting, setConnecting] = useState(false);
   const folderCount = Object.keys(state?.folders ?? {}).length;
+  const testedCount = state?.testedHarnesses?.length ?? 0;
+  const required = [Boolean(state?.connected), folderCount > 0, testedCount > 0];
+  const doneCount = required.filter(Boolean).length;
 
   const connect = async () => {
     setConnecting(true);
@@ -80,6 +89,11 @@ function Setup() {
         title="Set up this computer"
         description="Your agent listens for its jobs here without spending tokens, and runs each one in your own harness, in the folder you pick for its project."
       />
+      <p className="mb-4 text-sm text-muted-foreground" aria-live="polite">
+        {doneCount === required.length
+          ? 'All set: this computer runs your agent’s jobs. Come back here any time to change it.'
+          : `${doneCount} of ${required.length} steps done.`}
+      </p>
       <ol className="grid max-w-3xl gap-3">
         <Step number={1} done={Boolean(state?.connected)} title="Run my agent on this computer">
           {state?.connected ? (
@@ -112,20 +126,19 @@ function Setup() {
           <p className="text-muted-foreground">
             {folderCount > 0
               ? `${folderCount} project${folderCount === 1 ? '' : 's'} set.`
-              : 'Only projects with a folder here send jobs to this computer.'}
+              : 'Jobs only run here for projects you add. Pick a folder (usually its repository), or “No folder” to let the app make a scratch folder.'}
           </p>
           <Button asChild size="sm" variant="outline" className="justify-self-start">
             <Link to="/desktop/folders">Choose folders</Link>
           </Button>
         </Step>
-        <Step
-          number={3}
-          done={Object.keys(state?.permissionModes ?? {}).length > 0}
-          title="Harnesses and permissions"
-        >
+        <Step number={3} done={testedCount > 0} title="Pick permissions and run a test">
+          <p className="text-muted-foreground">
+            Done once a test run works for one of your harnesses.
+          </p>
           <HarnessList installedOnly />
         </Step>
-        <Step number={4} done={false} title="Models and whose jobs run">
+        <Step number={4} done={null} title="Models and whose jobs run">
           <p className="text-muted-foreground">
             Pick which model runs each difficulty, and whether other people’s mentions run by
             themselves or wait for your OK.
@@ -134,9 +147,9 @@ function Setup() {
             <Link to="/settings/automatic-agents">Open Automatic agents</Link>
           </Button>
         </Step>
-        <Step number={5} done={false} title="Watch it work">
+        <Step number={5} done={null} title="Watch it work">
           <p className="text-muted-foreground">
-            Run a test above, then mention your agent on a task: it shows up in Running agents.
+            Mention or assign your agent on a task: the job shows up in Running agents.
           </p>
           <Button asChild size="sm" className="justify-self-start">
             <Link to="/desktop">Running agents</Link>

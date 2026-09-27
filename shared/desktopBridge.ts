@@ -38,6 +38,8 @@ export interface DesktopState {
   machineName: string;
   pausedHere: boolean;
   folders: Record<string, DesktopFolder>;
+  /** Harnesses whose test run succeeded here (optional: older apps). */
+  testedHarnesses?: string[];
   permissionModes: Partial<Record<HarnessId, string>>;
   runner: {
     status: DesktopRunnerStatus;

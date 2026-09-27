@@ -1,5 +1,6 @@
 import { PlayIcon } from 'lucide-react';
 import { useEffect, useId, useState } from 'react';
+import { Link } from 'react-router';
 import { toast } from 'sonner';
 import type { DesktopHarness, DesktopTestResult } from '@shared/desktopBridge';
 import { Spinner } from '@web/components/common/Spinner';
@@ -10,7 +11,7 @@ import { Button } from '@web/components/ui/button';
 import { Label } from '@web/components/ui/label';
 import { Skeleton } from '@web/components/ui/skeleton';
 import { errorMessage } from '@web/lib/api';
-import { desktopBridge } from '@web/lib/desktop';
+import { desktopBridge, useDesktopState } from '@web/lib/desktop';
 import { useDocumentTitle } from '@web/lib/title';
 import { DesktopOnly } from './common';
 
@@ -63,6 +64,10 @@ export function HarnessList({ installedOnly = false }: { installedOnly?: boolean
 
 function HarnessCard({ harness }: { harness: DesktopHarness }) {
   const selectId = useId();
+  const { state } = useDesktopState();
+  // A test run uses this computer's agent key, so it needs step 1 of the setup first.
+  const connected = Boolean(state?.connected);
+  const tested = state?.testedHarnesses?.includes(harness.id) ?? false;
   const [mode, setMode] = useState(harness.mode ?? '');
   const [testing, setTesting] = useState(false);
   const [test, setTest] = useState<DesktopTestResult | null>(null);
@@ -114,11 +119,22 @@ function HarnessCard({ harness }: { harness: DesktopHarness }) {
             </select>
           </div>
           {description ? <p className="text-sm text-muted-foreground">{description}</p> : null}
-          <div>
-            <Button size="sm" variant="outline" onClick={runTest} disabled={testing}>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button size="sm" variant="outline" onClick={runTest} disabled={testing || !connected}>
               {testing ? <Spinner /> : <PlayIcon aria-hidden="true" />}
               Run a test
             </Button>
+            {!connected ? (
+              <span className="text-sm text-muted-foreground">
+                First connect this computer:{' '}
+                <Link to="/desktop/setup" className="underline">
+                  Set up this computer
+                </Link>{' '}
+                → Run my agent here.
+              </span>
+            ) : tested && !test ? (
+              <span className="text-sm text-muted-foreground">Tested: it works.</span>
+            ) : null}
           </div>
           {test ? (
             <pre

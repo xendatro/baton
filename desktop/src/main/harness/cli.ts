@@ -124,7 +124,11 @@ export function cliAdapter(spec: CliSpec): HarnessAdapter {
             if (event.type === 'error' && error) lastError = error;
             return;
           }
-          if (stream === 'stderr') lastError = line;
+          if (stream === 'stderr') {
+            lastError = line;
+            emit({ type: 'log', text: line });
+            return;
+          }
           emit({ type: 'output', text: line });
         },
       });

@@ -35,6 +35,8 @@ export interface McpInjection {
 
 export type HarnessEvent =
   | { type: 'output'; text: string }
+  /** The harness's own diagnostics on stderr (not the agent's work): shown only if the run fails. */
+  | { type: 'log'; text: string }
   | { type: 'session'; sessionId: string }
   | { type: 'status'; text: string };
 

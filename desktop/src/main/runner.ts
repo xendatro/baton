@@ -375,7 +375,7 @@ export class Runner extends EventEmitter {
       },
       signal: entry.controller.signal,
       onEvent: (event) => {
-        if (event.type === 'output') this.log(entry, event.text);
+        if (event.type === 'output' || event.type === 'log') this.log(entry, event.text);
         else if (event.type === 'status') this.log(entry, event.text);
       },
     });

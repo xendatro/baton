@@ -27,6 +27,8 @@ export interface AppConfig {
   /** Project id → folder. Projects without one aren't offered jobs here. */
   folders: Record<string, FolderMapping>;
   permissionModes: Partial<Record<HarnessId, string>>;
+  /** Harnesses whose test run succeeded on this computer (the setup page's step 3). */
+  testedHarnesses?: HarnessId[];
   /** Harness → when it may be used again (ms since epoch). */
   exhaustedUntil: Partial<Record<HarnessId, number>>;
   setupDone: boolean;

@@ -157,6 +157,9 @@ export const pipelineNameSchema = z
   .min(1, 'Required')
   .max(40, 'At most 40 characters');
 
+/** The first pipeline's name when a project is created without one (older clients, MCP). */
+export const DEFAULT_PIPELINE_NAME = 'Main';
+
 export const pipelineSchema = z.object({
   id: z.string(),
   projectId: z.string(),
@@ -174,6 +177,8 @@ export const pipelineSchema = z.object({
   manageRule: principalRuleSchema.nullable(),
   statusCount: z.number().int().nonnegative(),
   taskCount: z.number().int().nonnegative(),
+  /** Its tasks not completed yet (the sidebar's count). Optional for fixtures. */
+  openTaskCount: z.number().int().nonnegative().optional(),
   /** What the viewer may do. */
   canCreateTasks: z.boolean(),
   canManage: z.boolean(),
@@ -331,6 +336,11 @@ export const createProjectInputSchema = z.object({
   readme: readmeSchema.optional(),
   icon: emojiSchema.nullable().optional(),
   color: hexColorSchema.optional(),
+  /**
+   * The name of its first pipeline (every project has at least one). Optional for older clients:
+   * `DEFAULT_PIPELINE_NAME` then.
+   */
+  pipelineName: pipelineNameSchema.optional(),
 });
 export type CreateProjectInput = z.infer<typeof createProjectInputSchema>;
 

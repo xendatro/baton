@@ -110,6 +110,21 @@ describe('project MCP tools', () => {
     }
   });
 
+  it('names the first pipeline of a new project ("Main" without one)', async () => {
+    const client = await connect(owner);
+    const named = await call<{ pipelines: Array<{ name: string }> }>(client, 'create_project', {
+      team: 'acme',
+      name: 'Game',
+      pipeline: 'Modeling',
+    });
+    expect(named.pipelines.map((pipeline) => pipeline.name)).toEqual(['Modeling']);
+    const unnamed = await call<{ pipelines: Array<{ name: string }> }>(client, 'create_project', {
+      team: 'acme',
+      name: 'Docs',
+    });
+    expect(unnamed.pipelines.map((pipeline) => pipeline.name)).toEqual(['Main']);
+  });
+
   it('runs the project lifecycle: create, read, update key, delete, restore', async () => {
     const client = await connect(owner);
     const created = await call<{ key: string; ref: string; url: string; statuses: unknown[] }>(

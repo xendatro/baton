@@ -112,7 +112,7 @@ const createProjectTool = defineTool({
   name: 'create_project',
   title: 'Create project',
   description:
-    'Creates a project in a team (needs MANAGE_PROJECTS). It starts with the statuses Open (default) and Done. The key is derived from the name unless given.',
+    'Creates a project in a team (needs MANAGE_PROJECTS). Every project has at least one pipeline: it starts with one (named by `pipeline`, else "Main") whose stages are Open (default) and Done. The key is derived from the name unless given.',
   input: toolInput({
     team: z.string().min(1).describe('Team slug or id'),
     name: z.string().min(1).max(LIMITS.projectName.max).describe('Project name'),
@@ -130,12 +130,17 @@ const createProjectTool = defineTool({
     readme: z.string().optional().describe('README in markdown, shown on the project overview'),
     icon: emojiField.optional(),
     color: colorField.optional(),
+    pipeline: z
+      .string()
+      .max(40)
+      .optional()
+      .describe('Name of the project’s first pipeline (e.g. Development); "Main" if omitted'),
   }),
   annotations: { destructiveHint: false },
   handler: (ctx, input) => {
-    const { team, ...fields } = input;
+    const { team, pipeline, ...fields } = input;
     const teamId = resolveTeam(ctx.deps, ctx.actor, team).team.id;
-    const parsed = parseInput(createProjectInputSchema, fields);
+    const parsed = parseInput(createProjectInputSchema, { ...fields, pipelineName: pipeline });
     return withUrl(ctx, createProject(ctx.deps, ctx.actor, teamId, parsed));
   },
 });

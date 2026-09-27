@@ -18,6 +18,7 @@ afterEach(() => {
   unregister?.();
   unregister = null;
   vi.unstubAllGlobals();
+  window.localStorage.clear();
 });
 
 function status(id: string, name: string, position: number): Status {
@@ -125,12 +126,13 @@ describe('TasksPage with several pipelines (BAT-25)', () => {
     };
   }
 
-  it('shows All and one tab per pipeline, and asks the board for the chosen one', async () => {
-    const create = vi.fn();
-    unregister = registerShellAction('task.create', create);
+  function mockPipelines(
+    items: ReturnType<typeof pipeline>[],
+    permissions: Permission[] = ['VIEW_PROJECT', 'CREATE_TASKS'],
+  ) {
     const boardUrls: string[] = [];
     mockApi({
-      '/api/me': meWith(['VIEW_PROJECT', 'CREATE_TASKS']),
+      '/api/me': meWith(permissions),
       '/api/projects/p1/board': ({ url }: { url: URL }) => {
         boardUrls.push(url.search);
         return new Response(JSON.stringify(emptyBoard), {
@@ -139,18 +141,32 @@ describe('TasksPage with several pipelines (BAT-25)', () => {
       },
       '/api/projects/p1/statuses': { items: statuses },
       '/api/projects/p1/labels': { items: [] },
-      '/api/projects/p1/pipelines': {
-        items: [pipeline('pl-a', 'Scripting', 0), pipeline('pl-b', 'Modeling', 1)],
-      },
+      '/api/projects/p1/pipelines': { items },
     });
+    return boardUrls;
+  }
+
+  it('shows one tab per pipeline then All, opening on the default pipeline', async () => {
+    const create = vi.fn();
+    unregister = registerShellAction('task.create', create);
+    const boardUrls = mockPipelines([
+      pipeline('pl-a', 'Scripting', 0),
+      pipeline('pl-b', 'Modeling', 1),
+    ]);
     renderWorkPage(<TasksPage />, '/t/:team/p/:key/tasks', '/t/acme/p/WEB/tasks');
     const tabs = await screen.findByRole('tablist', { name: 'Pipelines' });
     expect(
       within(tabs)
         .getAllByRole('tab')
         .map((tab) => tab.textContent),
-    ).toEqual(['All3', 'Scripting1', 'Modeling2']);
-    expect(within(tabs).getByRole('tab', { name: /All/ })).toHaveAttribute('aria-selected', 'true');
+    ).toEqual(['Scripting1', 'Modeling2', 'All3']);
+    expect(within(tabs).getByRole('tab', { name: /Scripting/ })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    );
+    await vi.waitFor(() => expect(boardUrls).not.toHaveLength(0));
+    // Never all pipelines' tasks first: the board asks for the default pipeline's straight away.
+    expect(boardUrls.every((search) => search.includes('pipeline=pl-a'))).toBe(true);
 
     await userEvent.click(within(tabs).getByRole('tab', { name: /Modeling/ }));
     await vi.waitFor(() =>
@@ -162,5 +178,41 @@ describe('TasksPage with several pipelines (BAT-25)', () => {
       statusId: undefined,
       pipelineId: 'pl-b',
     });
+    // The tab is remembered for the next visit.
+    expect(window.localStorage.getItem('baton.pipelineTab.p1')).toBe('pl-b');
+
+    await userEvent.click(within(tabs).getByRole('tab', { name: /All/ }));
+    await vi.waitFor(() => expect(boardUrls.at(-1)?.includes('pipeline')).toBe(false));
+  });
+
+  it('shows the tab of a project with one pipeline, and New pipeline to status managers', async () => {
+    mockPipelines(
+      [pipeline('pl-a', 'Development', 0)],
+      ['VIEW_PROJECT', 'CREATE_TASKS', 'MANAGE_STATUSES'],
+    );
+    renderWorkPage(<TasksPage />, '/t/:team/p/:key/tasks', '/t/acme/p/WEB/tasks');
+    const tabs = await screen.findByRole('tablist', { name: 'Pipelines' });
+    expect(
+      within(tabs)
+        .getAllByRole('tab')
+        .map((tab) => tab.textContent),
+    ).toEqual(['Development1']);
+    expect(within(tabs).getByRole('tab')).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('link', { name: 'New pipeline' })).toHaveAttribute(
+      'href',
+      '/t/acme/p/WEB/settings/pipelines?new=pipeline',
+    );
+  });
+
+  it('opens on the tab last picked in this browser', async () => {
+    window.localStorage.setItem('baton.pipelineTab.p1', 'pl-b');
+    mockPipelines([pipeline('pl-a', 'Scripting', 0), pipeline('pl-b', 'Modeling', 1)]);
+    renderWorkPage(<TasksPage />, '/t/:team/p/:key/tasks', '/t/acme/p/WEB/tasks');
+    const tabs = await screen.findByRole('tablist', { name: 'Pipelines' });
+    expect(within(tabs).getByRole('tab', { name: /Modeling/ })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    );
+    expect(screen.queryByRole('link', { name: 'New pipeline' })).not.toBeInTheDocument();
   });
 });

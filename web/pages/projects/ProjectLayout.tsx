@@ -6,6 +6,7 @@ import {
   SettingsIcon,
   TagsIcon,
   UserCogIcon,
+  WorkflowIcon,
   type LucideIcon,
 } from 'lucide-react';
 import { useState } from 'react';
@@ -134,11 +135,11 @@ function ProjectFrame({ team, project }: { team: MeTeam; project: MeProject }) {
     },
     {
       id: `project.${project.id}.statuses`,
-      label: `${project.name} › Statuses`,
+      label: `${project.name} › Pipelines`,
       group: 'Project',
-      icon: KanbanSquareIcon,
-      keywords: [project.key, 'workflow', 'columns', 'status settings'],
-      perform: () => void navigate(`${base}/settings/statuses`),
+      icon: WorkflowIcon,
+      keywords: [project.key, 'workflow', 'stages', 'statuses', 'columns', 'status settings'],
+      perform: () => void navigate(`${base}/settings/pipelines`),
     },
     {
       id: `project.${project.id}.labels`,

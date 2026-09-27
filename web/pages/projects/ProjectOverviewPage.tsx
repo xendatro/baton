@@ -8,6 +8,7 @@ import {
   PencilIcon,
   Settings2Icon,
   TagsIcon,
+  WorkflowIcon,
 } from 'lucide-react';
 import { useState } from 'react';
 import { Link } from 'react-router';
@@ -38,6 +39,7 @@ import { useDocumentTitle } from '@web/lib/title';
 import { pluralize } from '@web/lib/format';
 import { cn } from '@web/lib/utils';
 import { GithubReadme } from './GithubReadme';
+import { pipelineBoardPath } from '../tasks/pipelineTab';
 import { useProject, useUpdateProject } from './queries';
 import { ReadmeSourceDialog } from './ReadmeSourceDialog';
 import { UnsavedChangesGuard } from './UnsavedChangesGuard';
@@ -115,7 +117,7 @@ function Overview({ team, project }: { team: MeTeam; project: MeProject }) {
             <>
               <AboutCard project={details.data} />
               <StatsCard project={details.data} base={base} />
-              <WorkflowCard project={details.data} base={base} />
+              <PipelinesCard project={details.data} base={base} />
               <LabelsCard project={details.data} base={base} />
             </>
           ) : (
@@ -509,57 +511,66 @@ function StatsCard({ project, base }: { project: Project; base: string }) {
   );
 }
 
-function WorkflowCard({ project, base }: { project: Project; base: string }) {
+/**
+ * The project's pipelines (teams → projects → pipelines → stages → tasks): each one links to its
+ * board, with its task count and its stages as chips (with their task counts).
+ */
+function PipelinesCard({ project, base }: { project: Project; base: string }) {
+  const pipelines = project.pipelines ?? [];
   return (
     <Card
-      title="Workflow"
+      title="Pipelines"
       action={
         <Link
-          to={`${base}/settings/statuses`}
+          to={`${base}/settings/pipelines`}
           className="text-xs text-muted-foreground hover:text-foreground hover:underline"
         >
           Edit
         </Link>
       }
     >
-      {/* BAT-25: one list per pipeline when there are several. */}
-      {groupsOf(project).map((group) => (
-        <div key={group.id ?? 'all'} className="grid gap-1.5 not-first:mt-3">
-          {group.name ? (
-            <p className="text-xs font-medium text-muted-foreground">{group.name}</p>
-          ) : null}
-          <StatusRows statuses={group.statuses} />
-        </div>
-      ))}
+      {pipelines.length === 0 ? (
+        <StageChips statuses={project.statuses} />
+      ) : (
+        <ul className="grid gap-3">
+          {pipelines.map((pipeline) => (
+            <li key={pipeline.id} className="grid gap-1.5">
+              <Link
+                to={pipelineBoardPath(base, pipeline.id)}
+                className="flex items-center gap-1.5 rounded-sm text-sm font-medium outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                <WorkflowIcon className="size-3.5 text-muted-foreground" aria-hidden="true" />
+                <span className="min-w-0 flex-1 truncate">{pipeline.name}</span>
+                <span className="text-xs font-normal text-muted-foreground tabular-nums">
+                  {pluralize(pipeline.taskCount, 'task')}
+                </span>
+              </Link>
+              <StageChips
+                statuses={project.statuses.filter((status) => status.pipelineId === pipeline.id)}
+              />
+            </li>
+          ))}
+        </ul>
+      )}
     </Card>
   );
 }
 
-function groupsOf(project: Project) {
-  const pipelines = project.pipelines ?? [];
-  if (pipelines.length <= 1) return [{ id: null, name: null, statuses: project.statuses }];
-  return pipelines.map((pipeline) => ({
-    id: pipeline.id,
-    name: pipeline.name,
-    statuses: project.statuses.filter((status) => status.pipelineId === pipeline.id),
-  }));
-}
-
-function StatusRows({ statuses }: { statuses: Project['statuses'] }) {
+function StageChips({ statuses }: { statuses: Project['statuses'] }) {
+  if (statuses.length === 0) {
+    return <p className="text-xs text-muted-foreground">No stages yet.</p>;
+  }
   return (
-    <ul className="grid gap-1.5">
+    <ul className="flex flex-wrap gap-1" aria-label="Stages">
       {statuses.map((status) => (
-        <li key={status.id} className="flex items-center gap-2 text-sm">
+        <li
+          key={status.id}
+          className="flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-xs"
+          title={`${status.name}: ${pluralize(status.taskCount, 'task')}${status.isDefault ? ' (default for new tasks)' : ''}`}
+        >
           <StatusIcon status={status} />
-          <span className="min-w-0 flex-1 truncate">{status.name}</span>
-          {status.isDefault ? (
-            <span className="rounded border px-1 text-[0.65rem] text-muted-foreground uppercase">
-              Default
-            </span>
-          ) : null}
-          <span className="text-xs text-muted-foreground tabular-nums">
-            {pluralize(status.taskCount, 'task')}
-          </span>
+          <span className="max-w-28 truncate">{status.name}</span>
+          <span className="text-muted-foreground tabular-nums">{status.taskCount}</span>
         </li>
       ))}
     </ul>

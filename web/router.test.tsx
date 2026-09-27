@@ -51,6 +51,7 @@ const SPEC_PATHS = [
   '/t/acme/p/BAT',
   '/t/acme/p/BAT/settings/general',
   '/t/acme/p/BAT/settings/statuses',
+  '/t/acme/p/BAT/settings/pipelines',
   '/t/acme/p/BAT/settings/labels',
   '/t/acme/p/BAT/issues',
   '/t/acme/p/BAT/issues/new',

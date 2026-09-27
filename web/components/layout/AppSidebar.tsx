@@ -10,6 +10,7 @@ import {
   SettingsIcon,
   PlusIcon,
   SearchIcon,
+  WorkflowIcon,
   type LucideIcon,
 } from 'lucide-react';
 import { useState } from 'react';
@@ -45,7 +46,10 @@ import {
 } from '@web/components/ui/sidebar';
 import { useMe } from '@web/lib/auth';
 import { isDesktopApp, useDesktopState } from '@web/lib/desktop';
+import { pluralize } from '@web/lib/format';
 import { runShellAction, useShellActionAvailable } from '@web/lib/shellActions';
+import { usePipelines } from '@web/pages/projects/queries';
+import { pipelineBoardPath, resolvePipelineTab } from '@web/pages/tasks/pipelineTab';
 import { DesktopUpdateNotice } from './DesktopUpdateNotice';
 import { DesktopVersionLine } from './DesktopVersionLine';
 import { LogoMark } from './Logo';
@@ -106,31 +110,100 @@ function ProjectLink({
   team,
   project,
   pathname,
+  search,
 }: {
   team: MeTeam;
   project: MeProject;
   pathname: string;
+  search: string;
 }) {
   const { setOpenMobile } = useSidebar();
   const to = `/t/${team.slug}/p/${project.key}`;
   const active = pathname === to || pathname.startsWith(`${to}/`);
+  // On its board the pipeline below is the highlighted item instead.
+  const current = active && pathname !== `${to}/tasks`;
   return (
     <SidebarMenuSubItem>
-      <SidebarMenuSubButton asChild isActive={active}>
+      <SidebarMenuSubButton asChild isActive={current}>
         <Link
           to={to}
           onClick={() => setOpenMobile(false)}
-          aria-current={active ? 'page' : undefined}
+          aria-current={current ? 'page' : undefined}
+          className={active ? 'font-medium' : undefined}
         >
           <EntityIcon icon={project.icon} name={project.name} color={project.color} />
           <span>{project.name}</span>
         </Link>
       </SidebarMenuSubButton>
+      {/* The project you're in lists its pipelines (teams → projects → pipelines). */}
+      {active ? (
+        <ProjectPipelines projectBase={to} project={project} pathname={pathname} search={search} />
+      ) : null}
     </SidebarMenuSubItem>
   );
 }
 
-function TeamItem({ team, pathname }: { team: MeTeam; pathname: string }) {
+/**
+ * The active project's pipelines, each linking to its board with its open-task count. The one the
+ * Tasks page shows is highlighted (the same tab its pipeline tabs resolve).
+ */
+function ProjectPipelines({
+  projectBase,
+  project,
+  pathname,
+  search,
+}: {
+  projectBase: string;
+  project: MeProject;
+  pathname: string;
+  search: string;
+}) {
+  const { setOpenMobile } = useSidebar();
+  const pipelines = usePipelines(project.id);
+  const onBoard = pathname === `${projectBase}/tasks`;
+  const tab = onBoard
+    ? resolvePipelineTab(project.id, new URLSearchParams(search).get('pipeline'), pipelines.data)
+    : undefined;
+  if (pipelines.isPending) {
+    return (
+      <div className="mt-0.5 ml-3.5 border-l px-2.5 py-0.5" aria-hidden="true">
+        <SidebarMenuSkeleton className="h-6" />
+      </div>
+    );
+  }
+  if (!pipelines.data?.length) return null;
+  return (
+    <ul
+      aria-label={`${project.name} pipelines`}
+      className="mt-0.5 ml-3.5 flex min-w-0 flex-col gap-0.5 border-l border-sidebar-border px-2.5 py-0.5 group-data-[collapsible=icon]:hidden"
+    >
+      {pipelines.data.map((pipeline) => {
+        const current = tab === pipeline.id;
+        const open = pipeline.openTaskCount ?? pipeline.taskCount;
+        return (
+          <li key={pipeline.id}>
+            <SidebarMenuSubButton asChild size="sm" isActive={current}>
+              <Link
+                to={pipelineBoardPath(projectBase, pipeline.id)}
+                onClick={() => setOpenMobile(false)}
+                aria-current={current ? 'page' : undefined}
+              >
+                <WorkflowIcon aria-hidden="true" />
+                <span>{pipeline.name}</span>
+                <span className="ml-auto text-xs text-muted-foreground tabular-nums">
+                  <span aria-hidden="true">{open}</span>
+                  <span className="sr-only">({pluralize(open, 'open task')})</span>
+                </span>
+              </Link>
+            </SidebarMenuSubButton>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+function TeamItem({ team, pathname, search }: { team: MeTeam; pathname: string; search: string }) {
   const { setOpenMobile } = useSidebar();
   const to = `/t/${team.slug}`;
   const inTeam = pathname === to || pathname.startsWith(`${to}/`);
@@ -161,7 +234,13 @@ function TeamItem({ team, pathname }: { team: MeTeam; pathname: string }) {
             <CollapsibleContent>
               <SidebarMenuSub>
                 {team.projects.map((project) => (
-                  <ProjectLink key={project.id} team={team} project={project} pathname={pathname} />
+                  <ProjectLink
+                    key={project.id}
+                    team={team}
+                    project={project}
+                    pathname={pathname}
+                    search={search}
+                  />
                 ))}
               </SidebarMenuSub>
             </CollapsibleContent>
@@ -174,7 +253,7 @@ function TeamItem({ team, pathname }: { team: MeTeam; pathname: string }) {
 
 /** Left sidebar (SPEC §1.9): logo, search, Inbox, My tasks, Dashboard, teams tree, user menu. */
 export function AppSidebar() {
-  const { pathname } = useLocation();
+  const { pathname, search } = useLocation();
   const me = useMe();
   const unread = useUnreadCount();
   const desktop = isDesktopApp();
@@ -268,7 +347,9 @@ export function AppSidebar() {
                     </SidebarMenuItem>
                   ))
                 ) : teams.length ? (
-                  teams.map((team) => <TeamItem key={team.id} team={team} pathname={pathname} />)
+                  teams.map((team) => (
+                    <TeamItem key={team.id} team={team} pathname={pathname} search={search} />
+                  ))
                 ) : (
                   <li className="px-2 py-1.5 text-xs text-muted-foreground group-data-[collapsible=icon]:hidden">
                     No teams yet. Create one, or ask a teammate for an invite link.

@@ -11,6 +11,8 @@ import { useNavigationHistory } from '@web/lib/navigationHistory';
 import { useRouteContext } from '@web/lib/routeContext';
 import { useSyncProfileTheme } from '@web/lib/theme';
 import { useDocumentTitle } from '@web/lib/title';
+import { usePipelines } from '@web/pages/projects/queries';
+import { ALL_PIPELINES, resolvePipelineTab } from '@web/pages/tasks/pipelineTab';
 import { AppHeader } from './AppHeader';
 import { AppSidebar } from './AppSidebar';
 import { buildCrumbs, titleParts } from './breadcrumbs';
@@ -61,11 +63,27 @@ function useGlobalHotkeys() {
   });
 }
 
+/** On a project's Tasks page: the name of the pipeline its tabs show, for the breadcrumbs. */
+function useBoardPipelineName(pathname: string, search: string): string | undefined {
+  const { team, project } = useRouteContext();
+  const onBoard = team && project ? pathname === `/t/${team.slug}/p/${project.key}/tasks` : false;
+  const pipelines = usePipelines(onBoard ? project?.id : undefined);
+  if (!onBoard || !project) return undefined;
+  const tab = resolvePipelineTab(
+    project.id,
+    new URLSearchParams(search).get('pipeline'),
+    pipelines.data,
+  );
+  if (tab === ALL_PIPELINES) return 'All pipelines';
+  return pipelines.data?.find((pipeline) => pipeline.id === tab)?.name;
+}
+
 function Shell() {
   const location = useLocation();
   const me = useMe().data;
   const connection = useLiveEvents(true);
-  const crumbs = buildCrumbs(location.pathname, me);
+  const pipelineName = useBoardPipelineName(location.pathname, location.search);
+  const crumbs = buildCrumbs(location.pathname, me, { pipelineName });
   useDocumentTitle(titleParts(crumbs, location.pathname), 0);
   useSyncProfileTheme(me?.user.theme);
   useGlobalHotkeys();

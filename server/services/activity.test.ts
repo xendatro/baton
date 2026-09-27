@@ -216,7 +216,7 @@ describe('entity URLs', () => {
     expect(urls[rows[0]?.id ?? '']).toBe('/t/acme/p/API/tasks/1');
     expect(urls[rows[1]?.id ?? '']).toBeNull();
     expect(urls[rows[2]?.id ?? '']).toBe(`/t/acme/settings/roles/${role.id}`);
-    expect(urls[rows[3]?.id ?? '']).toBe('/t/acme/p/API/settings/statuses');
+    expect(urls[rows[3]?.id ?? '']).toBe('/t/acme/p/API/settings/pipelines');
     expect(urls[rows[4]?.id ?? '']).toBe('/t/acme/settings/members');
   });
 });

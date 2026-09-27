@@ -84,17 +84,20 @@ import { StatusDialog, type StatusDialogState } from './StatusDialog';
 import { countRules } from './stageRules';
 
 /**
- * Project settings → Statuses: the board's columns (stages). Drag to reorder (or use the keyboard:
+ * Project settings → Pipelines (the section was "Statuses"; `settings/statuses` redirects here):
+ * the project's pipelines (every task is in a stage of one), then the selected pipeline's stages,
+ * the board's columns. Drag to reorder (or use the keyboard:
  * focus a handle, Space, arrows, Space), rename in place, pick an icon (shape and color), choose
- * the default for new tasks and delete (moving the tasks elsewhere). "New status" and each row's
+ * the default for new tasks and delete (moving the tasks elsewhere). "New stage" and each row's
  * edit button open the status dialog (basics, instructions, arrival, while here, exit criteria,
  * moving on); "Copy pipeline from…" copies another project's statuses and rules.
- * `?status=<id>` (a board column's "Edit statuses") scrolls to that status and highlights it.
+ * `?status=<id>` (a board column's "Edit stage") scrolls to that status and highlights it;
+ * `?new=pipeline` (the board's "New pipeline") opens the New pipeline dialog.
  */
 
 export default function StatusesSettingsPage() {
   const { team, project } = useRouteContext();
-  useDocumentTitle(['Statuses', project?.name]);
+  useDocumentTitle(['Pipelines', project?.name]);
   if (!team || !project) return null;
   return (
     <>
@@ -149,43 +152,39 @@ function Statuses({ teamId, projectId }: { teamId: string; projectId: string }) 
 
   const header = (
     <SettingsHeader
-      title="Statuses"
+      title="Pipelines"
       description={
         <>
-          The columns of the board, in order. Every status is a stage you can rename, recolor,
-          reorder or delete; its <strong>rules</strong> say what happens there: who gets the task,
-          whether entering it resolves fixed issues or releases the claim, whether its tasks still
-          block others or can be claimed, and what it takes to move on.
+          Every task sits in a stage of a pipeline: teams → projects → pipelines → stages → tasks.
+          Each pipeline has its own board. Its stages are the columns, in order, and their{' '}
+          <strong>rules</strong> say what happens there: who gets the task, whether entering it
+          resolves fixed issues or releases the claim, whether its tasks still block others or can
+          be claimed, and what it takes to move on.
         </>
       }
       actions={
-        canManage ? (
-          <>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setCopying(true)}
-              disabled={!canManageAll}
-            >
-              <CopyIcon aria-hidden="true" />
-              Copy pipeline from…
-            </Button>
-            <Button size="sm" onClick={() => setDialog({ mode: 'create' })}>
-              <PlusIcon aria-hidden="true" />
-              New status
-            </Button>
-          </>
+        canManageAll ? (
+          <Button variant="outline" size="sm" onClick={() => setCopying(true)}>
+            <CopyIcon aria-hidden="true" />
+            Copy pipeline from…
+          </Button>
         ) : null
       }
     />
   );
+  const newStage = canManage ? (
+    <Button size="sm" onClick={() => setDialog({ mode: 'create' })}>
+      <PlusIcon aria-hidden="true" />
+      New stage
+    </Button>
+  ) : null;
 
   if (statuses.isError) {
     return (
       <>
         {header}
         <ErrorState
-          title="Couldn’t load the statuses"
+          title="Couldn’t load the stages"
           error={statuses.error}
           onRetry={() => void statuses.refetch()}
         />
@@ -218,6 +217,19 @@ function Statuses({ teamId, projectId }: { teamId: string; projectId: string }) 
           canAdd={canManageAll}
           statuses={allStatuses}
           options={principals.options}
+          startCreating={searchParams.get('new') === 'pipeline' && canManageAll}
+          onCreatingChange={(creating) => {
+            if (!creating && searchParams.has('new')) {
+              setSearchParams(
+                (current) => {
+                  const next = new URLSearchParams(current);
+                  next.delete('new');
+                  return next;
+                },
+                { replace: true },
+              );
+            }
+          }}
         />
       ) : null}
       {canManage ? null : <ReadOnlyNotice permission="Manage statuses" />}
@@ -228,6 +240,12 @@ function Statuses({ teamId, projectId }: { teamId: string; projectId: string }) 
           className="mb-5"
         />
       ) : null}
+      <div className="mb-2 flex items-center justify-between gap-3">
+        <h3 className="text-sm font-semibold">
+          {selected ? `Stages of ${selected.name}` : 'Stages'}
+        </h3>
+        {newStage}
+      </div>
       <SettingsCard>
         <div className="hidden grid-cols-[2rem_2rem_minmax(0,1fr)_4.5rem_5rem_4.5rem] items-center gap-2 border-b px-3 py-2 text-xs font-medium text-muted-foreground sm:grid">
           <span />
@@ -242,16 +260,9 @@ function Statuses({ teamId, projectId }: { teamId: string; projectId: string }) 
         ) : items.length === 0 ? (
           <EmptyState
             icon={KanbanSquareIcon}
-            title="No statuses"
-            description="Add a status to give the board a column."
-            action={
-              canManage ? (
-                <Button size="sm" onClick={() => setDialog({ mode: 'create' })}>
-                  <PlusIcon aria-hidden="true" />
-                  New status
-                </Button>
-              ) : undefined
-            }
+            title="No stages"
+            description="Add a stage to give this pipeline's board a column."
+            action={newStage ?? undefined}
             className="m-4"
           />
         ) : (

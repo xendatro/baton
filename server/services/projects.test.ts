@@ -217,6 +217,35 @@ describe('creating projects', () => {
       meta: { name: 'Web app', key: 'WA' },
     });
     expect(events.map((event) => event.type)).toContain('project.created');
+    // Without a name its first pipeline is "Main".
+    expect(project.pipelines?.map((pipeline) => [pipeline.name, pipeline.isDefault])).toEqual([
+      ['Main', true],
+    ]);
+  });
+
+  it('names the first pipeline as asked (pipelines are mandatory)', async () => {
+    const res = await post(`/api/teams/${team.team.id}/projects`, {
+      name: 'Game',
+      pipelineName: '  Development ',
+    });
+    expect(res.status).toBe(201);
+    const project = projectSchema.parse(await res.json());
+    expect(project.pipelines?.map((pipeline) => [pipeline.name, pipeline.isDefault])).toEqual([
+      ['Development', true],
+    ]);
+    // Its Open is where new tasks start (BAT-34).
+    expect(project.statuses.map((status) => [status.name, status.rules?.allowCreate])).toEqual([
+      ['Open', true],
+      ['Done', false],
+    ]);
+    expect(
+      project.statuses.every((status) => status.pipelineId === project.pipelines?.[0]?.id),
+    ).toBe(true);
+    const blank = await post(`/api/teams/${team.team.id}/projects`, {
+      name: 'Blank',
+      pipelineName: ' ',
+    });
+    expect(blank.status).toBe(400);
   });
 
   it('makes a derived key unique and refuses a key that is taken', async () => {

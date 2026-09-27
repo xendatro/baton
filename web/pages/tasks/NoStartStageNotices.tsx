@@ -27,8 +27,8 @@ export function NoStartStageNotices({
           action={
             canManageStatuses ? (
               <Button asChild variant="outline" size="sm" className="h-7 bg-transparent">
-                <Link to={projectSettingsPath(projectBase, 'statuses', undefined, pipeline.id)}>
-                  Edit statuses
+                <Link to={projectSettingsPath(projectBase, 'pipelines', undefined, pipeline.id)}>
+                  Edit stages
                 </Link>
               </Button>
             ) : null

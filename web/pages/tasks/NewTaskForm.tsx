@@ -319,9 +319,11 @@ function TaskFields({
         }
       />
       <div className="flex flex-wrap items-center gap-2">
-        {creatable.length > 1 && chosenPipeline ? (
+        {/* Always shown (every task is in a pipeline); fixed when there is one to choose. */}
+        {chosenPipeline ? (
           <Select
             value={chosenPipeline.id}
+            disabled={creatable.length < 2}
             onValueChange={(id) => {
               setPipelineId(id);
               setStatusId(null);

@@ -2,6 +2,7 @@ import { and, asc, count, eq, inArray, isNotNull, isNull } from 'drizzle-orm';
 import { DEFAULT_STATUSES } from '@shared/constants';
 import type { PrincipalRule } from '@shared/principals';
 import {
+  DEFAULT_PIPELINE_NAME,
   PROJECT_LIMITS,
   type CreatePipelineInput,
   type DeletePipelineQuery,
@@ -279,6 +280,22 @@ export function pipelinesFor(
       .all()
       .map((row) => [row.id, row.n]),
   );
+  const openTaskCounts = new Map(
+    db
+      .select({ id: s.status.pipelineId, n: count() })
+      .from(s.task)
+      .innerJoin(s.status, eq(s.status.id, s.task.statusId))
+      .where(
+        and(
+          inArray(s.status.pipelineId, ids),
+          isNull(s.task.deletedAt),
+          isNull(s.task.completedAt),
+        ),
+      )
+      .groupBy(s.status.pipelineId)
+      .all()
+      .map((row) => [row.id, row.n]),
+  );
   return rows.flatMap((row) => {
     const can = pipelinePermissions(db, membership, row);
     if (!can.view) return [];
@@ -297,6 +314,7 @@ export function pipelinesFor(
         manageRule: row.manageRule ?? null,
         statusCount: statusCounts.get(row.id) ?? 0,
         taskCount: taskCounts.get(row.id) ?? 0,
+        openTaskCount: openTaskCounts.get(row.id) ?? 0,
         canCreateTasks: can.create,
         canManage: can.manage,
       },
@@ -382,14 +400,14 @@ export function insertPipelineWithStages(
   return { pipeline: row, statuses };
 }
 
-/** A new project's default pipeline and its stages. */
-export function seedDefaultPipeline(tx: Tx, projectId: string, now = new Date()) {
-  return insertPipelineWithStages(
-    tx,
-    projectId,
-    { name: 'Default', isDefault: true, position: 0 },
-    now,
-  );
+/** A new project's default pipeline (its first, named by whoever creates it) and its stages. */
+export function seedDefaultPipeline(
+  tx: Tx,
+  projectId: string,
+  now = new Date(),
+  name: string = DEFAULT_PIPELINE_NAME,
+) {
+  return insertPipelineWithStages(tx, projectId, { name, isDefault: true, position: 0 }, now);
 }
 
 // ---------------------------------------------------------------------------------------------

@@ -49,7 +49,8 @@ test('the team home creates a project through the projects dialog; Trash restore
   await expect(dialog.getByText('In Integration Crew.')).toBeVisible();
   // The team comes from the team home, so the dialog doesn't ask for one.
   await expect(dialog.getByLabel('Team')).toHaveCount(0);
-  await dialog.getByLabel('Name').fill('Mission Control');
+  await dialog.getByLabel('Name', { exact: true }).fill('Mission Control');
+  await dialog.getByLabel('Name your first pipeline').fill('Operations');
   await dialog.getByRole('button', { name: 'Create project' }).click();
   await expect(page).toHaveURL(new RegExp(`/t/${team.slug}/p/MC$`));
   await expect(page.getByRole('heading', { level: 1, name: 'Mission Control' })).toBeVisible();
@@ -200,7 +201,8 @@ test('a task deleted from its page is counted on the team home and restores from
   await page.getByRole('button', { name: 'Task actions' }).click();
   await page.getByRole('menuitem', { name: 'Delete task' }).click();
   await page.getByRole('alertdialog').getByRole('button', { name: 'Delete task' }).click();
-  await expect(page).toHaveURL(new RegExp(`/t/${team.slug}/p/OPS/tasks$`));
+  // The board, on its pipeline's tab.
+  await expect(page).toHaveURL(new RegExp(`/t/${team.slug}/p/OPS/tasks\\?pipeline=\\w+$`));
 
   await page.goto(`/t/${team.slug}/settings/trash`);
   await page.getByRole('button', { name: 'Restore task Rotate the keys' }).click();

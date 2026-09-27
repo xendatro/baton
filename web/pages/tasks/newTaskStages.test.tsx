@@ -23,6 +23,7 @@ afterEach(() => {
   unregister?.();
   unregister = null;
   vi.unstubAllGlobals();
+  window.localStorage.clear();
 });
 
 function status(id: string, name: string, position: number, allowCreate: boolean): Status {
@@ -100,7 +101,12 @@ describe('the board', () => {
     const done = within(board).getByRole('region', { name: 'Done' });
     expect(within(done).queryByRole('button', { name: /New task in/ })).not.toBeInTheDocument();
     await userEvent.click(within(board).getByRole('button', { name: 'New task in Review' }));
-    expect(create).toHaveBeenCalledWith({ projectId: 'p1', statusId: 's-review' });
+    // The board is always one pipeline's (its tab), so the task starts in it.
+    expect(create).toHaveBeenCalledWith({
+      projectId: 'p1',
+      statusId: 's-review',
+      pipelineId: 'pl-a',
+    });
     expect(screen.queryByTestId('no-start-stage')).not.toBeInTheDocument();
   });
 
@@ -108,9 +114,9 @@ describe('the board', () => {
     renderBoard([status('s-open', 'Open', 0, false), status('s-done', 'Done', 1, false)]);
     const notice = await screen.findByTestId('no-start-stage');
     expect(notice).toHaveTextContent('No status accepts new tasks');
-    expect(within(notice).getByRole('link', { name: 'Edit statuses' })).toHaveAttribute(
+    expect(within(notice).getByRole('link', { name: 'Edit stages' })).toHaveAttribute(
       'href',
-      '/t/acme/p/WEB/settings/statuses?pipeline=pl-a',
+      '/t/acme/p/WEB/settings/pipelines?pipeline=pl-a',
     );
     expect(screen.getByRole('button', { name: /New task/ })).toBeDisabled();
     expect(screen.queryByRole('button', { name: /New task in/ })).not.toBeInTheDocument();

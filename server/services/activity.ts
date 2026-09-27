@@ -275,7 +275,7 @@ function resolveEntityUrls(
         url = project ? appPaths.project(project.slug, project.key) : null;
         break;
       case 'status':
-        url = project ? appPaths.projectSettings(project.slug, project.key, 'statuses') : null;
+        url = project ? appPaths.projectSettings(project.slug, project.key, 'pipelines') : null;
         break;
       case 'label':
         url = project ? appPaths.projectSettings(project.slug, project.key, 'labels') : null;

@@ -84,10 +84,14 @@ test('create a project from the palette, write its README, and re-key it', async
 
   const dialog = page.getByRole('dialog', { name: 'New project' });
   await expect(dialog).toBeVisible();
-  await dialog.getByLabel('Name').fill('Web app');
+  await dialog.getByLabel('Name', { exact: true }).fill('Web app');
   await expect(dialog.getByLabel('Key')).toHaveValue('WA');
   await expect(dialog.getByText('Available')).toBeVisible();
   await dialog.getByLabel('Description').fill('The customer-facing web app');
+  // Pipelines are mandatory: the dialog asks for the first one's name.
+  await dialog.getByRole('button', { name: 'Create project' }).click();
+  await expect(dialog.getByText('Name the project’s first pipeline')).toBeVisible();
+  await dialog.getByLabel('Name your first pipeline').fill('Development');
   await dialog.getByRole('button', { name: 'Create project' }).click();
 
   await expect(page).toHaveURL(new RegExp(`/t/${team.slug}/p/WA$`));
@@ -131,15 +135,18 @@ test('create a project from the palette, write its README, and re-key it', async
   expect(errors).toEqual([]);
 });
 
-test('manage statuses: add, set default, pick an icon, reorder by keyboard, delete', async ({
+test('manage stages: add, set default, pick an icon, reorder by keyboard, delete', async ({
   page,
 }) => {
   const owner = await signedInUser(page);
   const team = seedTeam(owner);
   const project = await createProjectViaApi(page, team, { name: 'Board', key: 'BRD' });
 
+  // The old Statuses URL leads to Pipelines.
   await page.goto(`/t/${team.slug}/p/BRD/settings/statuses`);
-  await expect(page.getByRole('heading', { name: 'Statuses' })).toBeVisible();
+  await expect(page).toHaveURL(new RegExp(`/t/${team.slug}/p/BRD/settings/pipelines$`));
+  await expect(page.getByRole('heading', { name: 'Pipelines', level: 2 })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Stages of Main' })).toBeVisible();
   await expect(page.getByTestId('status-row')).toHaveCount(2);
   // The rows are items of a real list inside the radio group (UX-15).
   await expect(
@@ -149,7 +156,7 @@ test('manage statuses: add, set default, pick an icon, reorder by keyboard, dele
       .getByRole('listitem'),
   ).toHaveCount(2);
 
-  await page.getByRole('button', { name: 'New status' }).click();
+  await page.getByRole('button', { name: 'New stage' }).click();
   const create = page.getByRole('dialog', { name: 'New status' });
   await create.getByRole('textbox', { name: 'Name' }).fill('In review');
   for (let step = 0; step < 5; step += 1) {
@@ -311,9 +318,9 @@ test('members without permissions see read-only settings', async ({ page, browse
   await expect(memberPage.getByLabel('Name')).toBeDisabled();
   await expect(memberPage.getByRole('button', { name: 'Delete project' })).toHaveCount(0);
 
-  await memberPage.goto(`/t/${team.slug}/p/SHR/settings/statuses`);
+  await memberPage.goto(`/t/${team.slug}/p/SHR/settings/pipelines`);
   await expect(memberPage.getByText(/needs the Manage statuses permission/)).toBeVisible();
-  await expect(memberPage.getByRole('button', { name: 'New status' })).toHaveCount(0);
+  await expect(memberPage.getByRole('button', { name: 'New stage' })).toHaveCount(0);
 
   // Labels are an @everyone permission.
   await memberPage.goto(`/t/${team.slug}/p/SHR/settings/labels`);

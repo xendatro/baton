@@ -157,19 +157,19 @@ describe('Tasks page → Customize menu', { timeout: 30_000 }, () => {
 
     await user.click(await screen.findByRole('button', { name: 'Customize board' }, LAZY));
     const menu = await screen.findByRole('menu');
-    expect(within(menu).getByRole('menuitem', { name: 'Edit statuses' })).toHaveAttribute(
+    expect(within(menu).getByRole('menuitem', { name: 'Edit stages' })).toHaveAttribute(
       'href',
-      '/t/acme/p/WEB/settings/statuses',
+      '/t/acme/p/WEB/settings/pipelines',
     );
     expect(within(menu).getByRole('menuitem', { name: 'Edit labels' })).toHaveAttribute(
       'href',
       '/t/acme/p/WEB/settings/labels',
     );
 
-    await user.click(within(menu).getByRole('menuitem', { name: 'Edit statuses' }));
+    await user.click(within(menu).getByRole('menuitem', { name: 'Edit stages' }));
     // Lazy routes: the location changes once the page's module has loaded.
     await waitFor(
-      () => expect(router.state.location.pathname).toBe('/t/acme/p/WEB/settings/statuses'),
+      () => expect(router.state.location.pathname).toBe('/t/acme/p/WEB/settings/pipelines'),
       LAZY,
     );
     // The settings page leads back to the board.
@@ -185,7 +185,7 @@ describe('Tasks page → Customize menu', { timeout: 30_000 }, () => {
     await user.click(await screen.findByRole('button', { name: 'Customize board' }, LAZY));
     const menu = await screen.findByRole('menu');
     expect(within(menu).getByRole('menuitem', { name: 'Edit labels' })).toBeVisible();
-    expect(within(menu).queryByRole('menuitem', { name: 'Edit statuses' })).toBeNull();
+    expect(within(menu).queryByRole('menuitem', { name: 'Edit stages' })).toBeNull();
   });
 
   it('offers viewers who can manage neither only their own settings', async () => {
@@ -216,9 +216,9 @@ describe('board column menu', { timeout: 30_000 }, () => {
 
     await user.click(await screen.findByRole('button', { name: 'In Review column actions' }, LAZY));
     const item = within(await screen.findByRole('menu')).getByRole('menuitem', {
-      name: 'Edit statuses',
+      name: 'Edit stage',
     });
-    expect(item).toHaveAttribute('href', '/t/acme/p/WEB/settings/statuses?status=s-review');
+    expect(item).toHaveAttribute('href', '/t/acme/p/WEB/settings/pipelines?status=s-review');
     await user.click(item);
     await waitFor(() => expect(router.state.location.search).toBe('?status=s-review'), LAZY);
 

@@ -289,7 +289,7 @@ test.describe('on a touch screen', () => {
         Open: ['Bravo', 'Alpha'],
         Done: [],
       });
-    await expect(page).toHaveURL(new RegExp(`${project.path}/tasks$`));
+    await expect(page).toHaveURL(new RegExp(`${project.path}/tasks\\?pipeline=\\w+$`));
     await expect(open.getByRole('link')).toHaveText([/Bravo/, /Alpha/]);
 
     // A quick horizontal swipe on a card still pans the board to the next column.
@@ -302,7 +302,7 @@ test.describe('on a touch screen', () => {
     await touchDrag(page, start, { x: start.x - 200, y: start.y }, 0);
     await expect.poll(scrollLeft).toBeGreaterThan(50);
     expect(await boardOrder(page, project)).toEqual({ Open: ['Bravo', 'Alpha'], Done: [] });
-    await expect(page).toHaveURL(new RegExp(`${project.path}/tasks$`));
+    await expect(page).toHaveURL(new RegExp(`${project.path}/tasks\\?pipeline=\\w+$`));
   });
 });
 
@@ -388,7 +388,7 @@ test('task page: edit the title, change status, claim, release, delete and undo'
   const confirm = page.getByRole('alertdialog');
   await expect(confirm).toContainText('agents working on it are stopped');
   await confirm.getByRole('button', { name: 'Delete task' }).click();
-  await expect(page).toHaveURL(new RegExp(`${project.path}/tasks$`));
+  await expect(page).toHaveURL(new RegExp(`${project.path}/tasks\\?pipeline=\\w+$`));
   const toast = page.locator('[data-sonner-toast]', { hasText: `Deleted ${task.ref}` });
   await toast.getByRole('button', { name: 'Undo' }).click();
   await expect(page).toHaveURL(new RegExp(`${task.path}$`));

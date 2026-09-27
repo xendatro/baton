@@ -3,6 +3,7 @@ import {
   BellIcon,
   BellOffIcon,
   CalendarIcon,
+  ChevronRightIcon,
   CircleIcon,
   CopyIcon,
   HandIcon,
@@ -13,9 +14,10 @@ import {
   TagIcon,
   Trash2Icon,
   UsersIcon,
+  WorkflowIcon,
 } from 'lucide-react';
 import { useState, type ComponentProps, type ReactNode } from 'react';
-import { useNavigate, useParams } from 'react-router';
+import { Link, useNavigate, useParams } from 'react-router';
 import { toast } from 'sonner';
 import { LIMITS, PRIORITIES, type PriorityValue } from '@shared/constants';
 import type { Attachment, MeProject, MeTeam } from '@shared/schemas/core';
@@ -76,6 +78,7 @@ import { useMarkItemRead } from '../inbox/useMarkItemRead';
 import { copyText } from '../teams/clipboard';
 import { useDifficulties } from '../projects/difficultyQueries';
 import { useCreateLabel, useLabels, usePipelines, useStatuses } from '../projects/queries';
+import { pipelineBoardPath } from './pipelineTab';
 import { ClaimPanel } from './ClaimPanel';
 import { ForceMoveDialog } from './ForceMoveDialog';
 import { SendBackDialog, type SendBackResult } from './SendBackDialog';
@@ -438,7 +441,7 @@ function TaskView({ task, team, project }: { task: Task; team: MeTeam; project: 
         <header className="min-w-0 lg:col-start-1 lg:row-start-1">
           <div className="flex items-start gap-2">
             <div className="min-w-0 flex-1">
-              <p className="mb-1 font-mono text-xs text-muted-foreground">{task.ref}</p>
+              <TaskLocation task={task} team={team} project={project} />
               {editingTitle ? (
                 <TitleEditor
                   initial={task.title}
@@ -514,14 +517,23 @@ function TaskView({ task, team, project }: { task: Task; team: MeTeam; project: 
                 </PropertyButton>
               </StatusPicker>
             </Property>
-            {pipelineList.length > 1 && task.status.pipeline ? (
+            {task.status.pipeline ? (
               <Property label="Pipeline">
-                <p
-                  className="flex h-8 items-center px-2 text-sm"
-                  title="Pick a status of another pipeline to move it there"
+                <Link
+                  to={pipelineBoardPath(
+                    `/t/${team.slug}/p/${project.key}`,
+                    task.status.pipeline.id,
+                  )}
+                  className="flex h-8 items-center gap-1.5 rounded-md px-2 text-sm outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
+                  title={
+                    pipelineList.length > 1
+                      ? 'Its board. Pick a stage of another pipeline to move it there'
+                      : 'Its board'
+                  }
                 >
+                  <WorkflowIcon className="size-3.5 text-muted-foreground" aria-hidden="true" />
                   {task.status.pipeline.name}
-                </p>
+                </Link>
               </Property>
             ) : null}
             <Property label="Priority" hotkey="p">
@@ -1185,5 +1197,44 @@ function TaskSkeleton({ team, project }: { team: MeTeam; project: MeProject }) {
         </div>
       </div>
     </PageContainer>
+  );
+}
+
+/**
+ * Where the task sits: Team › Project › Pipeline › Stage › ref, each step up linking to its page
+ * (the pipeline's board; the stage, that board filtered to it).
+ */
+function TaskLocation({ task, team, project }: { task: Task; team: MeTeam; project: MeProject }) {
+  const projectBase = `/t/${team.slug}/p/${project.key}`;
+  const pipeline = task.status.pipeline;
+  const board = pipeline ? pipelineBoardPath(projectBase, pipeline.id) : `${projectBase}/tasks`;
+  const steps = [
+    { label: team.name, to: `/t/${team.slug}` },
+    { label: project.name, to: projectBase },
+    ...(pipeline ? [{ label: pipeline.name, to: board }] : []),
+    {
+      label: task.status.name,
+      to: `${board}${board.includes('?') ? '&' : '?'}status=${encodeURIComponent(task.status.id)}`,
+    },
+  ];
+  return (
+    <nav aria-label="Task location" className="mb-1 min-w-0 text-xs text-muted-foreground">
+      <ol className="flex flex-wrap items-center gap-x-1 gap-y-0.5">
+        {steps.map((step) => (
+          <li key={step.to} className="flex min-w-0 items-center gap-1">
+            <Link
+              to={step.to}
+              className="max-w-40 truncate rounded-sm outline-none hover:text-foreground hover:underline focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              {step.label}
+            </Link>
+            <ChevronRightIcon className="size-3 shrink-0" aria-hidden="true" />
+          </li>
+        ))}
+        <li aria-current="page" className="font-mono tabular-nums">
+          {task.ref}
+        </li>
+      </ol>
+    </nav>
   );
 }

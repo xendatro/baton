@@ -31,7 +31,7 @@ export interface CustomizeMenuProps {
   projectBase: string;
   canManageStatuses: boolean;
   canManageLabels: boolean;
-  /** BAT-25: the board's pipeline tab ("Edit statuses" opens its stages). */
+  /** BAT-25: the board's pipeline tab ("Edit stages" opens its stages). */
   pipelineId?: string | undefined;
 }
 
@@ -59,15 +59,15 @@ export function CustomizeMenu({
         ) : null}
         {canManageStatuses ? (
           <DropdownMenuItem asChild>
-            <Link to={projectSettingsPath(projectBase, 'statuses', undefined, pipelineId)}>
+            <Link to={projectSettingsPath(projectBase, 'pipelines', undefined, pipelineId)}>
               <KanbanSquareIcon aria-hidden="true" />
-              Edit statuses
+              Edit stages
             </Link>
           </DropdownMenuItem>
         ) : null}
         {canManageStatuses ? (
           <DropdownMenuItem asChild>
-            <Link to={projectSettingsPath(projectBase, 'statuses')}>
+            <Link to={projectSettingsPath(projectBase, 'pipelines')}>
               <WorkflowIcon aria-hidden="true" />
               Manage pipelines
             </Link>
@@ -135,7 +135,7 @@ export function ColumnMenu({
         <DropdownMenuItem asChild>
           <Link to={editHref}>
             <KanbanSquareIcon aria-hidden="true" />
-            Edit statuses
+            Edit stage
           </Link>
         </DropdownMenuItem>
       </DropdownMenuContent>

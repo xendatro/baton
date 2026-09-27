@@ -37,7 +37,7 @@ async function setup(page: Page): Promise<Project> {
   return project;
 }
 
-test('Customize → Edit statuses opens the statuses settings, and ← Board comes back', async ({
+test('Customize → Edit stages opens the pipeline settings, and ← Board comes back', async ({
   page,
 }) => {
   const project = await setup(page);
@@ -45,20 +45,21 @@ test('Customize → Edit statuses opens the statuses settings, and ← Board com
   await expect(page.getByRole('link', { name: /Build the engine/ })).toBeVisible();
 
   await page.getByRole('button', { name: 'Customize board' }).click();
-  await page.getByRole('menuitem', { name: 'Edit statuses' }).click();
-  await expect(page).toHaveURL(new RegExp(`${project.path}/settings/statuses$`));
-  await expect(page.getByRole('heading', { name: 'Statuses', level: 2 })).toBeVisible();
+  await page.getByRole('menuitem', { name: 'Edit stages' }).click();
+  // The stages of the board's pipeline.
+  await expect(page).toHaveURL(new RegExp(`${project.path}/settings/pipelines\\?pipeline=\\w+$`));
+  await expect(page.getByRole('heading', { name: 'Pipelines', level: 2 })).toBeVisible();
 
   await page.getByRole('link', { name: 'Back to Board' }).click();
-  await expect(page).toHaveURL(new RegExp(`${project.path}/tasks$`));
+  await expect(page).toHaveURL(new RegExp(`${project.path}/tasks\\?pipeline=\\w+$`));
   await expect(page.getByRole('region', { name: 'Board' })).toBeVisible();
 
   // A column's "…" menu goes to that status, highlighted and ready to rename.
   const done = project.statuses.find((status) => status.name === 'Done');
   expect(done).toBeDefined();
   await page.getByRole('button', { name: 'Done column actions' }).click();
-  await page.getByRole('menuitem', { name: 'Edit statuses' }).click();
-  await expect(page).toHaveURL(new RegExp(`/settings/statuses\\?status=${done!.id}$`));
+  await page.getByRole('menuitem', { name: 'Edit stage' }).click();
+  await expect(page).toHaveURL(new RegExp(`/settings/pipelines\\?status=${done!.id}$`));
   const row = page.locator('[data-testid="status-row"][data-targeted="true"]');
   await expect(row.getByRole('textbox')).toHaveValue('Done');
   await expect(row.getByRole('textbox')).toBeFocused();
@@ -88,5 +89,5 @@ test('the Customize menu fits the toolbar at phone width', async ({ page }) => {
   });
   expect(overflow).toBeLessThanOrEqual(0);
   await button.click();
-  await expect(page.getByRole('menuitem', { name: 'Edit statuses' })).toBeInViewport();
+  await expect(page.getByRole('menuitem', { name: 'Edit stages' })).toBeInViewport();
 });

@@ -485,7 +485,7 @@ export function deleteStatus(
       projectId: project.id,
       input: { statusId, moveTo: query.moveTo },
       summary: `delete the status “${status.name}” in ${project.key}, moving its tasks to “${moveTo.name}”`,
-      url: appPaths.projectSettings(teamSlug, project.key, 'statuses'),
+      url: appPaths.projectSettings(teamSlug, project.key, 'pipelines'),
     });
   }
 

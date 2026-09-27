@@ -1,9 +1,9 @@
 import {
   GaugeIcon,
-  KanbanSquareIcon,
   ShieldIcon,
   SlidersHorizontalIcon,
   TagsIcon,
+  WorkflowIcon,
   type LucideIcon,
 } from 'lucide-react';
 import { NavLink, Outlet } from 'react-router';
@@ -12,7 +12,7 @@ import { useRouteContext } from '@web/lib/routeContext';
 import { cn } from '@web/lib/utils';
 
 /**
- * Project settings (`/t/:team/p/:key/settings/*`): a section nav (General, Statuses, Labels,
+ * Project settings (`/t/:team/p/:key/settings/*`): a section nav (General, Pipelines, Labels,
  * Access) beside the section. Every member who can see the project can open them; sections are
  * read-only without the matching permission (Manage projects, Manage statuses, Manage labels,
  * Manage project access).
@@ -20,7 +20,7 @@ import { cn } from '@web/lib/utils';
 
 const SECTIONS: ReadonlyArray<{ to: string; label: string; icon: LucideIcon }> = [
   { to: 'general', label: 'General', icon: SlidersHorizontalIcon },
-  { to: 'statuses', label: 'Statuses', icon: KanbanSquareIcon },
+  { to: 'pipelines', label: 'Pipelines', icon: WorkflowIcon },
   { to: 'labels', label: 'Labels', icon: TagsIcon },
   { to: 'difficulty', label: 'Difficulty', icon: GaugeIcon },
   { to: 'access', label: 'Access', icon: ShieldIcon },

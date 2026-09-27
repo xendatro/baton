@@ -65,8 +65,9 @@ const issueChange: Invalidation = (e) => [
   queryKeys.work.dashboard(),
 ];
 
+// The pipelines' task counts (tabs, sidebar) change with their tasks.
 const taskChange: Invalidation = (e) => [
-  ...projectKeys(e, queryKeys.tasks.all, queryKeys.issues.all),
+  ...projectKeys(e, queryKeys.tasks.all, queryKeys.issues.all, queryKeys.projects.pipelines),
   queryKeys.work.all(),
 ];
 

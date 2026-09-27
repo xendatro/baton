@@ -7,9 +7,10 @@ import {
   SquareKanbanIcon,
   TagsIcon,
   UserIcon,
+  WorkflowIcon,
 } from 'lucide-react';
 import { useEffect } from 'react';
-import { useNavigate, useSearchParams } from 'react-router';
+import { Link, useNavigate, useSearchParams } from 'react-router';
 import { toast } from 'sonner';
 import type { MeProject, MeTeam } from '@shared/schemas/core';
 import type { Pipeline } from '@shared/schemas/projects';
@@ -25,6 +26,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@web/components/ui/select';
+import { Skeleton } from '@web/components/ui/skeleton';
 import { ToggleGroup, ToggleGroupItem } from '@web/components/ui/toggle-group';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@web/components/ui/tooltip';
 import { errorMessage } from '@web/lib/api';
@@ -53,6 +55,7 @@ import {
   type TaskView,
 } from './filters';
 import { useDifficulties } from '../projects/difficultyQueries';
+import { ALL_PIPELINES, rememberPipelineTab, resolvePipelineTab } from './pipelineTab';
 import { useAssignables, useBoard, useMoveTask, useTaskList } from './queries';
 import { NoStartStageNotices } from './NoStartStageNotices';
 import { projectSettingsPath } from './settingsPaths';
@@ -89,44 +92,35 @@ function Tasks({ team, project }: { team: MeTeam; project: MeProject }) {
   const [view, setView] = useTaskView(project.id);
   const { filters, listOptions, setFilters, setListOptions } = useTaskFilters();
   useRememberTasksSearch(project.id);
-  // BAT-25: with several pipelines, tabs pick one (`?pipeline=`) or show them all.
+  // Pipelines are mandatory: the tabs always show which one's stages the board holds (`?pipeline=`,
+  // else the tab last picked here, else the default pipeline), plus "All" with several.
   const [params, setParams] = useSearchParams();
   const pipelines = usePipelines(project.id);
   const pipelineList = pipelines.data ?? [];
-  const pipeline = pipelineList.find((candidate) => candidate.id === params.get('pipeline'));
-  // The last tab is remembered per project (this browser only).
-  const storageKey = `baton.pipelineTab.${project.id}`;
-  const hasParam = params.has('pipeline');
-  const remembered = (() => {
-    try {
-      return window.localStorage.getItem(storageKey);
-    } catch {
-      return null;
-    }
-  })();
+  const param = params.get('pipeline');
+  const tab = resolvePipelineTab(project.id, param, pipelines.data);
+  const pipeline = pipelineList.find((candidate) => candidate.id === tab);
+  const showAll = tab === ALL_PIPELINES;
   useEffect(() => {
-    if (hasParam || !remembered || remembered === 'all') return;
-    if (!pipelines.data?.some((candidate) => candidate.id === remembered)) return;
+    if (!tab) return;
+    rememberPipelineTab(project.id, tab);
+    if (param === tab) return;
+    // Spell the tab out in the URL, so the sidebar, links and reloads agree on it.
     setParams(
       (current) => {
         const next = new URLSearchParams(current);
-        next.set('pipeline', remembered);
+        next.set('pipeline', tab);
         return next;
       },
       { replace: true },
     );
-  }, [hasParam, remembered, pipelines.data, setParams]);
-  const selectPipeline = (pipelineId: string | null) => {
-    try {
-      window.localStorage.setItem(storageKey, pipelineId ?? 'all');
-    } catch {
-      // Storage unavailable: the tab just isn't remembered.
-    }
+  }, [tab, param, project.id, setParams]);
+  const selectPipeline = (tabId: string) => {
+    rememberPipelineTab(project.id, tabId);
     setParams(
       (current) => {
         const next = new URLSearchParams(current);
-        if (pipelineId) next.set('pipeline', pipelineId);
-        else next.delete('pipeline');
+        next.set('pipeline', tabId);
         next.delete('status');
         return next;
       },
@@ -146,7 +140,7 @@ function Tasks({ team, project }: { team: MeTeam; project: MeProject }) {
     ),
   };
   const pipelineNameOf =
-    pipelineList.length > 1 && !pipeline
+    pipelineList.length > 1 && showAll
       ? (id: string | undefined) => pipelineList.find((candidate) => candidate.id === id)?.name
       : undefined;
   // BAT-34: pipelines where no stage accepts new tasks are warned about.
@@ -158,11 +152,13 @@ function Tasks({ team, project }: { team: MeTeam; project: MeProject }) {
   const labels = useLabels(project.id);
   const difficulties = useDifficulties(project.id);
   const people = useAssignables(team.id);
-  const board = useBoard(project.id, query, view === 'board');
+  // Wait for the tab (not all pipelines' tasks first, then one's).
+  const tabReady = tab !== undefined || pipelines.isError;
+  const board = useBoard(project.id, query, view === 'board' && tabReady);
   const list = useTaskList(
     project.id,
     { ...query, sort: listOptions.sort, order: listOptions.order },
-    view === 'list',
+    view === 'list' && tabReady,
   );
   const move = useMoveTask(project.id);
   useDocumentTitle([view === 'board' ? 'Board' : 'Tasks', project.name]);
@@ -213,31 +209,31 @@ function Tasks({ team, project }: { team: MeTeam; project: MeProject }) {
       ? [
           {
             id: `tasks.${project.id}.editStatuses`,
-            label: 'Edit statuses',
+            label: pipeline ? `Edit the stages of ${pipeline.name}` : 'Edit stages',
             group: 'Board',
             icon: KanbanSquareIcon,
-            keywords: ['customize board', 'columns', 'workflow', 'status settings'],
+            keywords: ['customize board', 'columns', 'statuses', 'workflow', 'status settings'],
             perform: () =>
-              void navigate(projectSettingsPath(projectBase, 'statuses', undefined, pipeline?.id)),
+              void navigate(projectSettingsPath(projectBase, 'pipelines', undefined, pipeline?.id)),
           },
           {
             id: `tasks.${project.id}.pipelines`,
             label: 'Manage pipelines',
             group: 'Board',
-            icon: KanbanSquareIcon,
-            keywords: ['pipelines', 'workflows', 'boards'],
-            perform: () => void navigate(projectSettingsPath(projectBase, 'statuses')),
+            icon: WorkflowIcon,
+            keywords: ['pipelines', 'workflows', 'boards', 'new pipeline'],
+            perform: () => void navigate(projectSettingsPath(projectBase, 'pipelines')),
           },
         ]
       : []),
     ...(pipelineList.length > 1
-      ? [null, ...pipelineList].map((item) => ({
-          id: `tasks.${project.id}.pipeline.${item?.id ?? 'all'}`,
+      ? [...pipelineList, null].map((item) => ({
+          id: `tasks.${project.id}.pipeline.${item?.id ?? ALL_PIPELINES}`,
           label: item ? `Show the ${item.name} pipeline` : 'Show all pipelines',
           group: 'Board',
           icon: SquareKanbanIcon,
           keywords: ['pipeline', 'tab', item?.name ?? 'all'],
-          perform: () => selectPipeline(item?.id ?? null),
+          perform: () => selectPipeline(item?.id ?? ALL_PIPELINES),
         }))
       : []),
     ...(canManageLabels
@@ -359,7 +355,7 @@ function Tasks({ team, project }: { team: MeTeam; project: MeProject }) {
             ? (statusId) =>
                 projectSettingsPath(
                   projectBase,
-                  'statuses',
+                  'pipelines',
                   statusId,
                   pipelineList.length > 1
                     ? board.data?.columns.find((column) => column.status.id === statusId)?.status
@@ -426,11 +422,18 @@ function Tasks({ team, project }: { team: MeTeam; project: MeProject }) {
   return (
     <div className="flex min-w-0 flex-1 flex-col">
       <div className="px-4 pt-4 pb-3 sm:px-6">
-        {pipelineList.length > 1 ? (
+        {pipelines.isPending ? (
+          <PipelineTabsSkeleton />
+        ) : pipelineList.length > 0 ? (
           <PipelineTabs
             pipelines={pipelineList}
-            selectedId={pipeline?.id ?? null}
+            selectedId={tab}
             onSelect={selectPipeline}
+            newPipelineHref={
+              canManageStatuses
+                ? `${projectSettingsPath(projectBase, 'pipelines')}?new=pipeline`
+                : undefined
+            }
           />
         ) : null}
         <FilterBar
@@ -463,40 +466,71 @@ function Tasks({ team, project }: { team: MeTeam; project: MeProject }) {
   );
 }
 
-/** The board's pipelines (BAT-25): All, then each one the viewer can see. */
+/**
+ * The project's pipelines as tabs, always shown (a project has at least one): each one the viewer
+ * can see, "All" with several, and "New pipeline" for those who manage the stages.
+ */
 function PipelineTabs({
   pipelines,
   selectedId,
   onSelect,
+  newPipelineHref,
 }: {
   pipelines: readonly Pipeline[];
-  selectedId: string | null;
-  onSelect: (pipelineId: string | null) => void;
+  selectedId: string | undefined;
+  onSelect: (tab: string) => void;
+  newPipelineHref?: string | undefined;
 }) {
-  const tabs = [
-    { id: null, name: 'All', count: pipelines.reduce((sum, item) => sum + item.taskCount, 0) },
-    ...pipelines.map((item) => ({ id: item.id, name: item.name, count: item.taskCount })),
-  ];
+  const tabs = pipelines.map((item) => ({ id: item.id, name: item.name, count: item.taskCount }));
+  if (pipelines.length > 1) {
+    tabs.push({
+      id: ALL_PIPELINES,
+      name: 'All',
+      count: pipelines.reduce((sum, item) => sum + item.taskCount, 0),
+    });
+  }
   return (
-    <div role="tablist" aria-label="Pipelines" className="mb-3 flex flex-wrap gap-1 border-b">
-      {tabs.map((tab) => (
-        <button
-          key={tab.id ?? 'all'}
-          type="button"
-          role="tab"
-          aria-selected={tab.id === selectedId}
-          onClick={() => onSelect(tab.id)}
-          className={cn(
-            '-mb-px border-b-2 px-3 py-1.5 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring',
-            tab.id === selectedId
-              ? 'border-primary font-medium text-foreground'
-              : 'border-transparent text-muted-foreground hover:text-foreground',
-          )}
-        >
-          {tab.name}
-          <span className="ml-1.5 text-xs text-muted-foreground tabular-nums">{tab.count}</span>
-        </button>
-      ))}
+    <div className="mb-3 flex items-end gap-2 border-b">
+      <div role="tablist" aria-label="Pipelines" className="flex min-w-0 flex-wrap gap-1">
+        {tabs.map((tab) => (
+          <button
+            key={tab.id}
+            type="button"
+            role="tab"
+            aria-selected={tab.id === selectedId}
+            onClick={() => onSelect(tab.id)}
+            className={cn(
+              '-mb-px flex items-center gap-1.5 border-b-2 px-3 py-1.5 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring',
+              tab.id === selectedId
+                ? 'border-primary font-medium text-foreground'
+                : 'border-transparent text-muted-foreground hover:text-foreground',
+            )}
+          >
+            {tab.id === ALL_PIPELINES ? null : (
+              <WorkflowIcon className="size-3.5 shrink-0 opacity-70" aria-hidden="true" />
+            )}
+            {tab.name}
+            <span className="text-xs text-muted-foreground tabular-nums">{tab.count}</span>
+          </button>
+        ))}
+      </div>
+      {newPipelineHref ? (
+        <Button asChild variant="ghost" size="sm" className="mb-1 h-7 text-muted-foreground">
+          <Link to={newPipelineHref} aria-label="New pipeline">
+            <PlusIcon aria-hidden="true" />
+            <span className="hidden sm:inline">New pipeline</span>
+          </Link>
+        </Button>
+      ) : null}
+    </div>
+  );
+}
+
+function PipelineTabsSkeleton() {
+  return (
+    <div className="mb-3 flex gap-3 border-b pb-2" aria-hidden="true">
+      <Skeleton className="h-5 w-24" />
+      <Skeleton className="h-5 w-20" />
     </div>
   );
 }

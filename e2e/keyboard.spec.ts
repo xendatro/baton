@@ -116,7 +116,7 @@ test('Esc on a task page goes back to the board with its filters (UX-16)', async
 
   await page.locator('#main').focus();
   await page.keyboard.press('Escape');
-  await expect(page).toHaveURL(new RegExp(`${project.path}/tasks\\?priority=4$`));
+  await expect(page).toHaveURL(new RegExp(`${project.path}/tasks\\?priority=4&pipeline=\\w+$`));
   await expect(page.getByRole('link', { name: /Urgent thing/ })).toBeVisible();
 });
 

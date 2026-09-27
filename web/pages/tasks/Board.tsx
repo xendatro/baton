@@ -422,7 +422,7 @@ export function Board({
       <DragOverlay dropAnimation={{ duration: 150, easing: 'ease-out' }}>
         {active ? (
           <div className="w-[17rem] cursor-grabbing rounded-lg border bg-card p-3 shadow-lg ring-2 ring-primary/30">
-            <TaskCardBody task={active} />
+            <TaskCardBody task={active} showPipeline={Boolean(pipelineNameOf)} />
           </div>
         ) : null}
       </DragOverlay>
@@ -550,7 +550,14 @@ function Column({
         >
           {ids.map((id) => {
             const card = cards.get(id);
-            return card ? <SortableCard key={id} task={card} disabled={!canMove} /> : null;
+            return card ? (
+              <SortableCard
+                key={id}
+                task={card}
+                disabled={!canMove}
+                showPipeline={pipelineName !== undefined}
+              />
+            ) : null;
           })}
           {ids.length === 0 && hint ? <li>{hint}</li> : null}
           {ids.length === 0 && !hint ? (
@@ -569,7 +576,15 @@ function Column({
   );
 }
 
-function SortableCard({ task, disabled }: { task: TaskCard; disabled: boolean }) {
+function SortableCard({
+  task,
+  disabled,
+  showPipeline,
+}: {
+  task: TaskCard;
+  disabled: boolean;
+  showPipeline: boolean;
+}) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: task.id,
     disabled,
@@ -595,7 +610,7 @@ function SortableCard({ task, disabled }: { task: TaskCard; disabled: boolean })
             'cursor-grab touch-manipulation select-none [-webkit-touch-callout:none] active:cursor-grabbing',
         )}
       >
-        <TaskCardBody task={task} />
+        <TaskCardBody task={task} showPipeline={showPipeline} />
       </Link>
     </li>
   );

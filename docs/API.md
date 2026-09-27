@@ -37,7 +37,7 @@ and response below. If this file and a schema disagree, the schema is right; fix
 | Type            | Shape                                                                                                                          |
 | --------------- | ------------------------------------------------------------------------------------------------------------------------------ |
 | `UserSummary`   | `{ id, username, name, image }`                                                                                                |
-| `ViaKey`        | `{ keyId, keyName }`                                                                                                           |
+| `ViaKey`        | `{ keyId, keyName, agentName? }` (the key's agent, e.g. "Claude", when known)                                                  |
 | `ActorRef`      | `{ user: UserSummary \| null, via: ViaKey \| null, source: 'web'\|'mcp'\|'api'\|'system' }`                                    |
 | `RoleSummary`   | `{ id, slug, name, color }`                                                                                                    |
 | `Attachment`    | `{ id, teamId, parentType, parentId, filename, mimeType, size, isImage, url, uploader, via, createdAt }`                       |

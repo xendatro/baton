@@ -3,6 +3,7 @@ import { BotIcon, ChevronRightIcon } from 'lucide-react';
 import { Fragment, useId, useState } from 'react';
 import { Link } from 'react-router';
 import type { ActivityEntry } from '@shared/schemas/core';
+import { ActorAvatar } from '@web/components/common/AgentAvatar';
 import { UserAvatar } from '@web/components/common/UserAvatar';
 import { UserName } from '@web/components/common/UserName';
 import { LogoMark } from '@web/components/layout/Logo';
@@ -122,7 +123,7 @@ export interface AuditRowProps {
 }
 
 /**
- * One audit entry: time, actor (+ "via <key>"), the sentence with a link to the entity, and an
+ * One audit entry: time, actor ("Claude via Ethan's <key>", or "ethan" + "via <key>"), the sentence with a link to the entity, and an
  * expandable panel with the field diff and the raw action, source and time.
  */
 export function AuditRow({ entry, projectName }: AuditRowProps) {
@@ -151,7 +152,7 @@ export function AuditRow({ entry, projectName }: AuditRowProps) {
         </time>
         <span className="pt-px">
           {user ? (
-            <UserAvatar user={user} size="md" />
+            <ActorAvatar user={user} agentName={via?.agentName} size="md" />
           ) : source === 'system' ? (
             <LogoMark className="size-6 rounded-full" />
           ) : (
@@ -160,8 +161,14 @@ export function AuditRow({ entry, projectName }: AuditRowProps) {
         </span>
         <div className="min-w-0 flex-1">
           <p className="text-sm leading-6 text-muted-foreground">
-            <UserName user={user} source={source} className="mr-1 align-bottom" />
-            {via ? (
+            {/* An agent's action reads "Claude via Ethan's MSI" (BAT-10). */}
+            <UserName
+              user={user}
+              via={via?.agentName ? via : null}
+              source={source}
+              className="mr-1 align-bottom"
+            />
+            {via && !via.agentName ? (
               <Badge
                 variant="outline"
                 className="mr-1 max-w-48 align-[1px] font-normal text-muted-foreground"

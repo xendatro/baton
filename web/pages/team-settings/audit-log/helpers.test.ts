@@ -128,7 +128,7 @@ describe('auditLogCsv', () => {
           id: 'b',
           actor: {
             user: { id: 'u2', username: 'bot', name: '=cmd, "evil"', image: null },
-            via: { keyId: 'k1', keyName: 'Claude' },
+            via: { keyId: 'k1', keyName: 'MSI', agentName: 'Claude' },
             source: 'mcp',
           },
           action: 'task.created',
@@ -141,12 +141,12 @@ describe('auditLogCsv', () => {
     );
     const lines = csv.split('\r\n');
     expect(lines[0]).toBe(
-      'time,actor_username,actor_name,source,via_key,action,summary,entity_type,entity_id,url,changes',
+      'time,actor_username,actor_name,source,via_key,via_agent,action,summary,entity_type,entity_id,url,changes',
     );
     expect(lines[1]).toBe(
-      '2026-09-24T10:00:00.000Z,mia,Mia,web,,task.status_changed,moved API-12 from Open to Done,task,task1,https://baton.example/t/acme/p/API/tasks/12,"{""status"":{""from"":""Open"",""to"":""Done""}}"',
+      '2026-09-24T10:00:00.000Z,mia,Mia,web,,,task.status_changed,moved API-12 from Open to Done,task,task1,https://baton.example/t/acme/p/API/tasks/12,"{""status"":{""from"":""Open"",""to"":""Done""}}"',
     );
-    expect(lines[2]).toContain(`"'=cmd, ""evil""",mcp,Claude,task.created`);
+    expect(lines[2]).toContain(`"'=cmd, ""evil""",mcp,MSI,Claude,task.created`);
     expect(lines[3]).toContain('system,Baton,system');
     expect(csv.endsWith('\r\n')).toBe(true);
     expect(csvFileName('acme', new Date(2026, 0, 5))).toBe('audit-log-acme-2026-01-05.csv');

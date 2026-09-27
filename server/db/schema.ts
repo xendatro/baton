@@ -773,6 +773,11 @@ export const activity = sqliteTable(
     viaKeyId: text('via_key_id'),
     /** Snapshot of the key name at the time of the action. */
     viaKeyName: text('via_key_name'),
+    /**
+     * Snapshot of the key's agent ("Claude") at the time of the action (BAT-10). Null for rows
+     * written before it existed; readers fall back to the key's current agent.
+     */
+    viaAgentName: text('via_agent_name'),
     entityType: text('entity_type', { enum: ACTIVITY_ENTITY_TYPES }).notNull(),
     entityId: text('entity_id').notNull(),
     /** e.g. `task.created`, `task.status_changed`, `role.permissions_changed`. */

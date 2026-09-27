@@ -1,7 +1,7 @@
 import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { LiveEvent } from '@shared/events';
-import type { Permission } from '@shared/permissions';
+import { EVERYONE_DEFAULTS, type Permission } from '@shared/permissions';
 import { apiErrorSchema } from '@shared/schemas/common';
 import {
   acceptInviteResponseSchema,
@@ -50,6 +50,14 @@ beforeEach(() => {
   manager = createUser(ctx.db, { username: 'max' });
   guest = createUser(ctx.db, { username: 'gus' });
   team = createTeam(ctx.db, { ownerId: owner.id, slug: 'acme', name: 'Acme' });
+  // @everyone no longer has Create invites by default (design §3); these tests grant it.
+  const everyoneRole = ctx.db.orm
+    .update(s.role)
+    .set({ permissions: [...EVERYONE_DEFAULTS, 'CREATE_INVITES'] })
+    .where(eq(s.role.id, team.everyoneRole.id))
+    .returning()
+    .get();
+  team = { ...team, everyoneRole };
   const invitesRole = createRole(ctx.db, {
     teamId: team.team.id,
     name: 'Recruiter',
@@ -70,7 +78,7 @@ async function errorOf(res: Response) {
 }
 
 describe('creating and listing invites', () => {
-  it('creates a link with expiry and max uses (Create invites is an @everyone default)', async () => {
+  it('creates a link with expiry and max uses (with Create invites)', async () => {
     const { key } = createApiKey(ctx.db, { userId: member.id });
     const before = Date.now();
     const res = await ctx.app.request(

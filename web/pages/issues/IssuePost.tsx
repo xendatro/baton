@@ -118,6 +118,7 @@ export function IssuePost({
             targetType="issue"
             targetId={issue.id}
             teamId={issue.teamId}
+            projectId={issue.projectId}
             reactions={issue.reactions}
             queryKey={queryKeys.issues.detail(issue.projectId, issue.number)}
           />

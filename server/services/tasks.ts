@@ -28,7 +28,7 @@ import {
   hasPermission,
   requireCanDeleteContent,
   requireCanEditContent,
-  requireMember,
+  requireProjectAccess,
   requirePermission,
   roleMemberIds,
   type Membership,
@@ -101,7 +101,7 @@ export function requireTask(db: DbExecutor, actor: Actor, taskId: string): TaskA
     )
     .get();
   if (!row) throw errors.notFound('Task');
-  return { ...row, membership: requireMember(db, actor, row.team.id, 'Task') };
+  return { ...row, membership: requireProjectAccess(db, actor, row.project.id, 'Task') };
 }
 
 /** May the member change the task's workflow fields (status, assignees, …) and claim it? */
@@ -1165,7 +1165,7 @@ export function restoreTask(deps: AppDeps, actor: Actor, taskId: string): Task {
     .get();
   if (!found?.task.deletedAt) throw errors.notFound('Deleted task');
   const { task, project } = found;
-  const membership = requireMember(orm, actor, task.teamId, 'Deleted task');
+  const membership = requireProjectAccess(orm, actor, task.projectId, 'Deleted task');
   if (!canRestoreContent(membership, task.authorId)) {
     throw errors.forbidden('You can only restore your own tasks');
   }

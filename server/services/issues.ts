@@ -29,7 +29,7 @@ import {
   hasPermission,
   requireCanDeleteContent,
   requireCanEditContent,
-  requireMember,
+  requireProjectAccess,
   requirePermission,
   type Membership,
 } from './access';
@@ -91,7 +91,7 @@ export function requireIssue(db: DbExecutor, actor: Actor, issueId: string): Iss
     )
     .get();
   if (!row) throw errors.notFound('Issue');
-  return { ...row, membership: requireMember(db, actor, row.team.id, 'Issue') };
+  return { ...row, membership: requireProjectAccess(db, actor, row.project.id, 'Issue') };
 }
 
 /** May the member resolve, reopen and label this issue? Authors always may. */
@@ -840,7 +840,7 @@ export function restoreIssue(deps: AppDeps, actor: Actor, issueId: string): Issu
   const { orm } = deps.db;
   const row = orm.select().from(s.issue).where(eq(s.issue.id, issueId)).get();
   if (!row?.deletedAt) throw errors.notFound('Deleted issue');
-  const membership = requireMember(orm, actor, row.teamId, 'Deleted issue');
+  const membership = requireProjectAccess(orm, actor, row.projectId, 'Deleted issue');
   if (!canRestoreContent(membership, row.authorId)) {
     throw errors.forbidden('You can only restore your own issues');
   }

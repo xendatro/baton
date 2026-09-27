@@ -14,7 +14,7 @@ import { change, type Changes } from '../lib/diff';
 import { errors } from '../lib/errors';
 import { appPaths } from '../lib/urls';
 import { recordActivity } from './activity';
-import type { Membership } from './access';
+import { canViewProject, getProjectAccess, type Membership } from './access';
 import { emitAfterCommit } from './events';
 import { canTriageIssue } from './issues';
 import { queueLinkedTaskEvents } from './linkEvents';
@@ -415,9 +415,20 @@ export function applyIssueLinksChange(
   );
   if (touched.length === 0) return {};
   const issues = issueInfos(tx, [...current.keys(), ...next.keys()]);
-  const invalid = [...next.keys()].filter(
-    (id) => !current.has(id) && issues.get(id)?.teamId !== subject.teamId,
-  );
+  // Issues of projects the actor can't see (VIEW_PROJECT) are treated like other teams' issues.
+  const accessCache = new Map<string, Membership | null>();
+  const accessTo = (projectId: string) => {
+    if (!accessCache.has(projectId)) {
+      const access = getProjectAccess(tx, actor.userId, projectId);
+      accessCache.set(projectId, access && canViewProject(access) ? access : null);
+    }
+    return accessCache.get(projectId) ?? null;
+  };
+  const invalid = [...next.keys()].filter((id) => {
+    if (current.has(id)) return false;
+    const issue = issues.get(id);
+    return issue?.teamId !== subject.teamId || !accessTo(issue.projectId);
+  });
   if (invalid.length > 0) {
     throw errors.validation('Linked issues must be issues of the same team', {
       issueIds: invalid,
@@ -426,7 +437,12 @@ export function applyIssueLinksChange(
   for (const id of touched) {
     const issue = issues.get(id);
     const becomesFixes = next.get(id) === 'fixes' && current.get(id) !== 'fixes';
-    if (issue && becomesFixes && !canTriageIssue(membership, issue.authorId)) {
+    const issueAccess = issue
+      ? issue.projectId === subject.projectId
+        ? membership
+        : (accessTo(issue.projectId) ?? membership)
+      : membership;
+    if (issue && becomesFixes && !canTriageIssue(issueAccess, issue.authorId)) {
       throw errors.forbidden(
         `Only the author of ${issueRef(issue)} or members who can resolve issues can link a task that fixes it; link it as "relates" instead`,
       );

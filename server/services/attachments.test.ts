@@ -244,7 +244,7 @@ describe('upload', () => {
   it('needs a content permission for pending uploads (SEC-07)', async () => {
     ctx.db.orm
       .update(s.role)
-      .set({ permissions: [] })
+      .set({ permissions: ['VIEW_PROJECT'] })
       .where(eq(s.role.id, team.everyoneRole.id))
       .run();
     const denied = await upload(PNG, 'x.png');

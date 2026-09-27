@@ -6,7 +6,7 @@ import type { DbExecutor, Tx } from '../db';
 import * as s from '../db/schema';
 import { errors } from '../lib/errors';
 import { appPaths } from '../lib/urls';
-import { requireMember, type Membership } from './access';
+import { requireProjectAccess, type Membership } from './access';
 
 /**
  * Issues and tasks as generic "items": the things replies, subscriptions and attachments hang
@@ -180,6 +180,6 @@ export function requireItem(
 ): { item: ItemInfo; membership: Membership } {
   const item = findItem(db, type, id);
   if (!item) throw errors.notFound(ITEM_NAMES[type]);
-  const membership = requireMember(db, actor, item.teamId, ITEM_NAMES[type]);
+  const membership = requireProjectAccess(db, actor, item.projectId, ITEM_NAMES[type]);
   return { item, membership };
 }

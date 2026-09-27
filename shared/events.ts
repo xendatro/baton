@@ -19,6 +19,8 @@ export const LIVE_EVENT_TYPES = [
   'project.updated',
   'project.deleted',
   'project.restored',
+  /** A project's roles, their members or its permission overrides changed (design §3). */
+  'project_access.changed',
   'status.changed',
   'label.changed',
   'issue.created',

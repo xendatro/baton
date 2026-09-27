@@ -10,7 +10,7 @@ import { RichTextEditor, type RichTextEditorHandle } from '@web/components/edito
 import { Button } from '@web/components/ui/button';
 import { errorMessage } from '@web/lib/api';
 import { useSession } from '@web/lib/auth';
-import { useTeamAccess } from '@web/lib/permissions';
+import { useProjectAccess } from '@web/lib/permissions';
 import { readReplyDraft, writeReplyDraft, type ReplyDraft } from '@web/lib/replyDrafts';
 import { useCreateReply, useReplies } from './queries';
 import { threadAgents, type ThreadWrite } from './threadAgents';
@@ -19,6 +19,8 @@ export interface ReplyComposerProps {
   parentType: ReplyParentType;
   parentId: string;
   teamId: string;
+  /** The item's project: replying needs `REPLY` there (project permissions, design §3). */
+  projectId?: string;
   /** The task or issue replied to: its agent, and those of its replies, can be `@`-mentioned. */
   item?: ThreadWrite;
   placeholder?: string;
@@ -47,6 +49,7 @@ function Composer({
   parentType,
   parentId,
   teamId,
+  projectId,
   item,
   placeholder = 'Write a reply… Type / for blocks, @ to mention.',
   parentReplyId,
@@ -55,7 +58,7 @@ function Composer({
   onCancel,
   onSent,
 }: ReplyComposerProps) {
-  const access = useTeamAccess(teamId);
+  const access = useProjectAccess(teamId, projectId);
   const editor = useRef<RichTextEditorHandle>(null);
   // Unsent text survives leaving the thread (UX-13); drafts belong to the signed-in user.
   const userId = useSession().data?.user.id ?? null;

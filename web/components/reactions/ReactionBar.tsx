@@ -8,7 +8,7 @@ import { Button } from '@web/components/ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '@web/components/ui/popover';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@web/components/ui/tooltip';
 import { useMe } from '@web/lib/auth';
-import { useTeamAccess } from '@web/lib/permissions';
+import { useProjectAccess } from '@web/lib/permissions';
 import { cn } from '@web/lib/utils';
 import { useReactionMutation } from './queries';
 import { applyReaction, reactorsLabel } from './reactions';
@@ -19,6 +19,8 @@ export interface ReactionBarProps {
   targetType: ReactionTargetType;
   targetId: string;
   teamId: string;
+  /** The target's project: reacting needs `REPLY` there (project permissions, design §3). */
+  projectId?: string;
   reactions: ReactionSummary[];
   /** The query holding `reactions`, refreshed after a change. */
   queryKey: QueryKey;
@@ -35,12 +37,13 @@ export function ReactionBar({
   targetType,
   targetId,
   teamId,
+  projectId,
   reactions,
   queryKey,
   className,
 }: ReactionBarProps) {
   const me = useMe().data?.user;
-  const access = useTeamAccess(teamId);
+  const access = useProjectAccess(teamId, projectId);
   const canReact = access.has('REPLY');
   const mutation = useReactionMutation(targetType, targetId, queryKey);
   const [pickerOpen, setPickerOpen] = useState(false);

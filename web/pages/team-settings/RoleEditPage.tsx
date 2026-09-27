@@ -27,6 +27,7 @@ import { EmptyState } from '@web/components/common/EmptyState';
 import { ErrorState } from '@web/components/common/ErrorState';
 import { UserAvatar } from '@web/components/common/UserAvatar';
 import { ColorPicker } from '@web/components/pickers/ColorPicker';
+import { Badge } from '@web/components/ui/badge';
 import { Button } from '@web/components/ui/button';
 import { Input } from '@web/components/ui/input';
 import { Skeleton } from '@web/components/ui/skeleton';
@@ -497,6 +498,7 @@ function PermissionsTab({
                     key={permission}
                     label={info.label}
                     description={info.description}
+                    projectDefault={info.scope === 'project'}
                     checked={checked}
                     disabled={disabled || blocked}
                     reason={!disabled && blocked ? reason : null}
@@ -515,6 +517,7 @@ function PermissionsTab({
 function PermissionRow({
   label,
   description,
+  projectDefault,
   checked,
   disabled,
   reason,
@@ -522,6 +525,8 @@ function PermissionRow({
 }: {
   label: string;
   description: string;
+  /** A project-level permission: the role's value is the default each project can override. */
+  projectDefault: boolean;
   checked: boolean;
   disabled: boolean;
   reason: string | null;
@@ -540,11 +545,20 @@ function PermissionRow({
   return (
     <li className="flex items-start justify-between gap-4 px-4 py-3">
       <div className="min-w-0 space-y-0.5">
-        <label htmlFor={id} className="text-sm font-medium">
-          {label}
-        </label>
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+          <label htmlFor={id} className="text-sm font-medium">
+            {label}
+          </label>
+          <Badge
+            variant="outline"
+            className="px-1.5 py-0 text-[11px] font-normal text-muted-foreground"
+          >
+            {projectDefault ? 'Default for projects' : 'Team-wide'}
+          </Badge>
+        </div>
         <p id={`${id}-description`} className="text-xs text-muted-foreground">
           {description}
+          {projectDefault ? ' Projects can override it in their Access settings.' : ''}
         </p>
       </div>
       {reason ? (

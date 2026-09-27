@@ -19,6 +19,7 @@ import {
  */
 
 const EVERYONE = [
+  'VIEW_PROJECT',
   'CREATE_INVITES',
   'MANAGE_LABELS',
   'CREATE_ISSUES',

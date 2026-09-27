@@ -170,7 +170,7 @@ function TaskFields({
   const statusList = statuses.data ?? [];
   const effectiveStatus =
     statusId ?? statusList.find((status) => status.isDefault)?.id ?? statusList[0]?.id ?? null;
-  const canManageLabels = team.permissions.includes('MANAGE_LABELS');
+  const canManageLabels = (project.permissions ?? team.permissions).includes('MANAGE_LABELS');
 
   const submit = (event?: FormEvent) => {
     event?.preventDefault();

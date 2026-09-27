@@ -26,7 +26,7 @@ import { errorMessage } from '@web/lib/api';
 import { useMe } from '@web/lib/auth';
 import { pluralize } from '@web/lib/format';
 import { useHotkey } from '@web/lib/hotkeys';
-import { useTeamAccess } from '@web/lib/permissions';
+import { useProjectAccess } from '@web/lib/permissions';
 import { useRouteContext } from '@web/lib/routeContext';
 import { runShellAction, useShellActionAvailable } from '@web/lib/shellActions';
 import { useDocumentTitle } from '@web/lib/title';
@@ -67,7 +67,7 @@ const GROUP_LABELS: Record<ListGroup, string> = {
 
 function Tasks({ team, project }: { team: MeTeam; project: MeProject }) {
   const me = useMe().data;
-  const access = useTeamAccess(team.id);
+  const access = useProjectAccess(team.id, project.id);
   const canCreate = access.has('CREATE_TASKS');
   const canMove = access.has('UPDATE_TASKS');
   const createAvailable = useShellActionAvailable('task.create');

@@ -220,7 +220,11 @@ describe('issue MCP tools', () => {
     );
     expect(await callError(client, 'get_issue', { issue: 'API#99' })).toMatch(/Issue not found/);
 
-    ctx.db.orm.update(s.role).set({ permissions: [] }).where(eq(s.role.teamId, teamId)).run();
+    ctx.db.orm
+      .update(s.role)
+      .set({ permissions: ['VIEW_PROJECT'] })
+      .where(eq(s.role.teamId, teamId))
+      .run();
     expect(await callError(client, 'create_issue', { project: 'API', title: 'x' })).toMatch(
       /forbidden/,
     );

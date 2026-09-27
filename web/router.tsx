@@ -81,6 +81,10 @@ const shellRoutes: RouteObject[] = [
             path: 'labels',
             ...page(() => import('./pages/project-settings/LabelsSettingsPage')),
           },
+          {
+            path: 'access',
+            ...page(() => import('./pages/project-settings/AccessSettingsPage')),
+          },
         ],
       },
 

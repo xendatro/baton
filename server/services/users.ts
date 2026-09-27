@@ -13,7 +13,13 @@ import type { DbExecutor } from '../db';
 import * as s from '../db/schema';
 import { errors } from '../lib/errors';
 import { likeContains } from '../lib/sql';
-import { hasPermission, listMemberships, requireMember } from './access';
+import {
+  canViewProject,
+  hasPermission,
+  listMemberships,
+  listProjectMemberships,
+  requireMember,
+} from './access';
 import { unreadNotificationCount } from './notifications';
 
 type UserRow = typeof s.user.$inferSelect;
@@ -71,6 +77,12 @@ export function getMe(deps: AppDeps, actor: Actor): MeResponse {
 
   const memberships = listMemberships(orm, actor.userId);
   const teamIds = memberships.map((membership) => membership.teamId);
+  // Only projects the user can see (VIEW_PROJECT), each with the user's permissions there.
+  const access = new Map(
+    listProjectMemberships(orm, actor.userId, { teamIds })
+      .filter(canViewProject)
+      .map((project) => [project.projectId, project.permissions]),
+  );
   const teams =
     teamIds.length === 0
       ? []
@@ -119,8 +131,11 @@ export function getMe(deps: AppDeps, actor: Actor): MeResponse {
         isOwner: membership?.isOwner ?? false,
         permissions: membership?.permissions ?? [],
         projects: projects
-          .filter((project) => project.teamId === team.id)
-          .map(({ teamId: _teamId, ...project }) => project),
+          .filter((project) => project.teamId === team.id && access.has(project.id))
+          .map(({ teamId: _teamId, ...project }) => ({
+            ...project,
+            permissions: access.get(project.id) ?? [],
+          })),
       };
     }),
     unreadNotifications: unreadNotificationCount(deps, actor),

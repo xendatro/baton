@@ -17,7 +17,7 @@ export default function IssuesShellExtension() {
   const team = me && match ? findTeam(me.teams, match.params.team) : null;
   const project = findProject(team, match?.params.key);
   const base = team && project ? `/t/${team.slug}/p/${project.key}` : null;
-  const canCreate = team?.permissions.includes('CREATE_ISSUES') ?? false;
+  const canCreate = (project?.permissions ?? team?.permissions ?? []).includes('CREATE_ISSUES');
   const onNewIssuePage = base !== null && location.pathname === `${base}/issues/new`;
 
   const newIssue = () => {

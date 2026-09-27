@@ -38,7 +38,7 @@ import { Skeleton } from '@web/components/ui/skeleton';
 import { errorMessage, isApiError } from '@web/lib/api';
 import { pluralize } from '@web/lib/format';
 import { useHotkey } from '@web/lib/hotkeys';
-import { useTeamAccess } from '@web/lib/permissions';
+import { useProjectAccess } from '@web/lib/permissions';
 import { useRouteContext } from '@web/lib/routeContext';
 import { useDocumentTitle } from '@web/lib/title';
 import { useMarkItemRead } from '@web/pages/inbox/useMarkItemRead';
@@ -122,7 +122,7 @@ function IssueDetail({
   onDeletingChange: (deleting: boolean) => void;
 }) {
   const navigate = useNavigate();
-  const access = useTeamAccess(team.id);
+  const access = useProjectAccess(team.id, project.id);
   const base = `/t/${team.slug}/p/${project.key}`;
   const authorId = issue.author?.id ?? null;
   const canEdit = access.canEdit(authorId);
@@ -298,7 +298,13 @@ function IssueDetail({
             Conversation
           </h2>
           <Timeline parentType="issue" parentId={issue.id} />
-          <ReplyComposer parentType="issue" parentId={issue.id} teamId={team.id} item={issue} />
+          <ReplyComposer
+            parentType="issue"
+            parentId={issue.id}
+            teamId={team.id}
+            projectId={issue.projectId}
+            item={issue}
+          />
         </section>
       </div>
 

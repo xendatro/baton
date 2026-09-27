@@ -10,7 +10,14 @@ import type { Actor, AppDeps } from '../context';
 import type { DbExecutor } from '../db';
 import * as s from '../db/schema';
 import { errors } from '../lib/errors';
-import { memberTeamIds, requireMember, type Membership } from './access';
+import {
+  memberTeamIds,
+  requireMember,
+  requireProjectAccess,
+  visibleProjectIds,
+  type Membership,
+  type ProjectMembership,
+} from './access';
 
 /**
  * Resolves the human references accepted everywhere by MCP tools (SPEC §5.1), always within the
@@ -138,7 +145,8 @@ export function resolveTeam(deps: Pick<AppDeps, 'db'>, actor: Actor, ref: string
 export interface ResolvedProject {
   project: ProjectRow;
   team: TeamRow;
-  membership: Membership;
+  /** The caller's access to the project (project permissions). */
+  membership: ProjectMembership;
 }
 
 /** Live projects (in the given teams) whose current key or a previous key (alias) is `key`. */
@@ -179,19 +187,20 @@ function projectsByKey(db: DbExecutor, teamIds: readonly string[], key: string) 
   );
 }
 
-/** `team/KEY (Name)` for the live projects of the given teams, to list in a not-found message. */
-function projectCandidates(db: DbExecutor, teamIds: readonly string[]): string[] {
+/**
+ * `team/KEY (Name)` for the live projects of the given teams the caller can see, to list in a
+ * not-found message.
+ */
+function projectCandidates(db: DbExecutor, actor: Actor, teamIds: readonly string[]): string[] {
   if (teamIds.length === 0) return [];
+  const visible = visibleProjectIds(db, actor.userId, teamIds);
+  if (visible.length === 0) return [];
   return db
     .select({ key: s.project.key, name: s.project.name, slug: s.team.slug })
     .from(s.project)
     .innerJoin(s.team, eq(s.team.id, s.project.teamId))
     .where(
-      and(
-        inArray(s.project.teamId, [...teamIds]),
-        isNull(s.project.deletedAt),
-        isNull(s.team.deletedAt),
-      ),
+      and(inArray(s.project.id, visible), isNull(s.project.deletedAt), isNull(s.team.deletedAt)),
     )
     .orderBy(asc(s.team.slug), asc(s.project.key))
     .all()
@@ -236,12 +245,15 @@ function resolveParsedProject(
     }
     teamIds = mine;
   }
-  const matches = projectsByKey(orm, teamIds, parsed.projectKey);
+  const visible = new Set(visibleProjectIds(orm, actor.userId, teamIds));
+  const matches = projectsByKey(orm, teamIds, parsed.projectKey).filter((row) =>
+    visible.has(row.project.id),
+  );
   if (matches.length === 0) {
     throw notFound(KIND_NAMES[parsed.kind], original, {
       context: ` (no project with the key ${parsed.projectKey})`,
       label: 'Your projects',
-      candidates: projectCandidates(orm, teamIds),
+      candidates: projectCandidates(orm, actor, teamIds),
     });
   }
   if (matches.length > 1) {
@@ -252,7 +264,7 @@ function resolveParsedProject(
     );
   }
   const [{ project, team }] = matches as [(typeof matches)[number]];
-  return { project, team, membership: requireMember(orm, actor, team.id, 'Project') };
+  return { project, team, membership: requireProjectAccess(orm, actor, project.id, 'Project') };
 }
 
 /** A live project in one of the caller's teams, by `KEY`, `team-slug/KEY`, id or app URL. */
@@ -270,7 +282,7 @@ export function resolveProject(
     .where(and(eq(s.project.id, value), isNull(s.project.deletedAt), isNull(s.team.deletedAt)))
     .get();
   if (byId) {
-    return { ...byId, membership: requireMember(orm, actor, byId.team.id, 'Project') };
+    return { ...byId, membership: requireProjectAccess(orm, actor, byId.project.id, 'Project') };
   }
   const parsed = parseRef(value);
   if (parsed && parsed.kind !== 'project') {
@@ -282,7 +294,7 @@ export function resolveProject(
     throw notFound('Project', ref, {
       hint: 'Use the project KEY, team-slug/KEY or its id',
       label: 'Your projects',
-      candidates: projectCandidates(orm, memberTeamIds(orm, actor.userId)),
+      candidates: projectCandidates(orm, actor, memberTeamIds(orm, actor.userId)),
     });
   }
   return resolveParsedProject(deps, actor, parsed, value);
@@ -307,11 +319,11 @@ const ARTICLE = { task: 'a task', issue: 'an issue' } as const;
 function isOtherKindId(db: DbExecutor, actor: Actor, kind: 'task' | 'issue', id: string) {
   const table = kind === 'task' ? s.issue : s.task;
   const row = db
-    .select({ teamId: table.teamId })
+    .select({ projectId: table.projectId })
     .from(table)
     .where(and(eq(table.id, id), isNull(table.deletedAt)))
     .get();
-  return row !== undefined && memberTeamIds(db, actor.userId).includes(row.teamId);
+  return row !== undefined && visibleProjectIds(db, actor.userId).includes(row.projectId);
 }
 
 function resolveNumbered<K extends 'task' | 'issue'>(
@@ -345,7 +357,7 @@ function resolveNumbered<K extends 'task' | 'issue'>(
       row: byId.row as K extends 'task' ? TaskRow : IssueRow,
       project: byId.project,
       team: byId.team,
-      membership: requireMember(orm, actor, byId.team.id, what),
+      membership: requireProjectAccess(orm, actor, byId.project.id, what),
     };
   }
 

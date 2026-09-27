@@ -7,7 +7,7 @@ import * as s from '../db/schema';
 import { errors } from '../lib/errors';
 import { newId } from '../lib/ids';
 import { appPaths } from '../lib/urls';
-import { requireMember, requirePermission, type Membership } from './access';
+import { requirePermission, requireProjectAccess, type Membership } from './access';
 import { emitAfterCommit } from './events';
 import { findItem, requireItem, type ItemInfo } from './items';
 import { getUserSummaries, getViaKeys } from './users';
@@ -105,12 +105,16 @@ function resolveTarget(deps: AppDeps, actor: Actor, input: ReactionTarget): Reso
     return { item, membership, path: item.path };
   }
   const reply = orm
-    .select({ teamId: s.reply.teamId, parentType: s.reply.parentType, parentId: s.reply.parentId })
+    .select({
+      projectId: s.reply.projectId,
+      parentType: s.reply.parentType,
+      parentId: s.reply.parentId,
+    })
     .from(s.reply)
     .where(and(eq(s.reply.id, input.targetId), isNull(s.reply.deletedAt)))
     .get();
   if (!reply) throw errors.notFound('Reply');
-  const membership = requireMember(orm, actor, reply.teamId, 'Reply');
+  const membership = requireProjectAccess(orm, actor, reply.projectId, 'Reply');
   const item = findItem(orm, reply.parentType, reply.parentId);
   if (!item) throw errors.notFound('Reply');
   return { item, membership, path: appPaths.reply(item.path, input.targetId) };

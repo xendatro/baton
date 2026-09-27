@@ -163,7 +163,7 @@ describe('reactions service', () => {
     addReaction(ctx.deps, actorOf(mia), input);
     ctx.db.orm
       .update(s.role)
-      .set({ permissions: [] })
+      .set({ permissions: ['VIEW_PROJECT'] })
       .where(eq(s.role.id, team.everyoneRole.id))
       .run();
 

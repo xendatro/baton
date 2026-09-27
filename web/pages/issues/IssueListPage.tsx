@@ -17,7 +17,7 @@ import { Spinner } from '@web/components/common/Spinner';
 import { Button } from '@web/components/ui/button';
 import { useMe } from '@web/lib/auth';
 import { useHotkey } from '@web/lib/hotkeys';
-import { useTeamAccess } from '@web/lib/permissions';
+import { useProjectAccess } from '@web/lib/permissions';
 import { useRouteContext } from '@web/lib/routeContext';
 import { useDocumentTitle } from '@web/lib/title';
 import { useInView } from '@web/lib/useInView';
@@ -49,7 +49,7 @@ function pick<T extends string>(values: readonly T[], value: string | null, fall
 function IssueList({ team, project }: { team: MeTeam; project: MeProject }) {
   useDocumentTitle(['Issues', project.name]);
   const navigate = useNavigate();
-  const access = useTeamAccess(team.id);
+  const access = useProjectAccess(team.id, project.id);
   const canCreate = access.has('CREATE_ISSUES');
   const base = `/t/${team.slug}/p/${project.key}`;
   const me = useMe().data?.user.id;

@@ -143,7 +143,7 @@ describe('replies over REST', () => {
     const issue = createIssue(ctx.db, { project: project.project, authorId: owner.id });
     ctx.db.orm
       .update(s.role)
-      .set({ permissions: [] })
+      .set({ permissions: ['VIEW_PROJECT'] })
       .where(eq(s.role.id, team.everyoneRole.id))
       .run();
     const { key } = createApiKey(ctx.db, { userId: member.id });

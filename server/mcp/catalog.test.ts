@@ -54,6 +54,16 @@ const DOCUMENTED_ADDITIONS = [
   // core (DECISIONS 2026-09-27 BAT-14)
   'add_reaction',
   'remove_reaction',
+  // projects (DECISIONS 2026-09-27 permissions B)
+  'list_project_roles',
+  'create_project_role',
+  'update_project_role',
+  'delete_project_role',
+  'assign_project_role',
+  'unassign_project_role',
+  'get_project_permissions',
+  'set_project_permission_override',
+  'remove_project_permission_override',
 ].sort();
 
 let ctx: TestContext;

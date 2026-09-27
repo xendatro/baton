@@ -28,7 +28,7 @@ import { MarkdownView } from '@web/components/markdown/MarkdownView';
 import { Button } from '@web/components/ui/button';
 import { Skeleton } from '@web/components/ui/skeleton';
 import { useHotkey } from '@web/lib/hotkeys';
-import { useTeamAccess } from '@web/lib/permissions';
+import { useProjectAccess } from '@web/lib/permissions';
 import { useRouteContext } from '@web/lib/routeContext';
 import { useDocumentTitle } from '@web/lib/title';
 import { pluralize } from '@web/lib/format';
@@ -49,7 +49,7 @@ export default function ProjectOverviewPage() {
 
 function Overview({ team, project }: { team: MeTeam; project: MeProject }) {
   const details = useProject(project.id);
-  const access = useTeamAccess(team.id);
+  const access = useProjectAccess(team.id, project.id);
   const canEdit = access.has('MANAGE_PROJECTS');
   const [editing, setEditing] = useState(false);
   const base = `/t/${team.slug}/p/${project.key}`;

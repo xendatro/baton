@@ -8,11 +8,17 @@ import {
   PERMISSIONS,
   canManageRoleWith,
   canModerateMember,
+  changedOverridePermissions,
+  combineProjectPermissions,
+  effectiveProjectPermissions,
+  PROJECT_PERMISSIONS,
+  TEAM_PERMISSIONS,
   displayRoleColor,
   effectivePermissions,
   hasPermission,
   isPermission,
   normalizePermissions,
+  type Permission,
 } from './permissions';
 
 describe('permission metadata', () => {
@@ -29,7 +35,7 @@ describe('permission metadata', () => {
   it('matches the SPEC @everyone defaults and seeds', () => {
     expect([...EVERYONE_DEFAULTS].sort()).toEqual(
       [
-        'CREATE_INVITES',
+        'VIEW_PROJECT',
         'MANAGE_LABELS',
         'CREATE_ISSUES',
         'CREATE_TASKS',
@@ -124,5 +130,135 @@ describe('displayRoleColor', () => {
       ]),
     ).toBe('#22c55e');
     expect(displayRoleColor([{ position: 0, color: null }])).toBeNull();
+  });
+});
+
+describe('project-level permissions', () => {
+  it('splits every permission into team-level or project-level (design §3)', () => {
+    expect([...TEAM_PERMISSIONS].sort()).toEqual(
+      [
+        'ADMINISTRATOR',
+        'MANAGE_TEAM',
+        'MANAGE_ROLES',
+        'MANAGE_MEMBERS',
+        'CREATE_INVITES',
+        'MANAGE_INVITES',
+        'MANAGE_PROJECTS',
+        'VIEW_AUDIT_LOG',
+        'MANAGE_TRASH',
+      ].sort(),
+    );
+    expect([...PROJECT_PERMISSIONS].sort()).toEqual(
+      [
+        'VIEW_PROJECT',
+        'MANAGE_STATUSES',
+        'MANAGE_LABELS',
+        'CREATE_ISSUES',
+        'CREATE_TASKS',
+        'REPLY',
+        'UPDATE_TASKS',
+        'RESOLVE_ISSUES',
+        'EDIT_ANY_CONTENT',
+        'DELETE_ANY_CONTENT',
+        'MENTION_EVERYONE',
+        'MANAGE_PROJECT_ACCESS',
+      ].sort(),
+    );
+    expect(TEAM_PERMISSIONS.length + PROJECT_PERMISSIONS.length).toBe(PERMISSIONS.length);
+  });
+
+  it('starts from the project-level subset of the team permissions', () => {
+    expect(
+      effectiveProjectPermissions({
+        isOwner: false,
+        teamPermissions: ['MANAGE_TEAM', 'VIEW_PROJECT', 'REPLY'],
+      }),
+    ).toEqual(['VIEW_PROJECT', 'REPLY']);
+  });
+
+  it('applies @everyone, then roles (denies before allows), then the user', () => {
+    const base = { isOwner: false, teamPermissions: ['VIEW_PROJECT', 'REPLY'] as Permission[] };
+    // A role allow beats an @everyone deny.
+    expect(
+      effectiveProjectPermissions({
+        ...base,
+        everyone: { allow: [], deny: ['VIEW_PROJECT'] },
+        roles: [{ allow: ['VIEW_PROJECT'], deny: [] }],
+      }),
+    ).toContain('VIEW_PROJECT');
+    // A role deny beats an @everyone allow.
+    expect(
+      effectiveProjectPermissions({
+        ...base,
+        everyone: { allow: ['CREATE_TASKS'], deny: [] },
+        roles: [{ allow: [], deny: ['CREATE_TASKS'] }],
+      }),
+    ).not.toContain('CREATE_TASKS');
+    // Between roles, allows win over denies.
+    expect(
+      effectiveProjectPermissions({
+        ...base,
+        roles: [
+          { allow: [], deny: ['REPLY'] },
+          { allow: ['REPLY'], deny: [] },
+        ],
+      }),
+    ).toContain('REPLY');
+    // The user's own override is last: deny beats role allows, allow beats role denies.
+    expect(
+      effectiveProjectPermissions({
+        ...base,
+        roles: [{ allow: ['CREATE_ISSUES'], deny: [] }],
+        user: { allow: [], deny: ['CREATE_ISSUES', 'REPLY'] },
+      }),
+    ).toEqual(['VIEW_PROJECT']);
+    expect(
+      effectiveProjectPermissions({
+        ...base,
+        roles: [{ allow: [], deny: ['VIEW_PROJECT'] }],
+        user: { allow: ['VIEW_PROJECT'], deny: [] },
+      }),
+    ).toContain('VIEW_PROJECT');
+  });
+
+  it('lets owners and administrators bypass overrides', () => {
+    const deny = { allow: [], deny: [...PROJECT_PERMISSIONS] };
+    expect(effectiveProjectPermissions({ isOwner: true, teamPermissions: [], user: deny })).toEqual(
+      [...PROJECT_PERMISSIONS],
+    );
+    expect(
+      effectiveProjectPermissions({
+        isOwner: false,
+        teamPermissions: ['ADMINISTRATOR'],
+        user: deny,
+      }),
+    ).toEqual([...PROJECT_PERMISSIONS]);
+  });
+
+  it('never hides a project from MANAGE_PROJECTS holders', () => {
+    expect(
+      effectiveProjectPermissions({
+        isOwner: false,
+        teamPermissions: ['MANAGE_PROJECTS'],
+        user: { allow: [], deny: ['VIEW_PROJECT'] },
+      }),
+    ).toEqual(['VIEW_PROJECT']);
+  });
+
+  it('combines team-level and project-level permissions', () => {
+    expect(combineProjectPermissions(['MANAGE_TEAM', 'REPLY'], ['VIEW_PROJECT'])).toEqual([
+      'MANAGE_TEAM',
+      'VIEW_PROJECT',
+    ]);
+    expect(combineProjectPermissions(['ADMINISTRATOR'], [])).toEqual([...PERMISSIONS]);
+  });
+
+  it('lists the permissions whose override state changes', () => {
+    expect(
+      changedOverridePermissions(
+        { allow: ['REPLY'], deny: ['CREATE_TASKS'] },
+        { allow: ['REPLY', 'CREATE_ISSUES'], deny: [] },
+      ),
+    ).toEqual(['CREATE_ISSUES', 'CREATE_TASKS']);
   });
 });

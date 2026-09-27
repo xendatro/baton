@@ -64,7 +64,7 @@ import { useMe } from '@web/lib/auth';
 import { useHotkey } from '@web/lib/hotkeys';
 import { useBack, type BackOptions } from '@web/lib/navigationHistory';
 import { queryKeys } from '@web/lib/queryKeys';
-import { useTeamAccess } from '@web/lib/permissions';
+import { useProjectAccess } from '@web/lib/permissions';
 import { useRouteContext } from '@web/lib/routeContext';
 import { useDocumentTitle } from '@web/lib/title';
 import { cn } from '@web/lib/utils';
@@ -134,7 +134,7 @@ type Picker = 'status' | 'priority' | 'assignees' | 'labels' | 'due' | null;
 function TaskView({ task, team, project }: { task: Task; team: MeTeam; project: MeProject }) {
   const me = useMe().data;
   const viewerId = me?.user.id ?? null;
-  const access = useTeamAccess(team.id);
+  const access = useProjectAccess(team.id, project.id);
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const statuses = useStatuses(project.id);
@@ -690,6 +690,7 @@ function TaskView({ task, team, project }: { task: Task; team: MeTeam; project: 
                 targetType="task"
                 targetId={task.id}
                 teamId={team.id}
+                projectId={task.projectId}
                 reactions={task.reactions}
                 queryKey={queryKeys.tasks.detail(task.projectId, task.number)}
                 className="mt-3"
@@ -733,7 +734,13 @@ function TaskView({ task, team, project }: { task: Task; team: MeTeam; project: 
             </h2>
             <Timeline parentType="task" parentId={task.id} />
             <div className="mt-4">
-              <ReplyComposer parentType="task" parentId={task.id} teamId={team.id} item={task} />
+              <ReplyComposer
+                parentType="task"
+                parentId={task.id}
+                teamId={team.id}
+                projectId={task.projectId}
+                item={task}
+              />
             </div>
           </section>
         </div>

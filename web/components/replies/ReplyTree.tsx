@@ -10,7 +10,7 @@ import type { ReplyNode } from '@shared/schemas/core';
 import { RelativeTime } from '@web/components/common/RelativeTime';
 import { Spinner } from '@web/components/common/Spinner';
 import { Button } from '@web/components/ui/button';
-import { useTeamAccess } from '@web/lib/permissions';
+import { useProjectAccess } from '@web/lib/permissions';
 import { ReplyComposer } from './ReplyComposer';
 import { ReplyItem } from './ReplyItem';
 import { showsAnswers, type ThreadNode } from './threadForest';
@@ -109,7 +109,7 @@ function ReplyActions({
   answering: boolean;
   onAnswer: () => void;
 }) {
-  const access = useTeamAccess(reply.teamId);
+  const access = useProjectAccess(reply.teamId, reply.projectId);
   if (!access.has('REPLY')) return null;
   return (
     <div className="-ml-2 flex items-center gap-1">
@@ -193,6 +193,7 @@ function OpenBranch({
                 parentType={thread.parentType}
                 parentId={thread.parentId}
                 teamId={reply.teamId}
+                projectId={reply.projectId}
                 parentReplyId={reply.id}
                 label={`Reply to ${name}`}
                 placeholder={`Reply to ${reply.author?.name ?? 'this reply'}…`}

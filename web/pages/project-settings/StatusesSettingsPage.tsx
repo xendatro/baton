@@ -48,7 +48,7 @@ import { Skeleton } from '@web/components/ui/skeleton';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@web/components/ui/tooltip';
 import { errorMessage, isApiError } from '@web/lib/api';
 import { pluralize } from '@web/lib/format';
-import { useTeamAccess } from '@web/lib/permissions';
+import { useProjectAccess } from '@web/lib/permissions';
 import { useRouteContext } from '@web/lib/routeContext';
 import { useDocumentTitle } from '@web/lib/title';
 import { cn } from '@web/lib/utils';
@@ -77,7 +77,7 @@ export default function StatusesSettingsPage() {
 }
 
 function Statuses({ teamId, projectId }: { teamId: string; projectId: string }) {
-  const access = useTeamAccess(teamId);
+  const access = useProjectAccess(teamId, projectId);
   const canManage = access.has('MANAGE_STATUSES');
   const statuses = useStatuses(projectId);
   const reorder = useReorderStatuses(projectId);

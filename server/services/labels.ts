@@ -14,7 +14,7 @@ import * as s from '../db/schema';
 import { diffFields, hasChanges } from '../lib/diff';
 import { errors } from '../lib/errors';
 import { newId } from '../lib/ids';
-import { requireMember, requirePermission } from './access';
+import { requirePermission, requireProjectAccess } from './access';
 import { recordActivity } from './activity';
 import { emitAfterCommit } from './events';
 import { requireProject, type ProjectRow } from './projects';
@@ -106,7 +106,7 @@ function requireManageableLabel(deps: AppDeps, actor: Actor, labelId: string) {
     .where(and(eq(s.label.id, labelId), isNull(s.project.deletedAt), isNull(s.team.deletedAt)))
     .get();
   if (!row) throw errors.notFound('Label');
-  const membership = requireMember(orm, actor, row.project.teamId, 'Label');
+  const membership = requireProjectAccess(orm, actor, row.project.id, 'Label');
   requirePermission(membership, 'MANAGE_LABELS', "You don't have permission to manage labels");
   return row;
 }

@@ -1,7 +1,7 @@
 import { SquarePenIcon } from 'lucide-react';
 import { lazy, Suspense, useState } from 'react';
 import { matchPath, useLocation } from 'react-router';
-import type { MeTeam } from '@shared/schemas/core';
+import type { MeProject, MeTeam } from '@shared/schemas/core';
 import { usePaletteCommands } from '@web/components/palette/registry';
 import { Skeleton } from '@web/components/ui/skeleton';
 import {
@@ -36,8 +36,9 @@ declare module '@web/lib/shellActions' {
  * it asks for one among those where the viewer may create tasks.
  */
 
-function canCreateIn(team: MeTeam): boolean {
-  return team.permissions.includes('CREATE_TASKS');
+/** Project permissions (design §3); a project without them falls back to the team's. */
+function canCreateIn(team: MeTeam, project: MeProject): boolean {
+  return (project.permissions ?? team.permissions).includes('CREATE_TASKS');
 }
 
 export default function NewTaskDialog() {
@@ -46,9 +47,11 @@ export default function NewTaskDialog() {
   const [open, setOpen] = useState(false);
   const [preset, setPreset] = useState<{ projectId?: string; statusId?: string }>({});
 
-  const choices: ProjectChoice[] = (me?.teams ?? [])
-    .filter(canCreateIn)
-    .flatMap((team) => team.projects.map((project) => ({ team, project })));
+  const choices: ProjectChoice[] = (me?.teams ?? []).flatMap((team) =>
+    team.projects
+      .filter((project) => canCreateIn(team, project))
+      .map((project) => ({ team, project })),
+  );
   const match = matchPath({ path: '/t/:team/p/:key', end: false }, pathname);
   const routeTeam = me && match ? findTeam(me.teams, match.params.team) : null;
   const routeProject = findProject(routeTeam, match?.params.key);

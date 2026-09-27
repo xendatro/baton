@@ -3,7 +3,7 @@ import type { Page } from '@playwright/test';
 import { expect, ORIGIN, signedInUser, test, withDatabase } from './support/fixtures.ts';
 
 /**
- * Automatic agents (BAT-24) on the web: models by difficulty, whose jobs run, and a job from
+ * Automatic agents (BAT-24) on the web: the default models, whose jobs run, and a job from
  * someone else waiting for the owner's OK, run from Settings → Automatic agents.
  */
 
@@ -66,32 +66,23 @@ test('models, whose jobs run and a job waiting for my OK', async ({ page, browse
   await page.getByRole('button', { name: 'Save', exact: true }).click();
   await expect(page.getByText('Saved whose jobs run')).toBeVisible();
 
-  // Models: a fallback on the default chain, and Codex for Hard in this project.
+  // Models: a fallback on the default chain (each project's own are on its Your settings page).
   const models = page.getByRole('group', { name: 'Default chain' });
   await models.getByRole('button', { name: 'Add a fallback' }).click();
   await expect(models.getByRole('combobox', { name: 'Default chain: harness 2' })).toHaveValue(
     'codex',
   );
-  const hard = page.getByRole('group', { name: 'Hard chain' });
-  await expect(hard.getByText(/Uses account default/)).toBeVisible();
-  await hard.getByRole('button', { name: 'Set a model' }).click();
-  await hard.getByRole('combobox', { name: 'Hard chain: harness 1' }).selectOption('codex');
-  await hard.getByRole('combobox', { name: 'Hard chain: effort 1' }).fill('high');
+  await expect(page.getByRole('group', { name: 'Hard chain' })).toHaveCount(0);
   await page.getByRole('button', { name: 'Save models' }).click();
   await expect(page.getByText('Saved your models')).toBeVisible();
 
   const saved = await page.request.get('/api/me/agent/models');
   const body = (await saved.json()) as {
     default: { chain: Array<{ harness: string }> };
-    projects: Record<
-      string,
-      { levels: Record<string, Array<{ harness: string; effort: string }>> }
-    >;
+    projects: Record<string, unknown>;
   };
   expect(body.default.chain.map((entry) => entry.harness)).toEqual(['claude', 'codex']);
-  expect(Object.values(body.projects[project.id]?.levels ?? {})).toEqual([
-    [{ harness: 'codex', model: '', effort: 'high' }],
-  ]);
+  expect(body.projects).toEqual({});
 });
 
 test('the desktop app is one click away in the sidebar', async ({ page }) => {

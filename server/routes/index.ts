@@ -31,6 +31,7 @@ import { notificationRoutes } from './notifications';
 import { pipelineRoutes } from './pipelines';
 import { projectAccessRoutes } from './projectAccess';
 import { projectRoutes } from './projects';
+import { projectSettingsRoutes } from './projectSettings';
 import { reactionRoutes } from './reactions';
 import { replyRoutes } from './replies';
 import { roleRoutes } from './roles';
@@ -71,6 +72,7 @@ const routers: ReadonlyArray<Hono<AppEnv>> = [
   labelRoutes,
   difficultyRoutes,
   projectAccessRoutes,
+  projectSettingsRoutes,
   githubRoutes,
   // issues
   issueRoutes,

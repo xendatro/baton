@@ -188,12 +188,23 @@ describe('Tasks page → Customize menu', { timeout: 30_000 }, () => {
     expect(within(menu).queryByRole('menuitem', { name: 'Edit statuses' })).toBeNull();
   });
 
-  it('is hidden from viewers who can manage neither', async () => {
+  it('offers viewers who can manage neither only their own settings', async () => {
+    const user = userEvent.setup();
     mockProjectApi(MEMBER);
     renderAt('/t/acme/p/WEB/tasks');
     await screen.findByRole('heading', { name: 'In Review' }, LAZY);
-    expect(screen.queryByRole('button', { name: 'Customize board' })).toBeNull();
     expect(screen.queryByRole('button', { name: /column actions/ })).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Customize board' }));
+    const menu = await screen.findByRole('menu');
+    expect(
+      within(menu)
+        .getAllByRole('menuitem')
+        .map((item) => item.textContent),
+    ).toEqual(['Your settings']);
+    expect(within(menu).getByRole('menuitem', { name: 'Your settings' })).toHaveAttribute(
+      'href',
+      '/t/acme/p/WEB/me',
+    );
   });
 });
 

@@ -63,6 +63,7 @@ import type {
   ProjectMapping,
 } from '../../shared/schemas/agentRunner';
 import type { FieldChange } from '../../shared/schemas/core';
+import type { ProjectNotifications } from '../../shared/schemas/projectSettings';
 import { newId } from '../lib/ids';
 
 const timestamp = (name: string) => integer(name, { mode: 'timestamp_ms' });
@@ -1634,5 +1635,28 @@ export const agentUsage = sqliteTable(
     index('agent_usage_job_idx').on(t.jobId),
     index('agent_usage_agent_idx').on(t.agentUserId),
     index('agent_usage_project_idx').on(t.projectId),
+  ],
+);
+
+/**
+ * A person's own settings for one project (BAT-29): notification overrides. Null columns (and a
+ * missing row) use the account's settings. Their models there stay in `agent_project_mapping`.
+ */
+export const projectMemberSettings = sqliteTable(
+  'project_member_settings',
+  {
+    userId: text('user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    projectId: text('project_id')
+      .notNull()
+      .references(() => project.id, { onDelete: 'cascade' }),
+    notifications: text('notifications', { mode: 'json' }).$type<ProjectNotifications>(),
+    agentNotifications: text('agent_notifications', { enum: AGENT_NOTIFICATION_LEVELS }),
+    updatedAt: updatedAtColumn(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.userId, t.projectId] }),
+    index('project_member_settings_project_idx').on(t.projectId),
   ],
 );

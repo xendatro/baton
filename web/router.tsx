@@ -111,6 +111,9 @@ const shellRoutes: RouteObject[] = [
       // tasks
       { path: 'tasks', ...page(() => import('./pages/tasks/TasksPage')) },
       { path: 'tasks/:number', ...page(() => import('./pages/tasks/TaskPage')) },
+
+      // Your settings for this project (BAT-29)
+      { path: 'me', ...page(() => import('./pages/projects/MySettingsPage')) },
     ],
   },
 

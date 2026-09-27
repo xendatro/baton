@@ -4,6 +4,7 @@ import {
   MoreHorizontalIcon,
   Settings2Icon,
   TagsIcon,
+  UserCogIcon,
   WorkflowIcon,
 } from 'lucide-react';
 import { Link } from 'react-router';
@@ -13,6 +14,7 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuLabel,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@web/components/ui/dropdown-menu';
 import { cn } from '@web/lib/utils';
@@ -21,6 +23,7 @@ import { projectSettingsPath } from './settingsPaths';
 /**
  * Shortcuts from the Tasks page to the project settings that shape it: the statuses (the board's
  * columns) and the labels. The settings pages stay the home of both; these are a second way in.
+ * Everyone also gets their own settings for the project (BAT-29).
  */
 
 export interface CustomizeMenuProps {
@@ -32,14 +35,14 @@ export interface CustomizeMenuProps {
   pipelineId?: string | undefined;
 }
 
-/** The toolbar's "Customize" menu; hidden from viewers who can change neither. */
+/** The toolbar's "Customize" menu; viewers who can change neither get only Your settings. */
 export function CustomizeMenu({
   projectBase,
   canManageStatuses,
   canManageLabels,
   pipelineId,
 }: CustomizeMenuProps) {
-  if (!canManageStatuses && !canManageLabels) return null;
+  const canManage = canManageStatuses || canManageLabels;
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -49,9 +52,11 @@ export function CustomizeMenu({
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-48">
-        <DropdownMenuLabel className="text-xs font-medium text-muted-foreground">
-          Customize board
-        </DropdownMenuLabel>
+        {canManage ? (
+          <DropdownMenuLabel className="text-xs font-medium text-muted-foreground">
+            Customize board
+          </DropdownMenuLabel>
+        ) : null}
         {canManageStatuses ? (
           <DropdownMenuItem asChild>
             <Link to={projectSettingsPath(projectBase, 'statuses', undefined, pipelineId)}>
@@ -84,6 +89,13 @@ export function CustomizeMenu({
             </Link>
           </DropdownMenuItem>
         ) : null}
+        {canManage ? <DropdownMenuSeparator /> : null}
+        <DropdownMenuItem asChild>
+          <Link to={`${projectBase}/me`}>
+            <UserCogIcon aria-hidden="true" />
+            Your settings
+          </Link>
+        </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
   );

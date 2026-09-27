@@ -1,5 +1,9 @@
 # Deploying Baton
 
+> **Since 2026-09-27 production runs on Render at https://www.passthebaton.dev** (see
+> docs/DEPLOY-RENDER.md; pushes to `main` deploy automatically). This guide describes the previous
+> self-hosted setup on the mini box, whose `baton` service is now stopped and disabled.
+
 Baton runs on one always-on Linux box (`ethan@mini`: Ubuntu 24.04 x86_64, no sudo) as a systemd
 **user** service, published to the internet through a Cloudflare Tunnel. This document covers the
 first install, deploys, logs, backups and restores, configuration, the tunnel and rollback.

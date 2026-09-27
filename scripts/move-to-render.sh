@@ -32,7 +32,7 @@ cd "$HOME/apps/baton-releases/current"
 "$HOME/.local/node/bin/node" -e '
   const Database = require("better-sqlite3");
   const db = new Database(process.argv[1], { readonly: true });
-  db.exec(`VACUUM INTO ${JSON.stringify(process.argv[2])}`);
+  db.prepare("VACUUM INTO ?").run(process.argv[2]);
   db.close();
 ' "$DATA/baton.db" "$OUT/baton.db"
 ln -s "$DATA/uploads" "$OUT/uploads"

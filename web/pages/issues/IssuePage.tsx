@@ -40,6 +40,7 @@ import { useHotkey } from '@web/lib/hotkeys';
 import { useTeamAccess } from '@web/lib/permissions';
 import { useRouteContext } from '@web/lib/routeContext';
 import { useDocumentTitle } from '@web/lib/title';
+import { useMarkItemRead } from '@web/pages/inbox/useMarkItemRead';
 import { copyText } from '@web/pages/teams/clipboard';
 import { IssuePost } from './IssuePost';
 import { IssueSidebar } from './IssueSidebar';
@@ -133,6 +134,7 @@ function IssueDetail({
   const setResolved = useSetResolved(issue);
   const remove = useDeleteIssue();
   const restore = useRestoreIssue();
+  useMarkItemRead('issue', issue);
   const link = `${window.location.origin}${issue.path}`;
 
   const toggleResolved = () =>

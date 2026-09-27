@@ -89,6 +89,13 @@ describe('core request schemas', () => {
     expect(markNotificationsReadInputSchema.safeParse({ ids: ['a'], all: true }).success).toBe(
       false,
     );
+    // BAT-15: an item (task or issue) instead.
+    const item = { type: 'task', id: '01HZX' };
+    expect(markNotificationsReadInputSchema.safeParse({ item }).success).toBe(true);
+    expect(markNotificationsReadInputSchema.safeParse({ item, all: true }).success).toBe(false);
+    expect(
+      markNotificationsReadInputSchema.safeParse({ item: { type: 'reply', id: '01HZX' } }).success,
+    ).toBe(false);
   });
 
   it('parses search types', () => {

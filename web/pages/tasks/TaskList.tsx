@@ -11,6 +11,7 @@ import { PriorityIcon } from '@web/components/common/PriorityIcon';
 import { RelativeTime } from '@web/components/common/RelativeTime';
 import { RoleChip } from '@web/components/common/RoleChip';
 import { StatusBadge, StatusIcon } from '@web/components/common/StatusBadge';
+import { UnreadBadge } from '@web/components/common/UnreadBadge';
 import { AvatarStack } from '@web/components/common/UserAvatar';
 import { Skeleton } from '@web/components/ui/skeleton';
 import { cn } from '@web/lib/utils';
@@ -178,6 +179,7 @@ function Row({ task }: { task: TaskCard }) {
           >
             {task.title}
           </Link>
+          <UnreadBadge count={task.unreadCount} />
           {task.blocked ? <BlockedBadge blockers={task.blockers} /> : null}
           {task.labels.map((label) => (
             <LabelChip key={label.id} label={label} />

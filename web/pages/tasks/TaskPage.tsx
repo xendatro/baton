@@ -65,6 +65,7 @@ import { useTeamAccess } from '@web/lib/permissions';
 import { useRouteContext } from '@web/lib/routeContext';
 import { useDocumentTitle } from '@web/lib/title';
 import { cn } from '@web/lib/utils';
+import { useMarkItemRead } from '../inbox/useMarkItemRead';
 import { copyText } from '../teams/clipboard';
 import { useCreateLabel, useLabels, useStatuses } from '../projects/queries';
 import { ClaimPanel } from './ClaimPanel';
@@ -140,6 +141,7 @@ function TaskView({ task, team, project }: { task: Task; team: MeTeam; project: 
   const remove = useDeleteTask(project.id);
   const subscription = useTaskSubscription(task);
   const deleteAttachment = useDeleteAttachment({ type: 'task', id: task.id });
+  useMarkItemRead('task', task);
   // Images shown inline in the description aren't listed again as files (as on issues).
   const files = task.attachments.filter(
     (attachment) => !(attachment.isImage && task.description.includes(attachment.url)),

@@ -263,14 +263,24 @@ export type NotificationListResponse = z.infer<typeof notificationListResponseSc
 export const unreadCountResponseSchema = z.object({ count: z.number().int().nonnegative() });
 export type UnreadCountResponse = z.infer<typeof unreadCountResponseSchema>;
 
+/** A task or issue: `item` marks every notification about it and its replies (BAT-15). */
+export const notificationItemSchema = z.object({
+  type: z.enum(REPLY_PARENT_TYPES),
+  id: idSchema,
+});
+export type NotificationItem = z.infer<typeof notificationItemSchema>;
+
 export const markNotificationsReadInputSchema = z
   .object({
     ids: z.array(idSchema).min(1).max(LIMITS.bulkIds).optional(),
     all: z.literal(true).optional(),
+    item: notificationItemSchema.optional(),
   })
-  .refine((value) => (value.ids === undefined) !== (value.all === undefined), {
-    message: 'Pass either ids or all: true',
-  });
+  .refine(
+    (value) =>
+      [value.ids, value.all, value.item].filter((field) => field !== undefined).length === 1,
+    { message: 'Pass one of ids, all: true or item' },
+  );
 export type MarkNotificationsReadInput = z.infer<typeof markNotificationsReadInputSchema>;
 
 export const markNotificationsReadResponseSchema = z.object({

@@ -37,6 +37,7 @@ export const LIVE_EVENT_TYPES = [
   'attachment.changed',
   'activity.created',
   'notification.created',
+  'notification.read',
   'me.updated',
 ] as const;
 
@@ -45,6 +46,7 @@ export type LiveEventType = (typeof LIVE_EVENT_TYPES)[number];
 /** Events delivered only to one user (`userId`) instead of a whole team. */
 export const PERSONAL_EVENT_TYPES = [
   'notification.created',
+  'notification.read',
   'me.updated',
 ] as const satisfies readonly LiveEventType[];
 
@@ -79,6 +81,8 @@ export const liveEventSchema = z.object({
   /**
    * For `reply.*` and `attachment.changed`: the item they belong to (e.g. `task` + task id).
    * For `activity.created`: the entity the activity row is about (`entityId` is the row id).
+   * For `notification.created` / `notification.read`: the task or issue the notification is
+   * about (a reply notification names the reply's item), when there is one.
    */
   parentType: z.string().nullable().optional(),
   parentId: z.string().nullable().optional(),

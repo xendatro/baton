@@ -134,6 +134,11 @@ export const taskCardSchema = taskSummarySchema.extend({
   completedAt: timestampSchema.nullable(),
   /** Relative web-app path. */
   path: z.string(),
+  /**
+   * The viewer's unread notifications about the task and its replies (BAT-16). Sent with the
+   * board and the list.
+   */
+  unreadCount: z.number().int().nonnegative().optional(),
 });
 export type TaskCard = z.infer<typeof taskCardSchema>;
 

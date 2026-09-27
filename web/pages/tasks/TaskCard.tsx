@@ -6,12 +6,13 @@ import { DueDate } from '@web/components/common/DueDate';
 import { LabelChip } from '@web/components/common/LabelChip';
 import { PriorityIcon } from '@web/components/common/PriorityIcon';
 import { RoleChip } from '@web/components/common/RoleChip';
+import { UnreadBadge } from '@web/components/common/UnreadBadge';
 import { AvatarStack } from '@web/components/common/UserAvatar';
 import { cn } from '@web/lib/utils';
 
 /**
- * Body of a board card: key, priority and blocked state, title, labels, claim, due date, replies
- * and assignees. The card wrapper (link, drag handle) is the board's.
+ * Body of a board card: key, unread badge (BAT-16), priority and blocked state, title, labels,
+ * claim, due date, replies and assignees. The card wrapper (link, drag handle) is the board's.
  */
 export function TaskCardBody({ task }: { task: TaskCardData }) {
   const done = task.status.category === 'done';
@@ -22,6 +23,7 @@ export function TaskCardBody({ task }: { task: TaskCardData }) {
     <div className="flex flex-col gap-2">
       <div className="flex items-center gap-2">
         <span className="font-mono text-xs text-muted-foreground tabular-nums">{task.ref}</span>
+        <UnreadBadge count={task.unreadCount} />
         {task.blocked ? <BlockedBadge blockers={task.blockers} /> : null}
         <PriorityIcon value={task.priority} className="ml-auto" />
       </div>

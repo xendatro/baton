@@ -54,6 +54,22 @@ describe('TaskCardBody', () => {
     expect(screen.getByText(/Mia via Claude on laptop claimed this/)).toBeInTheDocument();
   });
 
+  it('shows the viewer’s unread notifications as a counted badge (BAT-16)', () => {
+    const { rerender } = render(
+      <TooltipProvider>
+        <TaskCardBody task={{ ...base, unreadCount: 2 }} />
+      </TooltipProvider>,
+    );
+    const badge = screen.getByRole('img', { name: '2 unread notifications' });
+    expect(badge).toHaveTextContent('2');
+    rerender(
+      <TooltipProvider>
+        <TaskCardBody task={{ ...base, unreadCount: 0 }} />
+      </TooltipProvider>,
+    );
+    expect(screen.queryByRole('img', { name: /unread/ })).not.toBeInTheDocument();
+  });
+
   it('never shows finished tasks as overdue, and leaves out empty parts', () => {
     render(
       <TooltipProvider>

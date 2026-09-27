@@ -24,6 +24,7 @@ import { appPaths } from '../lib/urls';
 import type { Membership } from './access';
 import { attachmentsByParent } from './attachments';
 import { isClaimValid } from './claimLease';
+import { reactionsOf } from './reactions';
 import { statusesOf } from './statuses';
 import { blockersOf, blockingOf, linkedIssuesOf, openBlockerRefs } from './taskLinks';
 import { getUserSummaries, getViaKeys, toUserSummary } from './users';
@@ -258,6 +259,7 @@ export function toTask(db: DbExecutor, viewer: Actor, row: TaskRow, now: Date = 
     blocking: blockingOf(db, row.id),
     issues: linkedIssuesOf(db, row.id),
     attachments: attachmentsByParent(db, 'task', [row.id]).get(row.id) ?? [],
+    reactions: reactionsOf(db, 'task', row.id, viewer.userId),
     subscribed: isSubscribed(db, viewer.userId, row.id),
   };
 }

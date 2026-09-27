@@ -73,6 +73,14 @@ const replyChange: Invalidation = (e) => [
   ...parentItemKeys(e),
 ];
 
+// Reactions show only on task and issue pages and in threads, so lists and boards stay put.
+const reactionChange: Invalidation = (e) => {
+  if (e.entityType === 'reply') return parentKey(e, queryKeys.replies.list);
+  if (e.entityType === 'task') return projectKeys(e, queryKeys.tasks.details);
+  if (e.entityType === 'issue') return projectKeys(e, queryKeys.issues.details);
+  return [];
+};
+
 export const LIVE_INVALIDATIONS: Readonly<Record<LiveEventType, Invalidation>> = {
   'team.updated': (e) => [
     queryKeys.me(),
@@ -117,6 +125,7 @@ export const LIVE_INVALIDATIONS: Readonly<Record<LiveEventType, Invalidation>> =
   'reply.created': replyChange,
   'reply.updated': replyChange,
   'reply.deleted': (e) => [...replyChange(e), ...trash(e)],
+  'reaction.changed': reactionChange,
   // Attachments are embedded in replies and items; a reply attachment doesn't name its thread.
   'attachment.changed': (e) => [
     ...parentKey(e, queryKeys.attachments),

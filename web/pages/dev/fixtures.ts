@@ -167,6 +167,18 @@ export const replies: Reply[] = [
     author: ada,
     via: null,
     attachments: [],
+    reactions: [
+      {
+        emoji: '👍',
+        count: 2,
+        reactedByMe: true,
+        users: [
+          { ...ethan, via: null },
+          { ...ethan, via: { keyId: 'key_1', keyName: 'MSI', agentName: 'Claude' } },
+        ],
+      },
+      { emoji: '🎉', count: 1, reactedByMe: false, users: [{ ...ada, via: null }] },
+    ],
     createdAt: minutesAgo(180),
     updatedAt: minutesAgo(180),
     editedAt: null,
@@ -181,6 +193,7 @@ export const replies: Reply[] = [
     author: ethan,
     via: { keyId: 'key_1', keyName: 'Claude on laptop' },
     attachments: attachments.slice(0, 2),
+    reactions: [],
     createdAt: minutesAgo(45),
     updatedAt: minutesAgo(30),
     editedAt: minutesAgo(30),

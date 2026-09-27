@@ -25,6 +25,7 @@ import { memberRoutes } from './members';
 import { myWorkRoutes } from './myWork';
 import { notificationRoutes } from './notifications';
 import { projectRoutes } from './projects';
+import { reactionRoutes } from './reactions';
 import { replyRoutes } from './replies';
 import { roleRoutes } from './roles';
 import { searchRoutes } from './search';
@@ -48,6 +49,7 @@ const routers: ReadonlyArray<Hono<AppEnv>> = [
   notificationRoutes,
   attachmentRoutes,
   replyRoutes,
+  reactionRoutes,
   activityRoutes,
   userRoutes,
   subscriptionRoutes,

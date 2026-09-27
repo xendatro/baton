@@ -8,7 +8,7 @@ import {
   timestampSchema,
   titleSchema,
 } from './common';
-import { attachmentSchema, userSummarySchema, viaKeySchema } from './core';
+import { attachmentSchema, reactionSummarySchema, userSummarySchema, viaKeySchema } from './core';
 
 /**
  * Wire contracts of the issues module (SPEC §1.7): forum-style issues, numbered per project
@@ -101,6 +101,8 @@ export const issueSchema = issueSummarySchema.extend({
   resolvedBy: userSummarySchema.nullable(),
   /** Live tasks linked to the issue, by number. */
   linkedTasks: z.array(linkedTaskSchema),
+  /** Emoji reactions on the issue post (BAT-14). */
+  reactions: z.array(reactionSummarySchema),
   /** Is the viewer subscribed to reply notifications? */
   subscribed: z.boolean(),
 });

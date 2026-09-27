@@ -34,6 +34,8 @@ export const LIVE_EVENT_TYPES = [
   'reply.created',
   'reply.updated',
   'reply.deleted',
+  /** BAT-14: an emoji reaction was added or removed; entity = the task, issue or reply. */
+  'reaction.changed',
   'attachment.changed',
   'activity.created',
   'notification.created',
@@ -79,6 +81,7 @@ export const liveEventSchema = z.object({
   /**
    * For `reply.*` and `attachment.changed`: the item they belong to (e.g. `task` + task id).
    * For `activity.created`: the entity the activity row is about (`entityId` is the row id).
+   * For `reaction.changed` on a reply: the reply's task or issue.
    */
   parentType: z.string().nullable().optional(),
   parentId: z.string().nullable().optional(),

@@ -7,7 +7,11 @@ import {
   LIMITS,
   SEARCH_ENTITY_TYPES,
 } from '@shared/constants';
-import { createReplyInputSchema, updateReplyInputSchema } from '@shared/schemas/core';
+import {
+  createReplyInputSchema,
+  reactionInputSchema,
+  updateReplyInputSchema,
+} from '@shared/schemas/core';
 import { errors } from '../../lib/errors';
 import { parseInput } from '../../lib/validate';
 import { consumeRateLimit } from '../../middleware/rateLimit';
@@ -24,6 +28,7 @@ import {
 import { MAX_MENTION_WAIT_SECONDS, waitForMentions } from '../../services/agentMentions';
 import { findItem } from '../../services/items';
 import { listNotifications, markNotificationsRead } from '../../services/notifications';
+import { addReaction, isReplyId, removeReaction } from '../../services/reactions';
 import { resolveProject, resolveTeam, resolveUser } from '../../services/refs';
 import {
   createReply,
@@ -531,6 +536,42 @@ function subscriptionTool(name: 'subscribe' | 'unsubscribe') {
   });
 }
 
+/** A reaction target: a reply id, or a task or issue ref (the reply id wins when both match). */
+function reactionTarget(ctx: ToolContext, ref: string) {
+  const value = ref.trim();
+  if (isReplyId(ctx.deps, value)) return { targetType: 'reply' as const, targetId: value };
+  const item = resolveItemRef(ctx.deps, ctx.actor, value);
+  return { targetType: item.type, targetId: item.id };
+}
+
+function reactionTool(name: 'add_reaction' | 'remove_reaction') {
+  const adding = name === 'add_reaction';
+  return defineTool({
+    name,
+    title: adding ? 'Add reaction' : 'Remove reaction',
+    description: adding
+      ? 'Reacts to a task, issue or reply with an emoji (e.g. 👍 🎉 👀), as a lightweight acknowledgement instead of a reply. Nobody is notified. Needs the REPLY permission; reacting again with the same emoji changes nothing. Returns the target’s reactions.'
+      : 'Removes your own emoji reaction from a task, issue or reply. Returns the target’s reactions.',
+    input: toolInput({
+      target: z
+        .string()
+        .min(1)
+        .describe(
+          'What to react to: a task ref (KEY-12), an issue ref (KEY#51), team-slug/ before either, or a reply id',
+        ),
+      emoji: z.string().min(1).max(64).describe('A single emoji, e.g. 👍'),
+    }),
+    annotations: { destructiveHint: false, idempotentHint: true },
+    handler: (ctx, input) => {
+      const data = parseInput(reactionInputSchema, {
+        ...reactionTarget(ctx, input.target),
+        emoji: input.emoji,
+      });
+      return (adding ? addReaction : removeReaction)(ctx.deps, ctx.actor, data);
+    },
+  });
+}
+
 const waitForMentionsTool = defineTool({
   name: 'wait_for_mentions',
   title: 'Wait for mentions',
@@ -583,4 +624,6 @@ export const coreTools: McpTool[] = [
   subscriptionTool('subscribe'),
   subscriptionTool('unsubscribe'),
   waitForMentionsTool,
+  reactionTool('add_reaction'),
+  reactionTool('remove_reaction'),
 ];

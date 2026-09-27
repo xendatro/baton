@@ -10,7 +10,13 @@ import {
   type PriorityValue,
 } from '../constants';
 import { dueDateSchema, idSchema, markdownSchema, timestampSchema, titleSchema } from './common';
-import { attachmentSchema, roleSummarySchema, userSummarySchema, viaKeySchema } from './core';
+import {
+  attachmentSchema,
+  reactionSummarySchema,
+  roleSummarySchema,
+  userSummarySchema,
+  viaKeySchema,
+} from './core';
 import { statusSchema } from './projects';
 
 /**
@@ -179,6 +185,8 @@ export const taskSchema = taskCardSchema.extend({
   blocking: z.array(relatedTaskSchema),
   issues: z.array(linkedIssueSchema),
   attachments: z.array(attachmentSchema),
+  /** Emoji reactions on the task (BAT-14). */
+  reactions: z.array(reactionSummarySchema),
   /** Whether the viewer gets reply notifications. */
   subscribed: z.boolean(),
 });

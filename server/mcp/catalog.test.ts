@@ -51,6 +51,9 @@ const DOCUMENTED_ADDITIONS = [
   'get_security_log',
   // core (DECISIONS 2026-09-26 BAT-6)
   'wait_for_mentions',
+  // core (DECISIONS 2026-09-27 BAT-14)
+  'add_reaction',
+  'remove_reaction',
 ].sort();
 
 let ctx: TestContext;

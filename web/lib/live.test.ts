@@ -50,6 +50,16 @@ describe('LIVE_INVALIDATIONS', () => {
     expect(keys).toEqual([queryKeys.replies.list('issue', 'iss1'), queryKeys.issues.all('proj1')]);
   });
 
+  it('refreshes only the thread or item page of reaction changes (BAT-14)', () => {
+    const change = (overrides: Partial<LiveEvent> & Pick<LiveEvent, 'entityType'>) =>
+      LIVE_INVALIDATIONS['reaction.changed'](event({ type: 'reaction.changed', ...overrides }));
+    expect(change({ entityType: 'reply', parentType: 'task', parentId: 't1' })).toEqual([
+      queryKeys.replies.list('task', 't1'),
+    ]);
+    expect(change({ entityType: 'task' })).toEqual([queryKeys.tasks.details('proj1')]);
+    expect(change({ entityType: 'issue' })).toEqual([queryKeys.issues.details('proj1')]);
+  });
+
   it('skips team and project keys the event does not carry', () => {
     const keys = LIVE_INVALIDATIONS['invite.changed'](
       event({ type: 'invite.changed', entityType: 'invite', teamId: null }),

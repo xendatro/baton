@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { LIMITS, RESERVED_USERNAMES } from '../constants';
+import { LIMITS, REACTION_LIMITS, RESERVED_USERNAMES } from '../constants';
 import { PROJECT_KEY_PATTERN, TEAM_SLUG_PATTERN } from '../refs';
 
 /** Error codes of the JSON error envelope (SPEC §5). */
@@ -92,6 +92,27 @@ export const emojiSchema = z
     (value) => EMOJI_PATTERN.test(value) && PICTOGRAPH_PATTERN.test(value),
     'Must be an emoji',
   );
+
+/** UTF-8 length of `value`, without `TextEncoder` (shared code has no DOM or Node APIs). */
+function utf8Bytes(value: string): number {
+  let bytes = 0;
+  for (const char of value) {
+    const code = char.codePointAt(0) ?? 0;
+    bytes += code < 0x80 ? 1 : code < 0x800 ? 2 : code < 0x10000 ? 3 : 4;
+  }
+  return bytes;
+}
+
+/** Number of user-perceived characters (grapheme clusters) in `value`. */
+export function graphemeCount(value: string): number {
+  return [...new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(value)].length;
+}
+
+/** A reaction (BAT-14): exactly one emoji grapheme, at most `REACTION_LIMITS.emojiBytes` bytes. */
+export const reactionEmojiSchema = emojiSchema.refine(
+  (value) => utf8Bytes(value) <= REACTION_LIMITS.emojiBytes && graphemeCount(value) === 1,
+  'Must be a single emoji',
+);
 
 /** Calendar date `YYYY-MM-DD` (no time zone). */
 export const dueDateSchema = z

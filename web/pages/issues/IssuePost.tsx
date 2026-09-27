@@ -14,6 +14,7 @@ import { Spinner } from '@web/components/common/Spinner';
 import { UserName } from '@web/components/common/UserName';
 import { RichTextEditor } from '@web/components/editor/RichTextEditor';
 import { MarkdownView } from '@web/components/markdown/MarkdownView';
+import { ReactionBar } from '@web/components/reactions/ReactionBar';
 import { useDeleteAttachment } from '@web/components/replies/queries';
 import { Button } from '@web/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@web/components/ui/tooltip';
@@ -113,6 +114,13 @@ export function IssuePost({
               ) : null}
             </div>
           ) : null}
+          <ReactionBar
+            targetType="issue"
+            targetId={issue.id}
+            teamId={issue.teamId}
+            reactions={issue.reactions}
+            queryKey={queryKeys.issues.detail(issue.projectId, issue.number)}
+          />
         </div>
       )}
     </article>

@@ -28,6 +28,7 @@ import {
   ATTACHMENT_PARENT_TYPES,
   ISSUE_LINK_KINDS,
   NOTIFICATION_TYPES,
+  REACTION_TARGET_TYPES,
   REPLY_PARENT_TYPES,
   STATUS_CATEGORIES,
   SUBSCRIBABLE_TYPES,
@@ -753,6 +754,39 @@ export const agentMention = sqliteTable(
   (t) => [
     index('agent_mention_key_idx').on(t.keyId, t.deliveredAt),
     uniqueIndex('agent_mention_key_reply_unique').on(t.keyId, t.replyId),
+  ],
+);
+
+/**
+ * An emoji reaction (BAT-14): one row per (target, person, emoji). Targets are referenced by type
+ * and id without a foreign key (like replies' parents); the trash purge removes orphans.
+ */
+export const reaction = sqliteTable(
+  'reaction',
+  {
+    id: idColumn(),
+    teamId: text('team_id')
+      .notNull()
+      .references(() => team.id, { onDelete: 'cascade' }),
+    targetType: text('target_type', { enum: REACTION_TARGET_TYPES }).notNull(),
+    targetId: text('target_id').notNull(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    viaKeyId: text('via_key_id').references(() => apiKey.id, { onDelete: 'set null' }),
+    emoji: text('emoji').notNull(),
+    createdAt: createdAtColumn(),
+  },
+  (t) => [
+    uniqueIndex('reaction_target_user_emoji_unique').on(
+      t.targetType,
+      t.targetId,
+      t.userId,
+      t.emoji,
+    ),
+    index('reaction_team_idx').on(t.teamId),
+    index('reaction_user_idx').on(t.userId),
+    index('reaction_via_key_idx').on(t.viaKeyId),
   ],
 );
 

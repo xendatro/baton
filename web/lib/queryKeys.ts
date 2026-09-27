@@ -81,6 +81,8 @@ export const queryKeys = {
     all: (projectId: string) => ['projects', projectId, 'issues'] as const,
     list: (projectId: string, params: KeyParams = {}) =>
       ['projects', projectId, 'issues', 'list', params] as const,
+    /** Prefix of every issue page of the project (live reaction changes carry no number). */
+    details: (projectId: string) => ['projects', projectId, 'issues', 'detail'] as const,
     detail: (projectId: string, number: number) =>
       ['projects', projectId, 'issues', 'detail', number] as const,
   },
@@ -89,6 +91,8 @@ export const queryKeys = {
     all: (projectId: string) => ['projects', projectId, 'tasks'] as const,
     list: (projectId: string, params: KeyParams = {}) =>
       ['projects', projectId, 'tasks', 'list', params] as const,
+    /** Prefix of every task page of the project (live reaction changes carry no number). */
+    details: (projectId: string) => ['projects', projectId, 'tasks', 'detail'] as const,
     detail: (projectId: string, number: number) =>
       ['projects', projectId, 'tasks', 'detail', number] as const,
   },

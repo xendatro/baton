@@ -25,6 +25,7 @@ import {
   type TaskCard,
   type UpdateTaskInput,
 } from '@shared/schemas/tasks';
+import type { AssigneeToggle } from '@web/components/pickers/AssigneePicker';
 import { api } from '@web/lib/api';
 import { queryKeys, type KeyParams } from '@web/lib/queryKeys';
 import { useMembers, useRoles } from '../teams/api';
@@ -271,6 +272,60 @@ export function useUpdateTask(task: Pick<Task, 'id' | 'projectId' | 'number'>) {
     },
     onSuccess: (updated) => storeTask(queryClient, updated),
     onSettled: () => refreshTasks(queryClient, task.projectId),
+  });
+}
+
+/** The task with one toggle applied to its assignees (idempotent). */
+export function applyAssigneeToggle(task: Task, toggle: AssigneeToggle): Task {
+  const { users, roles } = task.assignees;
+  const without = <T extends { id: string }>(list: readonly T[]) =>
+    list.filter((item) => item.id !== toggle.assignee.id);
+  const assignees =
+    toggle.kind === 'user'
+      ? { users: toggle.add ? [...without(users), toggle.assignee] : without(users), roles }
+      : { users, roles: toggle.add ? [...without(roles), toggle.assignee] : without(roles) };
+  return { ...task, assignees };
+}
+
+/**
+ * Adds or removes one assignee of the task's current stage right away: each toggle is its own
+ * `{add}` / `{remove}` request, so it never overwrites assignees someone else added meanwhile.
+ * Optimistic, and a failed toggle undoes only itself. While several toggles are in flight, only
+ * the last one to settle writes the server's task and refreshes, so earlier responses can't hide
+ * later toggles.
+ */
+export function useToggleAssignee(task: Pick<Task, 'id' | 'projectId' | 'number'>) {
+  const queryClient = useQueryClient();
+  const key = queryKeys.tasks.detail(task.projectId, task.number);
+  const mutationKey = ['tasks', task.id, 'assignees'];
+  const lastInFlight = () => queryClient.isMutating({ mutationKey }) === 1;
+  return useMutation({
+    mutationKey,
+    mutationFn: (toggle: AssigneeToggle) =>
+      api.patch(
+        `/api/tasks/${enc(task.id)}`,
+        {
+          [toggle.kind === 'user' ? 'assigneeUsers' : 'assigneeRoles']: toggle.add
+            ? { add: [toggle.assignee.id] }
+            : { remove: [toggle.assignee.id] },
+        } satisfies UpdateTaskInput,
+        { schema: taskSchema },
+      ),
+    onMutate: async (toggle) => {
+      await queryClient.cancelQueries({ queryKey: key });
+      queryClient.setQueryData<Task>(key, (previous) =>
+        previous ? applyAssigneeToggle(previous, toggle) : previous,
+      );
+    },
+    onError: (_error, toggle) => {
+      queryClient.setQueryData<Task>(key, (previous) =>
+        previous ? applyAssigneeToggle(previous, { ...toggle, add: !toggle.add }) : previous,
+      );
+    },
+    onSuccess: (updated) => {
+      if (lastInFlight()) storeTask(queryClient, updated);
+    },
+    onSettled: () => (lastInFlight() ? refreshTasks(queryClient, task.projectId) : undefined),
   });
 }
 

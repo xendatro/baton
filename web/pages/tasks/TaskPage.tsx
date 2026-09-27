@@ -91,6 +91,7 @@ import {
   useTask,
   useStageMove,
   useTaskSubscription,
+  useToggleAssignee,
   useUpdateTask,
 } from './queries';
 import { tasksViewPath, useTaskView } from './filters';
@@ -160,6 +161,7 @@ function TaskView({ task, team, project }: { task: Task; team: MeTeam; project: 
   const createLabel = useCreateLabel(project.id);
   const people = useAssignables(team.id);
   const update = useUpdateTask(task);
+  const toggleAssignee = useToggleAssignee(task);
   const remove = useDeleteTask(project.id);
   const subscription = useTaskSubscription(task);
   const deleteAttachment = useDeleteAttachment({ type: 'task', id: task.id });
@@ -604,22 +606,27 @@ function TaskView({ task, team, project }: { task: Task; team: MeTeam; project: 
                 onOpenChange={(open) => setPicker(open ? 'assignees' : null)}
                 disabled={!canUpdate}
                 align="end"
-                onChange={(value) =>
-                  quietly(
-                    save(
-                      {
-                        assigneeUsers: { set: value.userIds },
-                        assigneeRoles: { set: value.roleIds },
-                      },
-                      {
-                        assignees: {
-                          users: people.users.filter((user) => value.userIds.includes(user.id)),
-                          roles: people.roles.filter((role) => value.roleIds.includes(role.id)),
-                        },
-                      },
-                    ),
-                  )
-                }
+                // Each toggle applies at once as its own add/remove, in the current stage.
+                note={`Assigned in ${task.status.name}. Changes apply right away.`}
+                onToggle={(toggle) => {
+                  const pooled = toggle.add && Boolean(task.stage?.pool);
+                  toggleAssignee.mutateAsync(toggle).then(
+                    () => {
+                      if (pooled) {
+                        toast.success(`Assigned ${toggle.assignee.name}`, {
+                          description: `${task.ref} no longer waits in the ${task.status.name} pool.`,
+                        });
+                      }
+                    },
+                    (error: unknown) =>
+                      toast.error(
+                        errorMessage(
+                          error,
+                          `Couldn’t ${toggle.add ? 'assign' : 'unassign'} ${toggle.assignee.name}.`,
+                        ),
+                      ),
+                  );
+                }}
               >
                 <PropertyButton
                   disabled={!canUpdate}
@@ -643,6 +650,11 @@ function TaskView({ task, team, project }: { task: Task; team: MeTeam; project: 
                   )}
                 </PropertyButton>
               </AssigneePicker>
+              <p className="px-2 text-xs text-muted-foreground">
+                {canUpdate
+                  ? `In ${task.status.name}`
+                  : `In ${task.status.name}. Only the author or members who can update tasks change assignees.`}
+              </p>
             </Property>
             <Property label="Labels" hotkey="l">
               <LabelPicker

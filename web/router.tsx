@@ -122,6 +122,10 @@ const shellRoutes: RouteObject[] = [
       },
       { path: 'api-keys', ...page(() => import('./pages/settings/ApiKeysSettingsPage')) },
       { path: 'agent', ...page(() => import('./pages/settings/AgentSettingsPage')) },
+      {
+        path: 'automatic-agents',
+        ...page(() => import('./pages/settings/AutomaticAgentsSettingsPage')),
+      },
       { path: 'appearance', ...page(() => import('./pages/settings/AppearanceSettingsPage')) },
       {
         path: 'notifications',

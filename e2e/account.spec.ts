@@ -164,7 +164,12 @@ test('pauses the agent from Settings → Agent', async ({ page, playwright }) =>
 
   const script = await newClient(playwright.request, { Authorization: `Bearer ${key}` });
   try {
-    await page.getByRole('switch', { name: 'Pause your agent' }).click();
+    // The switch flips at once (optimistic); the pause applies once the save returns.
+    const saved = () =>
+      page.waitForResponse(
+        (res) => res.url().endsWith('/api/me/agent') && res.request().method() === 'PATCH',
+      );
+    await Promise.all([saved(), page.getByRole('switch', { name: 'Pause your agent' }).click()]);
     await expect(page.getByRole('switch', { name: 'Pause your agent' })).toBeChecked();
     expect((await script.get('/api/me')).status()).toBe(200);
     const refused = await script.post('/api/teams', { data: { name: 'Agent team' } });
@@ -173,7 +178,7 @@ test('pauses the agent from Settings → Agent', async ({ page, playwright }) =>
       'agents_paused',
     );
 
-    await page.getByRole('switch', { name: 'Pause your agent' }).click();
+    await Promise.all([saved(), page.getByRole('switch', { name: 'Pause your agent' }).click()]);
     await expect(page.getByRole('switch', { name: 'Pause your agent' })).not.toBeChecked();
     expect((await script.post('/api/teams', { data: { name: 'Agent team' } })).status()).toBe(201);
   } finally {

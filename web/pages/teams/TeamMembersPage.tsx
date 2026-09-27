@@ -55,6 +55,13 @@ function TeamMembers({ team }: { team: MeTeam }) {
   useDocumentTitle(['Members', team.name]);
 
   const online = useMemo(() => new Set(presence.data?.online ?? []), [presence.data]);
+  const runners = useMemo(() => {
+    const byAgent = new Map<string, Array<{ machineName: string; running: number }>>();
+    for (const runner of presence.data?.runners ?? []) {
+      byAgent.set(runner.agentUserId, [...(byAgent.get(runner.agentUserId) ?? []), runner]);
+    }
+    return byAgent;
+  }, [presence.data]);
   const sections = useMemo(
     () => (members.data ? memberSections(members.data.items, online) : []),
     [members.data, online],
@@ -132,7 +139,7 @@ function TeamMembers({ team }: { team: MeTeam }) {
               </p>
             ) : null}
             {sections.map((section) => (
-              <MemberSectionList key={section.id} section={section} />
+              <MemberSectionList key={section.id} section={section} runners={runners} />
             ))}
           </div>
         )}
@@ -148,7 +155,15 @@ function TeamMembers({ team }: { team: MeTeam }) {
   );
 }
 
-function MemberSectionList({ section }: { section: MemberSection }) {
+type RunnersByAgent = ReadonlyMap<string, ReadonlyArray<{ machineName: string; running: number }>>;
+
+function MemberSectionList({
+  section,
+  runners,
+}: {
+  section: MemberSection;
+  runners: RunnersByAgent;
+}) {
   const headingId = useId();
   const total = section.online.length + section.offline.length;
   return (
@@ -169,8 +184,8 @@ function MemberSectionList({ section }: { section: MemberSection }) {
         <span className="font-normal text-muted-foreground">— {total}</span>
       </h2>
       <div className="grid gap-4 sm:grid-cols-2">
-        <PresenceGroup label="Online" members={section.online} online />
-        <PresenceGroup label="Offline" members={section.offline} online={false} />
+        <PresenceGroup label="Online" members={section.online} online runners={runners} />
+        <PresenceGroup label="Offline" members={section.offline} online={false} runners={runners} />
       </div>
     </section>
   );
@@ -180,10 +195,12 @@ function PresenceGroup({
   label,
   members,
   online,
+  runners,
 }: {
   label: string;
   members: Member[];
   online: boolean;
+  runners: RunnersByAgent;
 }) {
   const headingId = useId();
   if (members.length === 0) return null;
@@ -197,14 +214,28 @@ function PresenceGroup({
       </h3>
       <ul aria-labelledby={headingId} className="divide-y">
         {members.map((member) => (
-          <MemberRow key={member.user.id} member={member} online={online} />
+          <MemberRow
+            key={member.user.id}
+            member={member}
+            online={online}
+            runners={runners.get(member.user.id) ?? []}
+          />
         ))}
       </ul>
     </div>
   );
 }
 
-function MemberRow({ member, online }: { member: Member; online: boolean }) {
+function MemberRow({
+  member,
+  online,
+  runners,
+}: {
+  member: Member;
+  online: boolean;
+  /** Its desktop apps running now ("MSI — 1 job"), for agents. */
+  runners: ReadonlyArray<{ machineName: string; running: number }>;
+}) {
   const agent = isAgentUser(member.user);
   const shown = member.roles.slice(0, ROLE_CHIPS);
   const more = member.roles.length - shown.length;
@@ -238,6 +269,11 @@ function MemberRow({ member, online }: { member: Member; online: boolean }) {
               ? `@${member.user.username}`
               : ''}
         </p>
+        {runners.map((runner) => (
+          <p key={runner.machineName} className="truncate text-xs text-muted-foreground">
+            {runner.machineName} — {pluralize(runner.running, 'job')}
+          </p>
+        ))}
       </div>
       {shown.length > 0 ? (
         <div className="hidden shrink-0 items-center gap-1 md:flex">

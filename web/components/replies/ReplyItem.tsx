@@ -157,14 +157,16 @@ export function ReplyItem({ reply, footer }: ReplyItemProps) {
             toast.success('Attachment moved to Trash');
           }}
         />
-        {editing ? null : footer}
-        <ReactionBar
-          targetType="reply"
-          targetId={reply.id}
-          teamId={reply.teamId}
-          reactions={reply.reactions}
-          queryKey={queryKeys.replies.list(reply.parentType, reply.parentId)}
-        />
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+          {editing ? null : footer}
+          <ReactionBar
+            targetType="reply"
+            targetId={reply.id}
+            teamId={reply.teamId}
+            reactions={reply.reactions}
+            queryKey={queryKeys.replies.list(reply.parentType, reply.parentId)}
+          />
+        </div>
       </div>
       <ConfirmDialog
         open={confirmDelete}

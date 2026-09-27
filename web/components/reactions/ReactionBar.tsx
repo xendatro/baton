@@ -103,20 +103,6 @@ export function ReactionBar({
       ))}
       {canReact ? (
         <>
-          <div className="flex items-center gap-0.5 transition-opacity [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-focus-within/reactions:opacity-100 [@media(hover:hover)]:group-hover/reactions:opacity-100">
-            {quick.map((emoji) => (
-              <button
-                key={emoji}
-                type="button"
-                aria-label={`React with ${emoji}`}
-                title={`React with ${emoji}`}
-                onClick={() => toggle(emoji, true)}
-                className="inline-flex size-6 items-center justify-center rounded-md text-sm leading-none grayscale-[0.4] transition hover:bg-muted hover:grayscale-0 focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none"
-              >
-                <span aria-hidden="true">{emoji}</span>
-              </button>
-            ))}
-          </div>
           <Popover open={pickerOpen} onOpenChange={setPickerOpen}>
             <PopoverTrigger asChild>
               <Button
@@ -146,6 +132,20 @@ export function ReactionBar({
               </Suspense>
             </PopoverContent>
           </Popover>
+          <div className="flex items-center gap-0.5 transition-opacity [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-focus-within/reactions:opacity-100 [@media(hover:hover)]:group-hover/reactions:opacity-100">
+            {quick.map((emoji) => (
+              <button
+                key={emoji}
+                type="button"
+                aria-label={`React with ${emoji}`}
+                title={`React with ${emoji}`}
+                onClick={() => toggle(emoji, true)}
+                className="inline-flex size-6 items-center justify-center rounded-md text-sm leading-none grayscale-[0.4] transition hover:bg-muted hover:grayscale-0 focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none"
+              >
+                <span aria-hidden="true">{emoji}</span>
+              </button>
+            ))}
+          </div>
         </>
       ) : null}
     </div>

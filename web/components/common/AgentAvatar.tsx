@@ -1,25 +1,60 @@
-import { BotIcon, SparkleIcon, TerminalIcon, type LucideIcon } from 'lucide-react';
+import { BotIcon } from 'lucide-react';
+import { siClaude, siCursor, siGithubcopilot, siGooglegemini, siWindsurf } from 'simple-icons';
 import { cn } from '@web/lib/utils';
 import { AVATAR_SIZE_CLASSES } from './avatarSizes';
+import { OPENAI_BLOSSOM } from './openaiLogo';
 import { UserAvatar, type AvatarSize, type AvatarUser } from './UserAvatar';
 
-/** Mark and color per well-known agent (names from `shared/agents.ts`); others get a bot. */
-const AGENT_MARKS: Readonly<Record<string, { icon: LucideIcon; color: string }>> = {
-  Claude: { icon: SparkleIcon, color: '#d97757' },
-  Codex: { icon: TerminalIcon, color: '#18181b' },
-};
-const DEFAULT_MARK = { icon: BotIcon, color: 'var(--primary)' };
+/** A harness's official logo: an SVG path (simple-icons' 24×24 box unless `viewBox` says). */
+interface BrandLogo {
+  title: string;
+  /** Brand color, without `#`. */
+  hex: string;
+  path: string;
+  viewBox?: string;
+}
 
-/** An agent's round mark ("Claude": an orange spark). */
+/**
+ * The logo of each well-known harness (BAT-8), keyed by the agent names of `shared/agents.ts`.
+ * Brand marks come from simple-icons, except OpenAI's (for Codex), which it doesn't carry.
+ */
+const AGENT_LOGOS: Readonly<Record<string, BrandLogo>> = {
+  Claude: siClaude,
+  Codex: OPENAI_BLOSSOM,
+  Cursor: siCursor,
+  Gemini: siGooglegemini,
+  Copilot: siGithubcopilot,
+  Windsurf: siWindsurf,
+};
+
+/**
+ * An agent's round mark: its harness's logo in white on the brand color ("Claude": the Claude
+ * spark on its orange), or a bot on the primary color for agents we don't know.
+ */
 export function AgentMark({ agentName, className }: { agentName: string; className?: string }) {
-  const { icon: Icon, color } = AGENT_MARKS[agentName] ?? DEFAULT_MARK;
+  const logo = Object.hasOwn(AGENT_LOGOS, agentName) ? AGENT_LOGOS[agentName] : undefined;
   return (
     <span
-      className={cn('inline-flex items-center justify-center rounded-full text-white', className)}
-      style={{ backgroundColor: color }}
+      className={cn(
+        'inline-flex items-center justify-center rounded-full text-white dark:ring-1 dark:ring-white/15',
+        className,
+      )}
+      style={{ backgroundColor: logo ? `#${logo.hex}` : 'var(--primary)' }}
+      data-agent-logo={logo ? logo.title : 'generic'}
       aria-hidden="true"
     >
-      <Icon className="size-[60%]" />
+      {logo ? (
+        <svg
+          viewBox={logo.viewBox ?? '0 0 24 24'}
+          className="size-[58%]"
+          fill="currentColor"
+          focusable="false"
+        >
+          <path d={logo.path} />
+        </svg>
+      ) : (
+        <BotIcon className="size-[60%]" />
+      )}
     </span>
   );
 }

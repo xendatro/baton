@@ -15,6 +15,7 @@ import { cn } from '@web/lib/utils';
 import { BubbleToolbar } from './BubbleToolbar';
 import { createEditorExtensions } from './extensions';
 import { normalizeMarkdown } from './markdown';
+import type { MentionAgent } from './mention';
 import { useMentionSource } from './useMentionSource';
 
 export interface RichTextEditorHandle {
@@ -38,6 +39,8 @@ export interface RichTextEditorProps {
   onSubmit?: () => void;
   /** Enables `@` mentions and uploads (pasted/dropped images and files) for this team. */
   teamId?: string | null;
+  /** Agents of the thread (BAT-12), suggested above the team's people. Needs `teamId`. */
+  mentionAgents?: readonly MentionAgent[];
   /**
    * Receives non-image files uploaded by paste or drop (to show in an attachment list). Without
    * it they are inserted as links.
@@ -68,6 +71,7 @@ export function RichTextEditor({
   autoFocus = false,
   onSubmit,
   teamId,
+  mentionAgents,
   onAttach,
   editable = true,
   label = 'Editor',
@@ -75,7 +79,7 @@ export function RichTextEditor({
   ref,
 }: RichTextEditorProps) {
   const config = useConfig();
-  const mentionSource = useMentionSource(teamId);
+  const mentionSource = useMentionSource(teamId, mentionAgents);
   const fileInput = useRef<HTMLInputElement>(null);
   /** The live editor for the paste/drop handlers, which are created with the editor itself. */
   const editorRef = useRef<Editor | null>(null);

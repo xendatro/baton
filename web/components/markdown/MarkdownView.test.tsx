@@ -12,6 +12,7 @@ function renderMarkdown(markdown: string, teamId?: string) {
     users: [{ id: 'u1', username: 'alice', name: 'Alice Doe', image: null }],
     roles: [{ id: 'r1', slug: 'design', name: 'Design', color: '#ec4899' }],
   });
+  client.setQueryData(queryKeys.teams.mentionLookup('team1', 'claude|'), { users: [], roles: [] });
   const wrapper = ({ children }: { children: ReactNode }) => (
     <QueryClientProvider client={client}>
       <MemoryRouter>{children}</MemoryRouter>
@@ -86,6 +87,12 @@ describe('MarkdownView rendering', () => {
     expect(container.querySelector('.mention')?.textContent).toBe('@alice');
     expect(screen.getByTitle('Role: Design')).toHaveTextContent('@Design');
     expect(screen.getByTitle('Role: everyone')).toHaveTextContent('@everyone');
+  });
+
+  it('renders an agent handle, which is no member, as a plain mention chip (BAT-12)', () => {
+    const { container } = renderMarkdown('@claude can you look?', 'team1');
+    expect(container.querySelector('.mention')?.textContent).toBe('@claude');
+    expect(container.textContent).toBe('@claude can you look?');
   });
 
   // Regression (WEB-11): ids were prefixed twice, so footnote links pointed nowhere.

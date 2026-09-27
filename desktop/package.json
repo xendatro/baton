@@ -1,7 +1,7 @@
 {
   "name": "baton-desktop",
   "productName": "Baton",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "private": true,
   "description": "Baton desktop app: runs your Baton agent's jobs in your own harness (Claude Code, Codex, Gemini CLI, Cursor CLI, opencode).",
   "main": "dist/main.cjs",

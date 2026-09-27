@@ -129,10 +129,10 @@
       "breakpoints": true
     },
     {
-      "idx": 20,
+      "idx": 18,
       "version": "6",
       "when": 1790506721953,
-      "tag": "0020_project_member_settings",
+      "tag": "0018_project_member_settings",
       "breakpoints": true
     }
   ]

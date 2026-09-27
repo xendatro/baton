@@ -33,6 +33,8 @@ export interface DesktopFolder {
 
 export interface DesktopState {
   version: string;
+  /** The git commit the app was built from, 7 characters, or "dev" (optional: older apps). */
+  commit?: string;
   /** The agent key is set: this computer runs the owner's agent's jobs. */
   connected: boolean;
   machineName: string;
@@ -86,6 +88,8 @@ export interface DesktopUpdate {
   status: 'idle' | 'checking' | 'latest' | 'available' | 'downloading' | 'ready' | 'error';
   /** The new version, when there is one. */
   version: string | null;
+  /** The latest released version, once a check has found it (optional: older apps). */
+  latest?: string | null;
   /** Download progress in percent while `downloading`. */
   progress: number | null;
   error: string | null;

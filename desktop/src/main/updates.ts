@@ -32,6 +32,14 @@ export function isNewer(candidate: string, current: string): boolean {
   return false;
 }
 
+/** A release tag's version: `desktop-v0.3.1` → `0.3.1` ("" without a tag). */
+export function releaseVersion(tag: string | undefined): string {
+  return (tag ?? '')
+    .trim()
+    .replace(/^desktop-v/, '')
+    .replace(/^v/, '');
+}
+
 /** Can this build replace itself? (packaged Windows installer, or a Linux AppImage) */
 function canSelfUpdate(): boolean {
   if (!app.isPackaged) return false;
@@ -54,6 +62,7 @@ export class Updates {
   private current: DesktopUpdate = {
     status: 'idle',
     version: null,
+    latest: null,
     progress: null,
     error: null,
     manual: !canSelfUpdate(),
@@ -119,16 +128,26 @@ export class Updates {
       autoUpdater.autoDownload = true;
       autoUpdater.autoInstallOnAppQuit = true;
       autoUpdater.on('update-available', (info) =>
-        this.set({ status: 'downloading', version: info.version, progress: 0 }),
+        this.set({
+          status: 'downloading',
+          version: info.version,
+          latest: info.version,
+          progress: 0,
+        }),
       );
-      autoUpdater.on('update-not-available', () =>
-        this.set({ status: 'latest', version: null, progress: null }),
+      autoUpdater.on('update-not-available', (info) =>
+        this.set({
+          status: 'latest',
+          version: null,
+          latest: info.version || app.getVersion(),
+          progress: null,
+        }),
       );
       autoUpdater.on('download-progress', (progress) =>
         this.set({ status: 'downloading', progress: Math.round(progress.percent) }),
       );
       autoUpdater.on('update-downloaded', (info) =>
-        this.set({ status: 'ready', version: info.version, progress: 100 }),
+        this.set({ status: 'ready', version: info.version, latest: info.version, progress: 100 }),
       );
       autoUpdater.on('error', (error) =>
         this.set({ status: 'error', error: error.message.split('\n')[0] ?? 'Update failed' }),
@@ -144,11 +163,11 @@ export class Updates {
     });
     if (!response.ok) throw new Error(`GitHub answered ${response.status}`);
     const release = (await response.json()) as { tag_name?: string };
-    const version = (release.tag_name ?? '').replace(/^desktop-v/, '').replace(/^v/, '');
+    const version = releaseVersion(release.tag_name);
     if (version && isNewer(version, app.getVersion())) {
-      this.set({ status: 'available', version });
+      this.set({ status: 'available', version, latest: version });
     } else {
-      this.set({ status: 'latest', version: null });
+      this.set({ status: 'latest', version: null, latest: version || app.getVersion() });
     }
   }
 

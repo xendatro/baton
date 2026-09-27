@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import type { ReplyParentType } from '@shared/constants';
 import type { Attachment } from '@shared/schemas/core';
@@ -12,12 +12,15 @@ import { errorMessage } from '@web/lib/api';
 import { useSession } from '@web/lib/auth';
 import { useTeamAccess } from '@web/lib/permissions';
 import { readReplyDraft, writeReplyDraft, type ReplyDraft } from '@web/lib/replyDrafts';
-import { useCreateReply } from './queries';
+import { useCreateReply, useReplies } from './queries';
+import { threadAgents, type ThreadWrite } from './threadAgents';
 
 export interface ReplyComposerProps {
   parentType: ReplyParentType;
   parentId: string;
   teamId: string;
+  /** The task or issue replied to: its agent, and those of its replies, can be `@`-mentioned. */
+  item?: ThreadWrite;
   placeholder?: string;
   onSent?: () => void;
 }
@@ -32,6 +35,7 @@ function Composer({
   parentType,
   parentId,
   teamId,
+  item,
   placeholder = 'Write a reply… Type / for blocks, @ to mention.',
   onSent,
 }: ReplyComposerProps) {
@@ -46,6 +50,12 @@ function Composer({
   const [body, setBody] = useState(saved?.body ?? '');
   const [attachments, setAttachments] = useState<Attachment[]>(saved?.attachments ?? []);
   const create = useCreateReply(parentType, parentId);
+  // BAT-12: the thread's agents lead the @ suggestions (the timeline already loads the replies).
+  const replies = useReplies(parentType, parentId).data;
+  const agents = useMemo(
+    () => threadAgents([...(item ? [item] : []), ...(replies ?? [])]),
+    [item, replies],
+  );
   // Following a link away from the thread used to discard the text silently (UX-13).
   useEffect(() => {
     if (userId) writeReplyDraft(userId, parentType, parentId, { body, attachments });
@@ -92,6 +102,7 @@ function Composer({
         variant="compact"
         placeholder={placeholder}
         teamId={teamId}
+        mentionAgents={agents}
         onAttach={addAttachment}
         onSubmit={send}
         label="Reply"

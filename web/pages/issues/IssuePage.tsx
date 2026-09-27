@@ -294,7 +294,7 @@ function IssueDetail({
             Conversation
           </h2>
           <Timeline parentType="issue" parentId={issue.id} />
-          <ReplyComposer parentType="issue" parentId={issue.id} teamId={team.id} />
+          <ReplyComposer parentType="issue" parentId={issue.id} teamId={team.id} item={issue} />
         </section>
       </div>
 

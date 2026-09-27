@@ -2,6 +2,7 @@ import type { JSONContent, MarkdownToken } from '@tiptap/core';
 import Mention from '@tiptap/extension-mention';
 import { UsersIcon } from 'lucide-react';
 import type { RoleSummary, UserSummary } from '@shared/schemas/core';
+import { AgentMark } from '@web/components/common/AgentAvatar';
 import { UserAvatar } from '@web/components/common/UserAvatar';
 import {
   EVERYONE_SLUG,
@@ -14,17 +15,31 @@ import type { SuggestionItem } from './SuggestionMenu';
 import { suggestionRenderer } from './suggestionRenderer';
 
 /**
- * `@` mentions of people and roles. In markdown they are `@username`, `@&role-slug` and
- * `@everyone` (web/lib/mentions.ts); in the editor they are atomic chips.
+ * `@` mentions of people, roles and agents. In markdown they are `@username`, `@&role-slug`,
+ * `@everyone` and `@agent-handle` (web/lib/mentions.ts); in the editor they are atomic chips.
  */
+
+/**
+ * An agent that took part in a thread (BAT-12), offered as `@handle`: a reply naming it wakes the
+ * agent's keys that replied to or created the item (`wait_for_mentions`).
+ */
+export interface MentionAgent {
+  /** "Claude". */
+  name: string;
+  /** "claude" (`agentHandle`). */
+  handle: string;
+  /** The keys it wrote through, e.g. "Ethan’s MSI". */
+  keys: string[];
+}
 
 export interface MentionItem extends SuggestionItem {
   kind: MentionKind;
-  /** Username or role slug. */
+  /** Username, role slug or agent handle. */
   id: string;
   label: string;
   user?: UserSummary;
   role?: RoleSummary;
+  agent?: MentionAgent;
 }
 
 /** Loads mention candidates for a query (the team's mentionables). */
@@ -49,6 +64,24 @@ export function toMentionItems(users: readonly UserSummary[], roles: readonly Ro
       role,
     })),
   ];
+}
+
+/**
+ * The thread's agents whose name or handle contains `query`, as `@handle` user mentions (a
+ * handle is a reserved username, so it serializes and parses like one).
+ */
+export function toAgentMentionItems(agents: readonly MentionAgent[], query: string) {
+  const q = query.trim().toLowerCase();
+  return agents
+    .filter((agent) => agent.handle.includes(q) || agent.name.toLowerCase().includes(q))
+    .map((agent): MentionItem => ({
+      key: `agent:${agent.handle}`,
+      group: 'Agents',
+      kind: 'user',
+      id: agent.handle,
+      label: agent.handle,
+      agent,
+    }));
 }
 
 interface MentionToken extends MarkdownToken {
@@ -141,7 +174,18 @@ export function createMention(source: MentionSource | null) {
         label: 'Mention someone',
         emptyText: source ? 'No one matches.' : 'Mentions are unavailable here.',
         renderItem: (item) =>
-          item.user ? (
+          item.agent ? (
+            <>
+              <AgentMark agentName={item.agent.name} className="size-5 shrink-0" />
+              <span className="min-w-0 truncate">
+                {item.agent.name}{' '}
+                <span className="text-muted-foreground">(via {item.agent.keys.join(', ')})</span>
+              </span>
+              <span className="ml-auto shrink-0 text-xs text-muted-foreground">
+                @{item.agent.handle}
+              </span>
+            </>
+          ) : item.user ? (
             <>
               <UserAvatar user={item.user} size="sm" />
               <span className="truncate">{item.user.name}</span>

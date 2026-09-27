@@ -718,7 +718,7 @@ function TaskView({ task, team, project }: { task: Task; team: MeTeam; project: 
             </h2>
             <Timeline parentType="task" parentId={task.id} />
             <div className="mt-4">
-              <ReplyComposer parentType="task" parentId={task.id} teamId={team.id} />
+              <ReplyComposer parentType="task" parentId={task.id} teamId={team.id} item={task} />
             </div>
           </section>
         </div>

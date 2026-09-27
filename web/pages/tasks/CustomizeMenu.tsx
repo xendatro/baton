@@ -120,9 +120,10 @@ export function ColumnMenu({
         <Button
           variant="ghost"
           size="icon"
+          // Always visible, like the column's "+" button: hiding it until the column was hovered
+          // left it invisible (and flickering with focus) on mouse devices (BAT-32).
           className={cn(
-            'size-7 text-muted-foreground transition-opacity data-[state=open]:opacity-100',
-            '[@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-focus-within/column:opacity-100 [@media(hover:hover)]:group-hover/column:opacity-100',
+            'size-7 text-muted-foreground data-[state=open]:text-foreground',
             className,
           )}
           aria-label={`${statusName} column actions`}

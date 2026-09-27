@@ -16,6 +16,7 @@ import type { Project } from '@shared/schemas/projects';
 import { ConfirmDialog } from '@web/components/common/ConfirmDialog';
 import { EmptyState } from '@web/components/common/EmptyState';
 import { ErrorState } from '@web/components/common/ErrorState';
+import { FinishedMark } from '@web/components/common/FinishedMark';
 import { Kbd } from '@web/components/common/Kbd';
 import { LabelChip } from '@web/components/common/LabelChip';
 import { PageContainer } from '@web/components/common/PageContainer';
@@ -367,30 +368,24 @@ function StatLink({
 }
 
 function StatsCard({ project, base }: { project: Project; base: string }) {
-  const {
-    tasks: totalTasks,
-    assignedTasks,
-    completedTasks,
-    openIssues,
-    resolvedIssues,
-  } = project.counts;
-  const percent = totalTasks === 0 ? 0 : Math.round((completedTasks / totalTasks) * 100);
+  const { tasks: totalTasks, assignedTasks, openIssues, resolvedIssues } = project.counts;
+  const withTasks = project.statuses.filter((status) => status.taskCount > 0);
   return (
     <Card title="Progress">
       <div className="grid grid-cols-2 gap-2">
+        <StatLink
+          to={`${base}/tasks`}
+          icon={KanbanSquareIcon}
+          label="Tasks"
+          value={totalTasks}
+          tone="open"
+        />
         <StatLink
           to={`${base}/tasks`}
           icon={CircleDotIcon}
           label="Assigned tasks"
           value={assignedTasks}
           tone="open"
-        />
-        <StatLink
-          to={`${base}/tasks`}
-          icon={CheckCircle2Icon}
-          label="Completed tasks"
-          value={completedTasks}
-          tone="done"
         />
         <StatLink
           to={`${base}/issues`}
@@ -408,25 +403,41 @@ function StatsCard({ project, base }: { project: Project; base: string }) {
         />
       </div>
       <div className="mt-4">
-        <div className="mb-1.5 flex justify-between text-xs text-muted-foreground">
-          <span>Tasks completed</span>
-          <span className="tabular-nums">
-            {totalTasks === 0 ? 'No tasks yet' : `${completedTasks} of ${totalTasks} · ${percent}%`}
-          </span>
-        </div>
-        <div
-          className="h-1.5 overflow-hidden rounded-full bg-muted"
-          role="progressbar"
-          aria-label="Tasks completed"
-          aria-valuemin={0}
-          aria-valuemax={100}
-          aria-valuenow={percent}
-        >
-          <div
-            className="h-full rounded-full bg-emerald-500 transition-[width]"
-            style={{ width: `${percent}%` }}
-          />
-        </div>
+        <p className="mb-1.5 text-xs text-muted-foreground">Tasks by status</p>
+        {totalTasks === 0 || withTasks.length === 0 ? (
+          <p className="text-xs text-muted-foreground">No tasks yet</p>
+        ) : (
+          <>
+            <div
+              className="flex h-1.5 gap-px overflow-hidden rounded-full bg-muted"
+              role="img"
+              aria-label={withTasks
+                .map((status) => `${status.name}: ${status.taskCount}`)
+                .join(', ')}
+            >
+              {withTasks.map((status) => (
+                <div
+                  key={status.id}
+                  className="h-full"
+                  style={{
+                    width: `${(status.taskCount / totalTasks) * 100}%`,
+                    backgroundColor: status.color,
+                  }}
+                />
+              ))}
+            </div>
+            <ul className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs" aria-hidden="true">
+              {withTasks.map((status) => (
+                <li key={status.id} className="flex items-center gap-1">
+                  <StatusIcon status={status} className="size-3" />
+                  <span className="text-muted-foreground">{status.name}</span>
+                  <FinishedMark status={status} className="size-3.5" />
+                  <span className="tabular-nums">{status.taskCount}</span>
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
       </div>
       <div className="mt-4 grid gap-1.5">
         <Button asChild variant="outline" size="sm" className="justify-between">

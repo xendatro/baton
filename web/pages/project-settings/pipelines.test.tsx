@@ -243,7 +243,9 @@ describe('StatusDialog', () => {
     );
     await user.keyboard('{Enter}');
     expect(screen.getByText(/2 different people must approve/)).toBeInTheDocument();
-    await user.click(screen.getByRole('radio', { name: 'It moves on by itself' }));
+    // New statuses let their assignees move tasks on; add whoever claimed it too.
+    expect(screen.getByRole('checkbox', { name: 'Assignees' })).toBeChecked();
+    await user.click(screen.getByRole('checkbox', { name: 'Whoever claimed it' }));
     await user.click(screen.getByRole('button', { name: 'Create status' }));
 
     await waitFor(() => expect(onCreate).toHaveBeenCalled());
@@ -259,7 +261,8 @@ describe('StatusDialog', () => {
         blocksDependents: false,
         exitCriteria: [{ id: 'c1', text: 'Tests pass' }],
         approvals: { count: 2, rule: { allow: [{ type: 'user', userId: 'u1' }], deny: [] } },
-        autoAdvance: true,
+        autoAdvance: false,
+        moveBy: { assignees: true, claimer: true },
         moveRule: null,
         nextStatusId: null,
       },
@@ -300,6 +303,21 @@ describe('StatusDialog', () => {
     await user.click(screen.getByRole('button', { name: 'Save' }));
     expect(screen.getByRole('alert')).toHaveTextContent('Choose who gets the task');
     expect(onUpdate).toHaveBeenCalledTimes(1);
+  });
+
+  it('makes an existing status final in one click', async () => {
+    const user = userEvent.setup();
+    const onUpdate = vi.fn((_id: string, _input: UpdateStatusInput) => Promise.resolve());
+    renderDialog({ onUpdate });
+    await user.click(screen.getByRole('button', { name: 'Make this a final status' }));
+    await waitFor(() => expect(onUpdate).toHaveBeenCalled());
+    expect(onUpdate.mock.calls[0]?.[1].rules).toMatchObject({
+      handoff: { mode: 'nobody' },
+      onEnter: { resolveIssues: true, notifyAuthor: true, notifyPreviousHolder: true },
+      blocksDependents: false,
+      claimable: false,
+    });
+    expect(await screen.findByText('This is a final status')).toBeInTheDocument();
   });
 
   it('is read-only without Manage statuses', async () => {

@@ -32,6 +32,7 @@ import { statusNameSchema, type Status } from '@shared/schemas/projects';
 import { EmptyState } from '@web/components/common/EmptyState';
 import { ErrorState } from '@web/components/common/ErrorState';
 import { Spinner } from '@web/components/common/Spinner';
+import { FinishedMark } from '@web/components/common/FinishedMark';
 import { StatusIcon } from '@web/components/common/StatusBadge';
 import { STATUS_ICON_SHAPES } from '@web/components/common/statusIcons';
 import { StatusIconPicker } from '@web/components/pickers/StatusIconPicker';
@@ -395,6 +396,7 @@ function StatusRow({
         className="h-8 border-transparent bg-transparent px-2 shadow-none hover:border-input focus-visible:border-ring disabled:cursor-default disabled:opacity-100 dark:bg-transparent"
       />
       <div className="flex items-center justify-end gap-0.5 sm:order-last">
+        <FinishedMark status={status} className="mr-1" />
         <Button
           type="button"
           variant="ghost"

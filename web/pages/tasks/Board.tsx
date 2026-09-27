@@ -37,6 +37,7 @@ import {
 } from 'react';
 import { Link } from 'react-router';
 import type { BoardColumn, BoardResponse, TaskCard } from '@shared/schemas/tasks';
+import { FinishedMark } from '@web/components/common/FinishedMark';
 import { StatusIcon } from '@web/components/common/StatusBadge';
 import { Button } from '@web/components/ui/button';
 import { Skeleton } from '@web/components/ui/skeleton';
@@ -377,6 +378,7 @@ function Column({
         <h2 id={headingId} className="min-w-0 truncate text-sm font-semibold">
           {status.name}
         </h2>
+        <FinishedMark status={status} />
         <span
           className="text-xs text-muted-foreground tabular-nums"
           aria-label={`${column.count} tasks`}

@@ -1,0 +1,1 @@
+ALTER TABLE `status` ADD `move_by` text;

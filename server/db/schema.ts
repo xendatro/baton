@@ -52,6 +52,7 @@ import type {
   ApprovalsRule,
   ExitCriterion,
   Handoff,
+  MoveBy,
   OnEnterRules,
 } from '../../shared/schemas/pipelines';
 import type { FieldChange } from '../../shared/schemas/core';
@@ -521,6 +522,8 @@ export const status = sqliteTable(
       .$type<ExitCriterion[]>()
       .notNull()
       .default(sql`'[]'`),
+    /** To leave forward: its assignees and/or claimer may move it out (null: neither). */
+    moveBy: text('move_by', { mode: 'json' }).$type<MoveBy>(),
     /** To leave forward: who may move it out (null: whoever may move tasks). */
     moveRule: text('move_rule', { mode: 'json' }).$type<PrincipalRule>(),
     /** To leave forward: approvals needed. */

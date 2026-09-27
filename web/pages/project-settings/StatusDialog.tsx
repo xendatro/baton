@@ -28,9 +28,8 @@ import { Checkbox } from '@web/components/ui/checkbox';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@web/components/ui/dialog';
 import { Input } from '@web/components/ui/input';
 import { Label } from '@web/components/ui/label';
-import { RadioGroup, RadioGroupItem } from '@web/components/ui/radio-group';
 import { errorMessage } from '@web/lib/api';
-import { LIMITS } from '@shared/constants';
+import { FINISHED_STAGE_RULES, LIMITS } from '@shared/constants';
 import { cn } from '@web/lib/utils';
 import {
   approvalsSentence,
@@ -86,7 +85,7 @@ const SECTION_RULES: Record<Exclude<SectionId, 'basics'>, ReadonlyArray<keyof St
   arrival: ['handoff', 'onEnter', 'notify'],
   while: ['blocksDependents', 'claimable'],
   criteria: ['exitCriteria'],
-  moving: ['approvals', 'autoAdvance', 'moveRule', 'allowSendBack', 'nextStatusId'],
+  moving: ['approvals', 'autoAdvance', 'moveBy', 'moveRule', 'allowSendBack', 'nextStatusId'],
 };
 
 /** The rules as they are saved: what the dialog hides or implies filled in. */
@@ -96,8 +95,6 @@ function cleanRules(rules: StageRules): StageRules {
     ...criterion,
     text: criterion.text.trim(),
   }));
-  const gated = exitCriteria.length > 0 || rules.approvals !== null;
-  const autoAdvance = gated && rules.autoAdvance;
   return {
     ...rules,
     handoff: isCustomHandoff(handoff.mode)
@@ -115,8 +112,8 @@ function cleanRules(rules: StageRules): StageRules {
     notify: null,
     nextStatusId: null,
     exitCriteria,
-    autoAdvance,
-    moveRule: autoAdvance ? null : rules.moveRule,
+    // Always moved on by someone: the dialog no longer offers auto-advance.
+    autoAdvance: false,
   };
 }
 
@@ -241,7 +238,7 @@ function StatusForm({
           icon: 'circle',
           color: suggestColor(statuses),
           isDefault: false,
-          rules: DEFAULT_STAGE_RULES,
+          rules: { ...DEFAULT_STAGE_RULES, moveBy: { assignees: true, claimer: false } },
         },
   );
   const [draft, setDraft] = useState<Draft>(saved);
@@ -349,6 +346,35 @@ function StatusForm({
     );
   };
 
+  /** "Make this a final status": in a new status it fills the draft; an existing one saves. */
+  const makeFinal = () => {
+    const rules = finalRules(draft.rules);
+    setDraft((current) => ({ ...current, rules }));
+    if (!status) return;
+    const patch: StageRulesPatch = {
+      handoff: rules.handoff,
+      onEnter: rules.onEnter,
+      blocksDependents: rules.blocksDependents,
+      claimable: rules.claimable,
+    };
+    setError(null);
+    setPending(true);
+    onUpdate(status.id, { rules: patch }).then(
+      () => {
+        setPending(false);
+        setSaved((current) => ({
+          ...current,
+          rules: { ...current.rules, ...patch } as StageRules,
+        }));
+        toast.success(`${draft.name.trim()} is now a final status`);
+      },
+      (cause: unknown) => {
+        setPending(false);
+        setError(errorMessage(cause));
+      },
+    );
+  };
+
   const title = creating ? 'New status' : `Edit ${status?.name ?? ''}`;
   const sectionDirty = dirtySections.some((candidate) => candidate.id === section);
 
@@ -425,6 +451,8 @@ function StatusForm({
               creating={creating}
               wasDefault={saved.isDefault && !creating}
               canManage={canManage}
+              isFinal={isFinal(draft.rules)}
+              onMakeFinal={makeFinal}
             />
           ) : section === 'instructions' ? (
             <InstructionsSection
@@ -536,18 +564,37 @@ function StatusForm({
 
 type SetRules = <K extends keyof StageRules>(key: K, value: StageRules[K]) => void;
 
+/** The seeded Done's rules: assign nobody, tell the author and last holder, resolve issues, finished. */
+function finalRules(rules: StageRules): StageRules {
+  return {
+    ...rules,
+    handoff: FINISHED_STAGE_RULES.handoff,
+    onEnter: { ...rules.onEnter, ...FINISHED_STAGE_RULES.onEnter },
+    blocksDependents: FINISHED_STAGE_RULES.blocksDependents,
+    claimable: FINISHED_STAGE_RULES.claimable,
+  };
+}
+
+function isFinal(rules: StageRules): boolean {
+  return JSON.stringify(finalRules(rules)) === JSON.stringify(rules);
+}
+
 function BasicsSection({
   draft,
   setDraft,
   creating,
   wasDefault,
   canManage,
+  isFinal: final,
+  onMakeFinal,
 }: {
   draft: Draft;
   setDraft: (update: (current: Draft) => Draft) => void;
   creating: boolean;
   wasDefault: boolean;
   canManage: boolean;
+  isFinal: boolean;
+  onMakeFinal: () => void;
 }) {
   const nameId = useId();
   return (
@@ -594,6 +641,31 @@ function BasicsSection({
         disabled={wasDefault}
         onChange={(isDefault) => setDraft((current) => ({ ...current, isDefault }))}
       />
+      <div className="grid gap-1.5 rounded-lg border border-dashed p-3">
+        <div className="flex items-center gap-1.5">
+          {final ? (
+            <p className="flex items-center gap-1.5 text-sm font-medium">
+              <CheckIcon className="size-4 text-primary" aria-hidden="true" />
+              This is a final status
+            </p>
+          ) : (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={onMakeFinal}
+              disabled={!canManage}
+            >
+              Make this a final status
+            </Button>
+          )}
+          <HelpTip topic="Final status">
+            For statuses like Done, Canceled or Shipped. Sets: assign to nobody, notify the author
+            and whoever had it, resolve the issues it fixes, counts as finished, can’t be claimed.
+            You can still change each one afterwards.
+          </HelpTip>
+        </div>
+      </div>
     </div>
   );
 }
@@ -888,8 +960,6 @@ function MovingSection({
   const countId = useId();
   const { approvals } = rules;
   const count = approvals?.count ?? 0;
-  const gated = rules.exitCriteria.length > 0 || approvals !== null;
-  const auto = gated && rules.autoAdvance;
 
   const setCount = (value: number) => {
     const n = Math.max(0, Math.min(PIPELINE_LIMITS.maxApprovals, Math.trunc(value) || 0));
@@ -948,59 +1018,50 @@ function MovingSection({
           </div>
         ) : (
           <p className="text-sm text-muted-foreground">
-            No approvals: once the criteria have evidence, anyone allowed can move it on, including
-            an agent that decides the work is done.
+            No approvals: once the criteria have evidence, whoever may move it on can, including an
+            agent that decides the work is done.
           </p>
         )}
       </section>
 
-      {gated ? (
-        <section className="grid gap-2">
-          <div className="flex items-center gap-1.5">
-            <h4 className="text-sm font-medium">When it’s ready</h4>
-            <HelpTip topic="When it’s ready">
-              Ready means every exit criterion has evidence and every approval is in.
-            </HelpTip>
-          </div>
-          <RadioGroup
-            value={auto ? 'auto' : 'manual'}
-            onValueChange={(value) => setRules('autoAdvance', value === 'auto')}
-            aria-label="When it’s ready"
-          >
-            <RadioRow value="manual" label="Someone moves it on" />
-            <RadioRow value="auto" label="It moves on by itself" />
-          </RadioGroup>
-        </section>
-      ) : null}
-
-      {!auto ? (
-        <section className="grid gap-2">
-          <div className="flex items-center gap-1.5">
-            <h4 className="text-sm font-medium">Who can move it on</h4>
-            <HelpTip topic="Who can move it on">
-              Who may move the task to the next status. Anyone else can still work on it.
-            </HelpTip>
-          </div>
-          <RadioGroup
-            value={rules.moveRule ? 'only' : 'anyone'}
-            onValueChange={(value) => setRules('moveRule', value === 'only' ? EMPTY_RULE : null)}
-            aria-label="Who can move it on"
-          >
-            <RadioRow value="anyone" label="Anyone who can move tasks" />
-            <RadioRow value="only" label="Only…" />
-          </RadioGroup>
-          {rules.moveRule ? (
-            <PrincipalRulePicker
-              label="Who can move it on"
-              value={rules.moveRule}
-              onChange={(rule) => setRules('moveRule', rule)}
-              options={options}
-              disabled={disabled}
-              className="rounded-lg border p-3"
-            />
-          ) : null}
-        </section>
-      ) : null}
+      <section className="grid gap-2">
+        <div className="flex items-center gap-1.5">
+          <h4 className="text-sm font-medium">Who can move it on</h4>
+          <HelpTip topic="Who can move it on">
+            Who may move the task to the next status once it’s ready (criteria have evidence,
+            approvals are in). Leave everything unticked to let anyone who can move tasks do it. A
+            task with no assignees and no claim can be moved by anyone.
+          </HelpTip>
+        </div>
+        <CheckRow
+          label="Assignees"
+          checked={rules.moveBy.assignees}
+          onChange={(assignees) => setRules('moveBy', { ...rules.moveBy, assignees })}
+        />
+        <CheckRow
+          label="Whoever claimed it"
+          checked={rules.moveBy.claimer}
+          onChange={(claimer) => setRules('moveBy', { ...rules.moveBy, claimer })}
+        />
+        <CheckRow
+          label="Others"
+          checked={rules.moveRule !== null}
+          onChange={(others) => setRules('moveRule', others ? EMPTY_RULE : null)}
+        />
+        {rules.moveRule ? (
+          <PrincipalRulePicker
+            label="Who else can move it on"
+            value={rules.moveRule}
+            onChange={(rule) => setRules('moveRule', rule)}
+            options={options}
+            disabled={disabled}
+            className="ml-6 rounded-lg border p-3"
+          />
+        ) : null}
+        {!rules.moveBy.assignees && !rules.moveBy.claimer && !rules.moveRule ? (
+          <p className="text-sm text-muted-foreground">Anyone who can move tasks can move it on.</p>
+        ) : null}
+      </section>
 
       <CheckRow
         label="Can be sent back"
@@ -1042,18 +1103,6 @@ function CheckRow({
         {label}
       </Label>
       {help ? <HelpTip topic={label}>{help}</HelpTip> : null}
-    </div>
-  );
-}
-
-function RadioRow({ value, label }: { value: string; label: string }) {
-  const id = useId();
-  return (
-    <div className="flex items-center gap-2">
-      <RadioGroupItem id={id} value={value} />
-      <Label htmlFor={id} className="font-normal">
-        {label}
-      </Label>
     </div>
   );
 }

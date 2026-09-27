@@ -119,6 +119,10 @@ export const onEnterRulesSchema = z.object({
 });
 export type OnEnterRules = z.infer<typeof onEnterRulesSchema>;
 
+/** Who may move a task on, besides a `moveRule`: its assignees, whoever claimed it. */
+export const moveBySchema = z.object({ assignees: z.boolean(), claimer: z.boolean() });
+export type MoveBy = z.infer<typeof moveBySchema>;
+
 export const stageRulesSchema = z.object({
   /** Markdown: what to do in this stage. */
   instructions: z.string().max(PIPELINE_LIMITS.instructions),
@@ -137,6 +141,11 @@ export const stageRulesSchema = z.object({
   claimable: z.boolean(),
   /** To leave forward: each needs evidence text. */
   exitCriteria: criteriaListSchema,
+  /**
+   * To leave forward: who may move it out besides `moveRule`. With neither, whoever may move tasks
+   * can; `assignees` also lets anyone move a task that has no assignees and no claim.
+   */
+  moveBy: moveBySchema,
   /** To leave forward: who may move it out (null: whoever may move tasks). */
   moveRule: principalRuleSchema.nullable(),
   /** To leave forward: approvals needed. */
@@ -164,6 +173,7 @@ export const DEFAULT_STAGE_RULES: StageRules = {
   blocksDependents: true,
   claimable: true,
   exitCriteria: [],
+  moveBy: { assignees: false, claimer: false },
   moveRule: null,
   approvals: null,
   autoAdvance: false,
@@ -190,6 +200,7 @@ export const stageRulesPatchSchema = z.object({
   blocksDependents: z.boolean().optional(),
   claimable: z.boolean().optional(),
   exitCriteria: criteriaListSchema.optional(),
+  moveBy: moveBySchema.optional(),
   moveRule: principalRuleSchema.nullable().optional(),
   approvals: approvalsRuleSchema.nullable().optional(),
   autoAdvance: z.boolean().optional(),
@@ -200,7 +211,13 @@ export type StageRulesPatch = z.infer<typeof stageRulesPatchSchema>;
 
 /** Rules that must be met (or checked) to leave the stage forward. */
 export function isGatedStage(rules: StageRules): boolean {
-  return rules.exitCriteria.length > 0 || rules.approvals !== null || rules.moveRule !== null;
+  return (
+    rules.exitCriteria.length > 0 ||
+    rules.approvals !== null ||
+    rules.moveRule !== null ||
+    rules.moveBy.assignees ||
+    rules.moveBy.claimer
+  );
 }
 
 /** Does the stage have any rule beyond its instructions? */

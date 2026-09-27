@@ -90,6 +90,7 @@ export function rulesOf(row: StatusRow): StageRules {
     blocksDependents: row.blocksDependents,
     claimable: row.claimable,
     exitCriteria: row.exitCriteria,
+    moveBy: row.moveBy ?? { assignees: false, claimer: false },
     moveRule: row.moveRule ?? null,
     approvals: row.approvals
       ? { ...row.approvals, dismissOnChange: row.approvals.dismissOnChange ?? false }
@@ -127,6 +128,7 @@ export function ruleColumns(rules: StageRules) {
     blocksDependents: rules.blocksDependents,
     claimable: rules.claimable,
     exitCriteria: rules.exitCriteria,
+    moveBy: rules.moveBy.assignees || rules.moveBy.claimer ? rules.moveBy : null,
     moveRule: rules.moveRule,
     approvals: rules.approvals,
     autoAdvance: rules.autoAdvance,
@@ -351,6 +353,7 @@ function ruleSummaries(db: DbExecutor, rules: StageRules): Record<keyof StageRul
     blocksDependents: rules.blocksDependents,
     claimable: rules.claimable,
     exitCriteria: rules.exitCriteria.map((criterion) => criterion.text),
+    moveBy: moveByWords(rules.moveBy) || null,
     moveRule: rules.moveRule ? ruleText(rules.moveRule, book) : null,
     approvals: rules.approvals
       ? `${rules.approvals.count} from ${ruleText(rules.approvals.rule, book)}${
@@ -654,11 +657,9 @@ export function evaluateMove(
   }
 
   if (memo.forbidden === undefined) {
-    memo.forbidden =
-      rules.moveRule &&
-      (!subject.userId || !matchesRule(db, subject.scope, subject.userId, rules.moveRule))
-        ? `Only ${describeRule(db, rules.moveRule)} can move tasks out of ${from.name}`
-        : null;
+    memo.forbidden = mayMoveOn(db, subject, rules)
+      ? null
+      : `Only ${whoMovesOn(rules, (rule) => describeRule(db, rule))} can move tasks out of ${from.name}`;
   }
   memo.missing ??= isGatedStage(rules) ? missingToLeave(db, subject.task, from) : [];
   const missing = [...memo.missing];
@@ -670,6 +671,55 @@ export function evaluateMove(
     }
   }
   return { direction: 'forward', forbidden: memo.forbidden, missing };
+}
+
+function moveByWords(moveBy: StageRules['moveBy']): string {
+  return [
+    ...(moveBy.assignees ? ['its assignees'] : []),
+    ...(moveBy.claimer ? ['whoever claimed it'] : []),
+  ].join(' or ');
+}
+
+/** Who may move a task out of a stage, in words ("its assignees or Reviewer"); null: anyone. */
+export function whoMovesOn(
+  rules: StageRules,
+  words: (rule: PrincipalRule) => string,
+): string | null {
+  const parts = [
+    ...(moveByWords(rules.moveBy) ? [moveByWords(rules.moveBy)] : []),
+    ...(rules.moveRule ? [words(rules.moveRule)] : []),
+  ];
+  return parts.length > 0 ? parts.join(' or ') : null;
+}
+
+/**
+ * May `subject.userId` move the task out of its stage forward (who may, not whether it's ready)?
+ * With no `moveBy` and no `moveRule`, anyone who may move tasks can; `moveBy.assignees` also lets
+ * anyone move a task that has no assignees and no claim, so unassigned work can't get stuck.
+ */
+function mayMoveOn(db: DbExecutor, subject: MoveSubject, rules: StageRules): boolean {
+  const { moveBy, moveRule } = rules;
+  if (!moveBy.assignees && !moveBy.claimer && !moveRule) return true;
+  const { userId, task } = subject;
+  if (!userId) return false;
+  const claimer = task.claimedById && isClaimValid(task, new Date()) ? task.claimedById : null;
+  if (moveBy.claimer && claimer === userId) return true;
+  if (moveBy.assignees) {
+    const users = stageUserIds(db, task.id, task.statusId);
+    const roles = stageRoleIds(db, task.id, task.statusId);
+    if (users.length === 0 && roles.length === 0 && !claimer) return true;
+    if (users.includes(userId)) return true;
+    if (
+      roles.length > 0 &&
+      matchesRule(db, subject.scope, userId, {
+        allow: roles.map((roleId) => ({ type: 'role' as const, roleId, scope: 'both' as const })),
+        deny: [],
+      })
+    ) {
+      return true;
+    }
+  }
+  return moveRule ? matchesRule(db, subject.scope, userId, moveRule) : false;
 }
 
 /** Team owner or ADMINISTRATOR: may force a move past every rule. */
@@ -1624,7 +1674,7 @@ export function stageOf(db: DbExecutor, viewer: Actor, task: TaskRow): TaskStage
     instructions: rules.instructions,
     criteria,
     approvals,
-    moveRule: rules.moveRule ? ruleText(rules.moveRule, book) : null,
+    moveRule: whoMovesOn(rules, (rule) => ruleText(rule, book)),
     next: next ? { id: next.id, name: next.name } : null,
     sendBackTo: previous && rules.allowSendBack ? { id: previous.id, name: previous.name } : null,
     autoAdvance: rules.autoAdvance,

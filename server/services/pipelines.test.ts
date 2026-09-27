@@ -438,6 +438,27 @@ describe('move rule', () => {
     expect(move(ann, task.id, review).status.name).toBe('In Review');
   });
 
+  it('moveBy: its assignees and/or claimer may move it on; unassigned tasks stay movable', () => {
+    setRules(doing, { moveBy: { assignees: true, claimer: false } });
+    const loose = newTask({ statusId: doing.id });
+    // Nobody holds it: anyone who may move tasks can.
+    expect(move(ben, loose.id, review).status.name).toBe('In Review');
+
+    const task = newTask({ statusId: doing.id, assignees: [ann.id] });
+    expect(failure(() => move(ben, task.id, review)).message).toBe(
+      'Only its assignees can move tasks out of In Progress.',
+    );
+    expect(move(ann, task.id, review).status.name).toBe('In Review');
+
+    setRules(doing, { moveBy: { assignees: false, claimer: true }, moveRule: rule([user(cal)]) });
+    const claimed = newTask({ statusId: doing.id });
+    claimTask(ctx.deps, web(ben), claimed.id, {});
+    expect(failure(() => move(ann, claimed.id, review)).message).toBe(
+      'Only whoever claimed it or @cal can move tasks out of In Progress.',
+    );
+    expect(move(ben, claimed.id, review).status.name).toBe('In Review');
+  });
+
   it('answers 403 over REST with the reason', async () => {
     setRules(doing, { moveRule: rule([user(cal)]) });
     const task = newTask({ statusId: doing.id });

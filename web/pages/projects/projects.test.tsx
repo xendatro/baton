@@ -110,10 +110,7 @@ describe('project layout', { timeout: 20_000 }, () => {
     expect(screen.getByRole('link', { name: 'Overview' })).toHaveAttribute('aria-current', 'page');
     expect(await screen.findByRole('button', { name: 'Write a README' }, LAZY)).toBeVisible();
     expect(screen.getByText('(was OLD)')).toBeVisible();
-    expect(screen.getByRole('progressbar', { name: 'Tasks completed' })).toHaveAttribute(
-      'aria-valuenow',
-      '25',
-    );
+    expect(screen.getByRole('img', { name: /^Open: 3/ })).toBeVisible();
   });
 
   it('hides README editing without MANAGE_PROJECTS', async () => {

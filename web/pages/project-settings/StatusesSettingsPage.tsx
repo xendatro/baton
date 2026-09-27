@@ -25,14 +25,15 @@ import {
 } from 'lucide-react';
 import { useId, useState, type FormEvent, type KeyboardEvent } from 'react';
 import { toast } from 'sonner';
-import { COLOR_PALETTE, LIMITS, type StatusCategory } from '@shared/constants';
+import { COLOR_PALETTE, LIMITS } from '@shared/constants';
 import { DEFAULT_STAGE_RULES } from '@shared/schemas/pipelines';
 import { statusNameSchema, type Status } from '@shared/schemas/projects';
 import { EmptyState } from '@web/components/common/EmptyState';
 import { ErrorState } from '@web/components/common/ErrorState';
 import { Spinner } from '@web/components/common/Spinner';
 import { StatusIcon } from '@web/components/common/StatusBadge';
-import { ColorPicker } from '@web/components/pickers/ColorPicker';
+import { STATUS_ICON_SHAPES } from '@web/components/common/statusIcons';
+import { StatusIconPicker } from '@web/components/pickers/StatusIconPicker';
 import { Button } from '@web/components/ui/button';
 import {
   Dialog,
@@ -75,13 +76,12 @@ import { StageRulesDialog } from './StageRulesDialog';
 import { countRules } from './stageRules';
 
 /**
- * Project settings → Statuses: the board's columns. Drag to reorder (or use the keyboard: focus a
- * handle, Space, arrows, Space), rename in place, pick a color and a category, choose the default
- * for new tasks, add and delete (moving the tasks elsewhere). Each status's pipeline rules (design
- * §5) open in a dialog, and "Copy pipeline from…" copies another project's statuses and rules.
+ * Project settings → Statuses: the board's columns (stages). Drag to reorder (or use the keyboard:
+ * focus a handle, Space, arrows, Space), rename in place, pick an icon (shape and color), choose
+ * the default for new tasks, add and delete (moving the tasks elsewhere). What a stage does —
+ * hand-off, on-enter effects, blocking, claiming, exit rules — is its rules, edited in a dialog;
+ * "Copy pipeline from…" copies another project's statuses and rules.
  */
-
-const CATEGORY_LABELS: Record<StatusCategory, string> = { open: 'Open', done: 'Done' };
 
 export default function StatusesSettingsPage() {
   const { team, project } = useRouteContext();
@@ -111,9 +111,10 @@ function Statuses({ teamId, projectId }: { teamId: string; projectId: string }) 
       title="Statuses"
       description={
         <>
-          The columns of the board, in order. Tasks in a <strong>Done</strong> status count as
-          finished: they aren’t overdue, can’t be claimed, and resolve the issues they fix. Each
-          status can have pipeline rules: hand-offs, exit criteria, approvals.
+          The columns of the board, in order. Every status is a stage you can rename, recolor,
+          reorder or delete; its <strong>rules</strong> say what happens there: who gets the task,
+          whether entering it resolves fixed issues or releases the claim, whether its tasks still
+          block others or can be claimed, and what it takes to move on.
         </>
       }
       actions={
@@ -156,11 +157,10 @@ function Statuses({ teamId, projectId }: { teamId: string; projectId: string }) 
       {header}
       {canManage ? null : <ReadOnlyNotice permission="Manage statuses" />}
       <SettingsCard>
-        <div className="hidden grid-cols-[2rem_2rem_minmax(0,1fr)_7.5rem_4.5rem_5rem_4.5rem] items-center gap-2 border-b px-3 py-2 text-xs font-medium text-muted-foreground sm:grid">
+        <div className="hidden grid-cols-[2rem_2rem_minmax(0,1fr)_4.5rem_5rem_4.5rem] items-center gap-2 border-b px-3 py-2 text-xs font-medium text-muted-foreground sm:grid">
           <span />
           <span />
           <span>Name</span>
-          <span>Category</span>
           <span className="text-center">Default</span>
           <span className="text-right">Tasks</span>
           <span />
@@ -312,7 +312,7 @@ function StatusRow({
       ref={setNodeRef}
       style={{ transform: CSS.Transform.toString(transform), transition }}
       className={cn(
-        'grid grid-cols-[2rem_2rem_minmax(0,1fr)_4.5rem] items-center gap-x-2 gap-y-2 border-b bg-card px-3 py-2 last:border-b-0 sm:grid-cols-[2rem_2rem_minmax(0,1fr)_7.5rem_4.5rem_5rem_4.5rem]',
+        'grid grid-cols-[2rem_2rem_minmax(0,1fr)_4.5rem] items-center gap-x-2 gap-y-2 border-b bg-card px-3 py-2 last:border-b-0 sm:grid-cols-[2rem_2rem_minmax(0,1fr)_4.5rem_5rem_4.5rem]',
         isDragging && 'relative z-10 rounded-md shadow-lg ring-1 ring-border',
       )}
       data-testid="status-row"
@@ -328,21 +328,21 @@ function StatusRow({
       >
         <GripVerticalIcon className="size-4" aria-hidden="true" />
       </button>
-      <ColorPicker
-        value={status.color}
-        onChange={(color) => update.mutate({ id: status.id, input: { color } })}
-        label={`${status.name} color`}
+      <StatusIconPicker
+        value={{ icon: status.icon, color: status.color }}
+        onChange={(input) => update.mutate({ id: status.id, input })}
+        label={`${status.name} icon`}
         disabled={!canManage}
       >
         <button
           type="button"
           disabled={!canManage}
-          aria-label={`${status.name} color: ${status.color}`}
+          aria-label={`${status.name} icon: ${STATUS_ICON_SHAPES[status.icon].label}, ${status.color}`}
           className="flex size-8 items-center justify-center rounded-md outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring disabled:hover:bg-transparent"
         >
           <StatusIcon status={status} className="size-4" />
         </button>
-      </ColorPicker>
+      </StatusIconPicker>
       <Input
         value={name}
         onChange={(event) => setName(event.target.value)}
@@ -391,21 +391,6 @@ function StatusRow({
         </Tooltip>
       </div>
       <div className="col-span-4 flex flex-wrap items-center gap-x-4 gap-y-2 pl-[4.5rem] sm:contents sm:pl-0">
-        <Select
-          value={status.category}
-          onValueChange={(category) =>
-            update.mutate({ id: status.id, input: { category: category as StatusCategory } })
-          }
-          disabled={!canManage}
-        >
-          <SelectTrigger size="sm" className="w-28" aria-label={`Category of ${status.name}`}>
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="open">{CATEGORY_LABELS.open}</SelectItem>
-            <SelectItem value="done">{CATEGORY_LABELS.done}</SelectItem>
-          </SelectContent>
-        </Select>
         <label className="flex items-center gap-2 text-sm sm:justify-center">
           <RadioGroupItem
             value={status.id}
@@ -434,7 +419,6 @@ function AddStatus({ projectId, existing }: { projectId: string; existing: Statu
   const inputId = useId();
   const create = useCreateStatus(projectId);
   const [name, setName] = useState('');
-  const [category, setCategory] = useState<StatusCategory>('open');
   const [error, setError] = useState<string | null>(null);
 
   const submit = (event: FormEvent) => {
@@ -446,7 +430,7 @@ function AddStatus({ projectId, existing }: { projectId: string; existing: Statu
     }
     setError(null);
     create.mutate(
-      { name: parsed.data, category, color: suggestColor(existing) },
+      { name: parsed.data, color: suggestColor(existing) },
       {
         onSuccess: (status) => {
           setName('');
@@ -474,15 +458,6 @@ function AddStatus({ projectId, existing }: { projectId: string; existing: Statu
           className="h-8 min-w-0 flex-1 basis-48"
           autoComplete="off"
         />
-        <Select value={category} onValueChange={(value) => setCategory(value as StatusCategory)}>
-          <SelectTrigger size="sm" className="w-28" aria-label="Category of the new status">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="open">{CATEGORY_LABELS.open}</SelectItem>
-            <SelectItem value="done">{CATEGORY_LABELS.done}</SelectItem>
-          </SelectContent>
-        </Select>
         <Button type="submit" size="sm" disabled={create.isPending || !name.trim()}>
           {create.isPending ? <Spinner /> : <PlusIcon aria-hidden="true" />}
           Add status
@@ -537,8 +512,11 @@ function DeleteStatusForm({
 }) {
   const remove = useDeleteStatus(projectId);
   const selectId = useId();
+  // The column before it (tasks step back one stage), else the one after.
   const [moveTo, setMoveTo] = useState(
-    () => (others.find((other) => other.category === status.category) ?? others[0])?.id ?? '',
+    () =>
+      ([...others].reverse().find((other) => other.position < status.position) ?? others[0])?.id ??
+      '',
   );
   const [error, setError] = useState<string | null>(null);
   const target = others.find((other) => other.id === moveTo);
@@ -593,10 +571,9 @@ function DeleteStatusForm({
             {status.name} is the default status, so {target.name} becomes the default for new tasks.
           </p>
         ) : null}
-        {target && target.category !== status.category ? (
+        {target && status.taskCount > 0 ? (
           <p className="text-xs text-muted-foreground">
-            {target.name} is {target.category === 'done' ? 'a Done' : 'an Open'} status: moved tasks
-            will count as {target.category === 'done' ? 'finished' : 'not finished'}.
+            The tasks enter {target.name}: its hand-off and on-enter rules apply to them.
           </p>
         ) : null}
       </div>

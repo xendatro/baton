@@ -121,7 +121,10 @@ describe('removeMember', () => {
     );
     const project = createProject(ctx.db, { teamId: team.team.id });
     const task = createTask(ctx.db, { project: project.project });
-    ctx.db.orm.insert(s.taskAssigneeUser).values({ taskId: task.id, userId: member.id }).run();
+    ctx.db.orm
+      .insert(s.taskAssigneeUser)
+      .values({ taskId: task.id, statusId: task.statusId, userId: member.id })
+      .run();
 
     const miaAgent = createAgent(ctx.db, member.id);
     const { key } = createApiKey(ctx.db, { userId: moderator.id });

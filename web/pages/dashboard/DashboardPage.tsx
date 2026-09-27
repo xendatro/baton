@@ -500,11 +500,11 @@ function TeamCard({ team }: { team: DashboardTeam }) {
                 <span className="min-w-0 flex-1 truncate">{project.name}</span>
                 <span
                   className="inline-flex items-center gap-1 text-xs text-muted-foreground tabular-nums"
-                  title={pluralize(project.openTasks, 'open task')}
+                  title={`${pluralize(project.assignedTasks, 'task')} assigned`}
                 >
                   <ListTodoIcon className="size-3.5" aria-hidden="true" />
-                  <span className="sr-only">Open tasks:</span>
-                  {project.openTasks}
+                  <span className="sr-only">Assigned tasks:</span>
+                  {project.assignedTasks}
                 </span>
                 <span
                   className="inline-flex w-10 items-center gap-1 text-xs text-muted-foreground tabular-nums"

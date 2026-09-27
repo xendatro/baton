@@ -183,7 +183,6 @@ describe('constraints', () => {
           projectId: project.id,
           name: 'Other',
           color: '#000000',
-          category: 'open',
           position: 9,
           isDefault: true,
         })

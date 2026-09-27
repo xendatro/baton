@@ -53,7 +53,14 @@ export function ColorPicker({
   );
 }
 
-function ColorPanel({ value, onChange }: { value: string; onChange: (color: string) => void }) {
+/** The palette and hex input on their own (used inside other pickers). */
+export function ColorPanel({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (color: string) => void;
+}) {
   const inputId = useId();
   const [hex, setHex] = useState(value);
   const [error, setError] = useState<string | null>(null);

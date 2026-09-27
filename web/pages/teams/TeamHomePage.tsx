@@ -245,9 +245,12 @@ function ProjectCard({ teamSlug, project }: { teamSlug: string; project: TeamPro
         {project.description || <span className="italic">No description</span>}
       </p>
       <div className="mt-auto flex items-center gap-4 text-xs text-muted-foreground">
-        <span className="inline-flex items-center gap-1" title="Open tasks">
+        <span
+          className="inline-flex items-center gap-1"
+          title="Tasks someone is assigned to in their current stage"
+        >
           <ListTodoIcon className="size-3.5" aria-hidden="true" />
-          {pluralize(project.openTasks, 'open task')}
+          {pluralize(project.assignedTasks, 'task')} assigned
         </span>
         <span className="inline-flex items-center gap-1" title="Open issues">
           <CircleDotIcon className="size-3.5" aria-hidden="true" />

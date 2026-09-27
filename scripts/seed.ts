@@ -10,6 +10,7 @@
 import fs from 'node:fs';
 import { hashPassword } from 'better-auth/crypto';
 import { asc, eq, gte } from 'drizzle-orm';
+import { FINISHED_STAGE_RULES, type StatusIconShape } from '../shared/constants';
 import type { Permission } from '../shared/permissions';
 import { createApiKeyInputSchema } from '../shared/schemas/core';
 import {
@@ -92,19 +93,23 @@ const MEMBER_ROLES: Record<Exclude<Username, 'ethan'>, string[]> = {
   sofia: ['Frontend', 'Reviewer'],
 };
 
-/** Board columns, in order; the first `open` one marked `default` receives new tasks. */
+/**
+ * Board columns (stages), in order; the one marked `default` receives new tasks. Done and
+ * Canceled finish a task (`FINISHED_STAGE_RULES`, like a new project's Done).
+ */
 const STATUSES: ReadonlyArray<{
   name: string;
   color: string;
-  category: 'open' | 'done';
+  icon: StatusIconShape;
+  finished?: true;
   isDefault?: true;
 }> = [
-  { name: 'Backlog', color: '#6b7280', category: 'open' },
-  { name: 'Todo', color: '#0ea5e9', category: 'open', isDefault: true },
-  { name: 'In Progress', color: '#f59e0b', category: 'open' },
-  { name: 'In Review', color: '#8b5cf6', category: 'open' },
-  { name: 'Done', color: '#22c55e', category: 'done' },
-  { name: 'Canceled', color: '#ef4444', category: 'done' },
+  { name: 'Backlog', color: '#6b7280', icon: 'dashed-circle' },
+  { name: 'Todo', color: '#0ea5e9', icon: 'circle', isDefault: true },
+  { name: 'In Progress', color: '#f59e0b', icon: 'half-circle' },
+  { name: 'In Review', color: '#8b5cf6', icon: 'dot-circle' },
+  { name: 'Done', color: '#22c55e', icon: 'check-circle', finished: true },
+  { name: 'Canceled', color: '#ef4444', icon: 'x-circle', finished: true },
 ];
 
 const LABELS = [
@@ -439,14 +444,14 @@ function configureWorkflow(
   projectId: string,
   seeded: readonly Status[],
 ): void {
-  const open = seeded.find((status) => status.category === 'open');
-  const done = seeded.find((status) => status.category === 'done');
+  const open = seeded.find((status) => status.name === 'Open');
+  const done = seeded.find((status) => status.name === 'Done');
   if (!open || !done) throw new Error('A new project should have Open and Done statuses');
   const ids = new Map<string, string>([
     ['Backlog', open.id],
     ['Done', done.id],
   ]);
-  updateStatus(deps, actor, open.id, { name: 'Backlog', color: '#6b7280' });
+  updateStatus(deps, actor, open.id, { name: 'Backlog', color: '#6b7280', icon: 'dashed-circle' });
   for (const status of STATUSES) {
     if (ids.has(status.name)) continue;
     const created = createStatus(
@@ -456,7 +461,8 @@ function configureWorkflow(
       createStatusInputSchema.parse({
         name: status.name,
         color: status.color,
-        category: status.category,
+        icon: status.icon,
+        ...(status.finished ? { rules: FINISHED_STAGE_RULES } : {}),
       }),
     );
     ids.set(status.name, created.id);

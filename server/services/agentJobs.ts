@@ -26,6 +26,7 @@ import { findItem, type ItemInfo } from './items';
 import { beginListening, isSessionListening, refreshPresence } from './presence';
 import { resolveProject } from './refs';
 import { getReply, type ReplyWithContext } from './replies';
+import { currentUserRow } from './taskAssignees';
 import { getUserSummaries } from './users';
 
 /**
@@ -416,7 +417,8 @@ function threadAgentIds(tx: Tx, item: Pick<ItemInfo, 'type' | 'id' | 'authorId'>
     for (const row of tx
       .select({ userId: s.taskAssigneeUser.userId })
       .from(s.taskAssigneeUser)
-      .where(eq(s.taskAssigneeUser.taskId, item.id))
+      .innerJoin(s.task, eq(s.task.id, s.taskAssigneeUser.taskId))
+      .where(and(eq(s.taskAssigneeUser.taskId, item.id), currentUserRow))
       .all()) {
       ids.add(row.userId);
     }

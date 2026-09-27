@@ -5,7 +5,7 @@ import {
   LIMITS,
   PRIORITY_KEYS,
   PRIORITY_VALUES,
-  STATUS_CATEGORIES,
+  STATUS_ICONS,
   priorityByKey,
   type PriorityValue,
 } from '../constants';
@@ -80,8 +80,8 @@ export const taskStatusSummarySchema = z.object({
   id: z.string(),
   name: z.string(),
   color: z.string(),
-  /** `done` statuses count as finished. */
-  category: z.enum(STATUS_CATEGORIES),
+  /** Icon shape, drawn in `color`. */
+  icon: z.enum(STATUS_ICONS),
 });
 export type TaskStatusSummary = z.infer<typeof taskStatusSummarySchema>;
 
@@ -112,7 +112,8 @@ export type TaskClaim = z.infer<typeof taskClaimSchema>;
 
 /**
  * A task as other modules show it (dashboard, my tasks, …). `claim` is null when nobody holds a
- * valid claim; `blocked` is true while any blocker is in an open-category status.
+ * valid claim; `blocked` is true while any blocker sits in a stage that blocks its dependents.
+ * `assignees` are the task's assignees in its current stage.
  */
 export const taskSummarySchema = z.object({
   id: z.string(),
@@ -133,6 +134,11 @@ export const taskSummarySchema = z.object({
   blocked: z.boolean(),
   replyCount: z.number().int().nonnegative(),
   updatedAt: timestampSchema,
+  /**
+   * Set while the task is in a stage that doesn't block its dependents (it counts as completed),
+   * from when it entered such a stage. Optional for older fixtures.
+   */
+  completedAt: timestampSchema.nullable().optional(),
 });
 export type TaskSummary = z.infer<typeof taskSummarySchema>;
 
@@ -143,7 +149,7 @@ export const taskCardSchema = taskSummarySchema.extend({
   /** Refs of the open tasks blocking this one. */
   blockers: z.array(z.string()),
   createdAt: timestampSchema,
-  /** Set while the task is in a `done` status. */
+  /** Set while the task is in a stage that doesn't block its dependents. */
   completedAt: timestampSchema.nullable(),
   /** Relative web-app path. */
   path: z.string(),
@@ -164,6 +170,8 @@ export const relatedTaskSchema = z.object({
   number: z.number().int().positive(),
   title: z.string(),
   status: taskStatusSummarySchema,
+  /** Set while it is in a stage that doesn't block its dependents (so it blocks nothing). */
+  completedAt: timestampSchema.nullable().optional(),
   path: z.string(),
 });
 export type RelatedTask = z.infer<typeof relatedTaskSchema>;
@@ -193,7 +201,7 @@ export const taskSchema = taskCardSchema.extend({
   via: viaKeySchema.nullable(),
   editedAt: timestampSchema.nullable(),
   lastActivityAt: timestampSchema,
-  /** Tasks this one waits for; it is blocked while any of them is open. */
+  /** Tasks this one waits for; it is blocked while any of them is in a stage that blocks. */
   blockedBy: z.array(relatedTaskSchema),
   /** Tasks waiting for this one. */
   blocking: z.array(relatedTaskSchema),
@@ -462,7 +470,7 @@ export const claimNextTaskInputSchema = z.object({
   priority: z.array(priorityValueSchema).min(1).max(5).optional(),
   /** Only tasks assigned to me directly or through one of my roles. */
   assignedToMe: z.boolean().optional(),
-  /** Move the claimed task to this (open-category) status, e.g. "In Progress". */
+  /** Move the claimed task to this (claimable) stage, e.g. "In Progress". */
   moveToStatusId: idSchema.optional(),
   leaseMinutes: leaseMinutesSchema.optional(),
 });

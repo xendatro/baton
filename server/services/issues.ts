@@ -190,7 +190,7 @@ export function linkedTasksOf(db: DbExecutor, issueId: string): LinkedTask[] {
       statusId: s.status.id,
       statusName: s.status.name,
       statusColor: s.status.color,
-      statusCategory: s.status.category,
+      statusIcon: s.status.icon,
     })
     .from(s.taskIssueLink)
     .innerJoin(s.task, eq(s.task.id, s.taskIssueLink.taskId))
@@ -216,7 +216,7 @@ export function linkedTasksOf(db: DbExecutor, issueId: string): LinkedTask[] {
       id: row.statusId,
       name: row.statusName,
       color: row.statusColor,
-      category: row.statusCategory,
+      icon: row.statusIcon,
     },
     path: appPaths.task(row.teamSlug, row.projectKey, row.number),
   }));

@@ -41,7 +41,6 @@ beforeEach(() => {
       projectId: project.project.id,
       name: 'In Progress',
       color: '#f59e0b',
-      category: 'open',
       position: 2,
     })
     .run();

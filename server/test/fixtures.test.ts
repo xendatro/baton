@@ -91,9 +91,19 @@ describe('test factories', () => {
       createdById: owner.id,
     });
     expect(project).toMatchObject({ key: 'BAT', issueSeq: 0, taskSeq: 0 });
-    expect(statuses.map((st) => [st.name, st.category, st.isDefault, st.position])).toEqual([
-      ['Open', 'open', true, 0],
-      ['Done', 'done', false, 1],
+    expect(
+      statuses.map((st) => [
+        st.name,
+        st.icon,
+        st.isDefault,
+        st.position,
+        st.handoff,
+        st.blocksDependents,
+        st.claimable,
+      ]),
+    ).toEqual([
+      ['Open', 'circle', true, 0, null, true, true],
+      ['Done', 'check-circle', false, 1, { mode: 'nobody' }, false, false],
     ]);
   });
 

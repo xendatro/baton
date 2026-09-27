@@ -65,7 +65,7 @@ const task: Task & { stage: TaskStage } = {
   title: 'Ship it',
   projectId: 'p1',
   teamId: 'team1',
-  status: { id: 's-review', name: 'In Review', color: '#8b5cf6', category: 'open' },
+  status: { id: 's-review', name: 'In Review', color: '#8b5cf6', icon: 'circle' },
   priority: 0,
   dueDate: null,
   labels: [],

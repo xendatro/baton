@@ -178,9 +178,16 @@ export function moveOnBoard(
         id: column.status.id,
         name: column.status.name,
         color: column.status.color,
-        category: column.status.category,
+        icon: column.status.icon,
       };
-      tasks.splice(Math.max(0, Math.min(index, tasks.length)), 0, { ...card, status });
+      // Completed while in a stage that doesn't block its dependents.
+      const blocks = column.status.rules?.blocksDependents ?? true;
+      const completedAt = blocks ? null : (card.completedAt ?? new Date().toISOString());
+      tasks.splice(Math.max(0, Math.min(index, tasks.length)), 0, {
+        ...card,
+        status,
+        completedAt,
+      });
       return { ...column, count: column.count + 1, tasks };
     }),
   };

@@ -200,7 +200,6 @@ const CASES: Record<AgentAction, () => Arranged> = {
   delete_status: () => {
     const review = createStatus(ctx.deps, person(ethan), project.project.id, {
       name: 'Review',
-      category: 'open',
     });
     const open = project.statuses[0];
     if (!open) throw new Error('no status');

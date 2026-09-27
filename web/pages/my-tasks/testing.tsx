@@ -56,7 +56,7 @@ export function myTask(overrides: Partial<MyTask> = {}): MyTask {
     title: 'Fix login',
     projectId: 'p1',
     teamId: 't1',
-    status: { id: 's1', name: 'Todo', color: '#6b7280', category: 'open' },
+    status: { id: 's1', name: 'Todo', color: '#6b7280', icon: 'circle' },
     priority: 2,
     dueDate: null,
     labels: [],

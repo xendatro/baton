@@ -53,6 +53,7 @@ import {
   enterStage,
   guardStageMove,
   recordForced,
+  rulesOf,
   saveEvidence,
   type GuardResult,
 } from './pipelines';
@@ -60,6 +61,7 @@ import { requireProject } from './projects';
 import { indexSearch } from './search';
 import { requireSignoff } from './signoff';
 import { autoSubscribe } from './subscriptions';
+import { setStageAssignees, stageRoleIds, stageUserIds } from './taskAssignees';
 import {
   applyBlockersChange,
   applyIdChange,
@@ -73,7 +75,9 @@ import { boardOf, listOf, toTask, type TaskRow } from './taskViews';
  * Tasks (SPEC §1.8): numbered `KEY-12` per project, on a board of status columns ordered by
  * fractional-index positions. Everything a task changes is audited on it (`task.*`, with
  * human-readable field changes and `meta: { ref, title }`), indexed for search, notified (new
- * assignees, mentions, `task_done`) and announced with live events after commit.
+ * assignees, mentions, `task_done` when a stage says so) and announced with live events after
+ * commit. Assignments belong to a task and a stage: a task's assignees are its rows for its
+ * current status (see `enterStage` for what a move does to them).
  *
  * Permissions: members with `CREATE_TASKS` create; the title and description are edited by the
  * author or `EDIT_ANY_CONTENT`; every other field (status, position, priority, due date,
@@ -426,20 +430,10 @@ function describe(description: string) {
 // Status transitions
 // ---------------------------------------------------------------------------------------------
 
-/** Assigned users, directly or through their roles. */
-function assignedUserIds(tx: Tx, taskId: string): string[] {
-  const direct = tx
-    .select({ id: s.taskAssigneeUser.userId })
-    .from(s.taskAssigneeUser)
-    .where(eq(s.taskAssigneeUser.taskId, taskId))
-    .all()
-    .map((row) => row.id);
-  const roleIds = tx
-    .select({ id: s.taskAssigneeRole.roleId })
-    .from(s.taskAssigneeRole)
-    .where(eq(s.taskAssigneeRole.taskId, taskId))
-    .all()
-    .map((row) => row.id);
+/** Users assigned to the task in `statusId`, directly or through their roles. */
+function assignedUserIds(tx: Tx, taskId: string, statusId: string): string[] {
+  const direct = stageUserIds(tx, taskId, statusId);
+  const roleIds = stageRoleIds(tx, taskId, statusId);
   return [...new Set([...direct, ...roleMemberIds(tx, roleIds)])];
 }
 
@@ -453,44 +447,55 @@ export interface StatusTransition {
   /** Columns to set on the task. */
   patch: Partial<TaskRow>;
   /**
-   * Audits the claim release a done status caused (`task.released`); the caller runs it after
+   * Audits the claim release the stage caused (`task.released`); the caller runs it after
    * recording its own status change, so history reads "moved to Done", then "released".
    */
   recordRelease: () => void;
 }
 
 /**
- * Side effects of moving a task from one status to another, inside the caller's write. Entering
- * a `done` status sets `completedAt`, resolves the issues it `fixes`, notifies the author and
- * assignees (`task_done`) and releases the claim; returning to an `open` status clears
- * `completedAt`.
+ * The stage's on-enter effects of moving a task from one status to another, inside the caller's
+ * write (before `enterStage`, which applies the hand-off): `completedAt` follows the new stage's
+ * `blocksDependents` (set when it enters a stage that doesn't block, kept while it moves between
+ * such stages, cleared otherwise); `onEnter.resolveIssues` resolves the issues it `fixes`;
+ * `onEnter.notifyAuthor` tells the author and whoever held it in the stage it left (`task_done`,
+ * "Reached <stage>"); `onEnter.releaseClaim` releases the claim. They run on every entry of such
+ * a stage. Leaving a stage undoes nothing (resolved issues stay resolved).
  */
 export function applyStatusTransition(
   tx: Tx,
   actor: Actor,
   context: TransitionContext,
-  from: Pick<StatusRow, 'category'>,
-  to: Pick<StatusRow, 'category' | 'name'>,
+  from: StatusRow,
+  to: StatusRow,
   now: Date,
   notified: NotifiedSet,
 ): StatusTransition {
   const none = () => undefined;
-  if (from.category === to.category) return { patch: {}, recordRelease: none };
-  if (to.category === 'open') return { patch: { completedAt: null }, recordRelease: none };
   const { task, projectKey, teamSlug } = context;
-  resolveFixedIssues(tx, actor, linkSubject(task, projectKey), notified, now);
-  notifyUsers(
-    tx,
-    actor,
-    'task_done',
-    [...(task.authorId ? [task.authorId] : []), ...assignedUserIds(tx, task.id)],
-    notificationTarget(task, { key: projectKey }, { slug: teamSlug }, `Moved to ${to.name}`),
-    notified,
-  );
+  const rules = rulesOf(to);
+  const patch: Partial<TaskRow> = {
+    completedAt: rules.blocksDependents ? null : (task.completedAt ?? now),
+  };
+  if (from.id === to.id) return { patch: {}, recordRelease: none };
+  if (rules.onEnter.resolveIssues) {
+    resolveFixedIssues(tx, actor, linkSubject(task, projectKey), notified, now);
+  }
+  if (rules.onEnter.notifyAuthor) {
+    notifyUsers(
+      tx,
+      actor,
+      'task_done',
+      [...(task.authorId ? [task.authorId] : []), ...assignedUserIds(tx, task.id, from.id)],
+      notificationTarget(task, { key: projectKey }, { slug: teamSlug }, `Reached ${to.name}`),
+      notified,
+    );
+  }
+  if (!rules.onEnter.releaseClaim) return { patch, recordRelease: none };
   const claimed = task.claimedById !== null || task.claimedAt !== null;
   const wasValid = isClaimValid(task, now);
   return {
-    patch: { completedAt: now, ...(claimed ? releasedClaim() : {}) },
+    patch: { ...patch, ...(claimed ? releasedClaim() : {}) },
     recordRelease: () => {
       if (!wasValid) return;
       recordActivity(tx, actor, {
@@ -499,7 +504,7 @@ export function applyStatusTransition(
         entityType: 'task',
         entityId: task.id,
         action: 'task.released',
-        meta: { ...taskMeta(task, projectKey), reason: 'done' },
+        meta: { ...taskMeta(task, projectKey), reason: 'stage', stage: to.name },
       });
       emitAfterCommit(tx, taskEvent('task.released', task, actor));
     },
@@ -569,7 +574,7 @@ export function createTask(
         position: appendPosition(tx, status.id),
         authorId: actor.userId,
         viaKeyId: actor.key?.id ?? null,
-        completedAt: status.category === 'done' ? now : null,
+        completedAt: rulesOf(status).blocksDependents ? null : now,
         lastActivityAt: now,
         createdAt: now,
         updatedAt: now,
@@ -581,15 +586,14 @@ export function createTask(
         .values(labels.map((label) => ({ taskId: row.id, labelId: label.id })))
         .run();
     }
-    if (users.length > 0) {
-      tx.insert(s.taskAssigneeUser)
-        .values(users.map((user) => ({ taskId: row.id, userId: user.id })))
-        .run();
-    }
-    if (roles.length > 0) {
-      tx.insert(s.taskAssigneeRole)
-        .values(roles.map((role) => ({ taskId: row.id, roleId: role.id })))
-        .run();
+    if (users.length > 0 || roles.length > 0) {
+      setStageAssignees(
+        tx,
+        row.id,
+        status.id,
+        users.map((user) => user.id),
+        roles.map((role) => role.id),
+      );
     }
     const subject = linkSubject(row, project.key);
     if (input.blockedByTaskIds?.length) {
@@ -651,7 +655,7 @@ export function createTask(
       notified,
     );
     notifyMentions(tx, actor, target, description, { notified });
-    if (status.category === 'done') {
+    if (rulesOf(status).onEnter.resolveIssues) {
       resolveFixedIssues(tx, actor, subject, notified, now);
     }
     emitAfterCommit(tx, taskEvent('task.created', row, actor));
@@ -736,27 +740,7 @@ export function createTaskFromIssue(
 // Update
 // ---------------------------------------------------------------------------------------------
 
-function currentIds(
-  tx: Tx,
-  table: typeof s.taskAssigneeUser | typeof s.taskAssigneeRole | typeof s.taskLabel,
-  taskId: string,
-): string[] {
-  if (table === s.taskAssigneeUser) {
-    return tx
-      .select({ id: s.taskAssigneeUser.userId })
-      .from(s.taskAssigneeUser)
-      .where(eq(s.taskAssigneeUser.taskId, taskId))
-      .all()
-      .map((row) => row.id);
-  }
-  if (table === s.taskAssigneeRole) {
-    return tx
-      .select({ id: s.taskAssigneeRole.roleId })
-      .from(s.taskAssigneeRole)
-      .where(eq(s.taskAssigneeRole.taskId, taskId))
-      .all()
-      .map((row) => row.id);
-  }
+function currentLabelIds(tx: Tx, taskId: string): string[] {
   return tx
     .select({ id: s.taskLabel.labelId })
     .from(s.taskLabel)
@@ -782,52 +766,17 @@ function listDiff(current: readonly string[], changeSet: IdListChange | undefine
   };
 }
 
-/** Writes a join-table diff (assignees, labels). */
-function writeJoin(
-  tx: Tx,
-  kind: 'users' | 'roles' | 'labels',
-  taskId: string,
-  diff: ListDiff,
-): void {
+/** Writes the labels diff. */
+function writeLabels(tx: Tx, taskId: string, diff: ListDiff): void {
   if (diff.removed.length > 0) {
-    if (kind === 'users') {
-      tx.delete(s.taskAssigneeUser)
-        .where(
-          and(
-            eq(s.taskAssigneeUser.taskId, taskId),
-            inArray(s.taskAssigneeUser.userId, diff.removed),
-          ),
-        )
-        .run();
-    } else if (kind === 'roles') {
-      tx.delete(s.taskAssigneeRole)
-        .where(
-          and(
-            eq(s.taskAssigneeRole.taskId, taskId),
-            inArray(s.taskAssigneeRole.roleId, diff.removed),
-          ),
-        )
-        .run();
-    } else {
-      tx.delete(s.taskLabel)
-        .where(and(eq(s.taskLabel.taskId, taskId), inArray(s.taskLabel.labelId, diff.removed)))
-        .run();
-    }
+    tx.delete(s.taskLabel)
+      .where(and(eq(s.taskLabel.taskId, taskId), inArray(s.taskLabel.labelId, diff.removed)))
+      .run();
   }
   if (diff.added.length > 0) {
-    if (kind === 'users') {
-      tx.insert(s.taskAssigneeUser)
-        .values(diff.added.map((userId) => ({ taskId, userId })))
-        .run();
-    } else if (kind === 'roles') {
-      tx.insert(s.taskAssigneeRole)
-        .values(diff.added.map((roleId) => ({ taskId, roleId })))
-        .run();
-    } else {
-      tx.insert(s.taskLabel)
-        .values(diff.added.map((labelId) => ({ taskId, labelId })))
-        .run();
-    }
+    tx.insert(s.taskLabel)
+      .values(diff.added.map((labelId) => ({ taskId, labelId })))
+      .run();
   }
 }
 
@@ -917,10 +866,15 @@ export function updateTask(
       patch.dueDate = input.dueDate;
     }
 
-    // Assignees (members and roles, audited together) and labels.
-    const users = listDiff(currentIds(tx, s.taskAssigneeUser, taskId), input.assigneeUsers);
-    const roles = listDiff(currentIds(tx, s.taskAssigneeRole, taskId), input.assigneeRoles);
-    const labels = listDiff(currentIds(tx, s.taskLabel, taskId), input.labels);
+    // Assignees of the current stage (members and roles, audited together) and labels.
+    const users = listDiff(stageUserIds(tx, taskId, current.statusId), input.assigneeUsers);
+    const roles = listDiff(stageRoleIds(tx, taskId, current.statusId), input.assigneeRoles);
+    const labels = listDiff(currentLabelIds(tx, taskId), input.labels);
+    const assigneesChanged =
+      users.added.length > 0 ||
+      users.removed.length > 0 ||
+      roles.added.length > 0 ||
+      roles.removed.length > 0;
     // Assigning someone takes the task out of its stage's pool.
     if (current.poolRule && (users.after.length > 0 || roles.after.length > 0)) {
       patch.poolRule = null;
@@ -928,7 +882,7 @@ export function updateTask(
     const addedUsers = memberRefs(tx, team.id, users.added);
     const addedRoles = roleRefs(tx, team.id, roles.added);
     labelRefs(tx, project.id, labels.added);
-    if (users.added.length || users.removed.length || roles.added.length || roles.removed.length) {
+    if (assigneesChanged) {
       const names = new Map(
         [
           ...memberNames(tx, [...users.before, ...users.after]),
@@ -941,15 +895,17 @@ export function updateTask(
         [...label(users.before), ...label(roles.before)],
         [...label(users.after), ...label(roles.after)],
       );
-      writeJoin(tx, 'users', taskId, users);
-      writeJoin(tx, 'roles', taskId, roles);
+      // Moving in the same request: they become the new stage's (in `enterStage` below) and the
+      // stage it leaves keeps who held it there.
+      const moving = input.statusId !== undefined && input.statusId !== current.statusId;
+      if (!moving) setStageAssignees(tx, taskId, current.statusId, users.after, roles.after);
     }
     if (labels.added.length || labels.removed.length) {
       const names = labelRefs(tx, project.id, [...new Set([...labels.before, ...labels.after])]);
       const pick = (ids: readonly string[]) =>
         sortedLabels(names.filter((ref) => ids.includes(ref.id)));
       changes.labels = change(pick(labels.before), pick(labels.after));
-      writeJoin(tx, 'labels', taskId, labels);
+      writeLabels(tx, taskId, labels);
     }
 
     const subject = linkSubject(current, project.key);
@@ -1035,6 +991,7 @@ export function updateTask(
         move.guard.bypassed,
         input.reason,
       );
+      // Assignees set in the same request become the new stage's (the hand-off doesn't apply).
       enterStage(
         tx,
         actor,
@@ -1043,6 +1000,7 @@ export function updateTask(
         move.to,
         now,
         notified,
+        assigneesChanged ? { assignees: { users: users.after, roles: roles.after } } : {},
       );
     }
     if (changes.title || changes.description) {
@@ -1113,8 +1071,8 @@ function roleNames(tx: Tx, ids: readonly string[]): NamedRef[] {
 /**
  * Moves a task on the board: to another status and/or between two neighbours (`afterId` is the
  * card above, `beforeId` the card below; neither means the end of the column). Across columns it
- * is audited as a status change (with the done/open side effects); within a column as a position
- * change (1-based, top to bottom).
+ * is audited as a status change (with the stage's on-enter effects and hand-off); within a column
+ * as a position change (1-based, top to bottom).
  */
 export function moveTask(deps: AppDeps, actor: Actor, taskId: string, input: MoveTaskInput): Task {
   const { orm } = deps.db;

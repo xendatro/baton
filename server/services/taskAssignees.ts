@@ -1,7 +1,7 @@
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import { formatTaskRef } from '@shared/refs';
 import type { Actor } from '../context';
-import type { Tx } from '../db';
+import type { DbExecutor, Tx } from '../db';
 import * as s from '../db/schema';
 import { change } from '../lib/diff';
 import { recordActivity } from './activity';
@@ -16,13 +16,78 @@ import { emitAfterCommit } from './events';
  * `task.updated` event so open boards, task pages and work lists drop the assignee.
  */
 
+// ---------------------------------------------------------------------------------------------
+// Assignments per stage
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * Assignments belong to a task and a stage (`task_assignee_*.status_id`). A task's current
+ * assignees are its rows for its current status; rows of other statuses record who held it there.
+ * Inside a subquery on `task`, these conditions keep only the current stage's rows.
+ */
+export const currentUserRow = sql`${s.taskAssigneeUser.statusId} = ${s.task.statusId}`;
+export const currentRoleRow = sql`${s.taskAssigneeRole.statusId} = ${s.task.statusId}`;
+
+/** Users assigned to the task in `statusId` (directly). */
+export function stageUserIds(db: DbExecutor, taskId: string, statusId: string): string[] {
+  return db
+    .select({ id: s.taskAssigneeUser.userId })
+    .from(s.taskAssigneeUser)
+    .where(and(eq(s.taskAssigneeUser.taskId, taskId), eq(s.taskAssigneeUser.statusId, statusId)))
+    .all()
+    .map((row) => row.id);
+}
+
+/** Roles assigned to the task in `statusId`. */
+export function stageRoleIds(db: DbExecutor, taskId: string, statusId: string): string[] {
+  return db
+    .select({ id: s.taskAssigneeRole.roleId })
+    .from(s.taskAssigneeRole)
+    .where(and(eq(s.taskAssigneeRole.taskId, taskId), eq(s.taskAssigneeRole.statusId, statusId)))
+    .all()
+    .map((row) => row.id);
+}
+
+/** Replaces the task's assignees in `statusId` (inside the caller's write). */
+export function setStageAssignees(
+  tx: Tx,
+  taskId: string,
+  statusId: string,
+  userIds: readonly string[],
+  roleIds: readonly string[],
+): void {
+  tx.delete(s.taskAssigneeUser)
+    .where(and(eq(s.taskAssigneeUser.taskId, taskId), eq(s.taskAssigneeUser.statusId, statusId)))
+    .run();
+  tx.delete(s.taskAssigneeRole)
+    .where(and(eq(s.taskAssigneeRole.taskId, taskId), eq(s.taskAssigneeRole.statusId, statusId)))
+    .run();
+  if (userIds.length > 0) {
+    tx.insert(s.taskAssigneeUser)
+      .values([...new Set(userIds)].map((userId) => ({ taskId, statusId, userId })))
+      .run();
+  }
+  if (roleIds.length > 0) {
+    tx.insert(s.taskAssigneeRole)
+      .values([...new Set(roleIds)].map((roleId) => ({ taskId, statusId, roleId })))
+      .run();
+  }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Unassigning because of something outside the task
+// ---------------------------------------------------------------------------------------------
+
 export type UnassignReason = 'member_removed' | 'member_left' | 'account_deleted' | 'role_deleted';
 
 export type UnassignTarget = { userId: string } | { roleId: string };
 
 const CHUNK = 500;
 
-/** Assignee labels of each task, people then roles, each sorted (as `updateTask` records them). */
+/**
+ * Current-stage assignee labels of each task, people then roles, each sorted (as `updateTask`
+ * records them).
+ */
 function assigneeLabels(tx: Tx, taskIds: readonly string[]): Map<string, string[]> {
   const users = new Map<string, string[]>();
   const roles = new Map<string, string[]>();
@@ -32,7 +97,8 @@ function assigneeLabels(tx: Tx, taskIds: readonly string[]): Map<string, string[
       .select({ taskId: s.taskAssigneeUser.taskId, id: s.user.id, username: s.user.username })
       .from(s.taskAssigneeUser)
       .innerJoin(s.user, eq(s.user.id, s.taskAssigneeUser.userId))
-      .where(inArray(s.taskAssigneeUser.taskId, ids))
+      .innerJoin(s.task, eq(s.task.id, s.taskAssigneeUser.taskId))
+      .where(and(inArray(s.taskAssigneeUser.taskId, ids), currentUserRow))
       .all()) {
       users.set(row.taskId, [...(users.get(row.taskId) ?? []), `@${row.username ?? row.id}`]);
     }
@@ -40,7 +106,8 @@ function assigneeLabels(tx: Tx, taskIds: readonly string[]): Map<string, string[
       .select({ taskId: s.taskAssigneeRole.taskId, name: s.role.name })
       .from(s.taskAssigneeRole)
       .innerJoin(s.role, eq(s.role.id, s.taskAssigneeRole.roleId))
-      .where(inArray(s.taskAssigneeRole.taskId, ids))
+      .innerJoin(s.task, eq(s.task.id, s.taskAssigneeRole.taskId))
+      .where(and(inArray(s.taskAssigneeRole.taskId, ids), currentRoleRow))
       .all()) {
       roles.set(row.taskId, [...(roles.get(row.taskId) ?? []), `${row.name} (role)`]);
     }
@@ -52,10 +119,11 @@ function assigneeLabels(tx: Tx, taskIds: readonly string[]): Map<string, string[
 }
 
 /**
- * Removes the user's direct assignments on the team's tasks, or every assignment of the role,
- * inside the caller's write (before the user's membership or the role itself goes). Tasks in Trash
- * are included, so their history stays true if they are restored. Returns how many tasks lost the
- * assignee.
+ * Removes the user's direct assignments on the team's tasks, or every assignment of the role, in
+ * every stage, inside the caller's write (before the user's membership or the role itself goes).
+ * Tasks in Trash are included, so their history stays true if they are restored. Tasks whose
+ * current assignees change get the audit row and event. Returns how many tasks lost the assignee
+ * in their current stage.
  */
 export function unassignFromTasks(
   tx: Tx,
@@ -67,14 +135,14 @@ export function unassignFromTasks(
   const tasks =
     'userId' in target
       ? tx
-          .select({ task: s.task, key: s.project.key })
+          .selectDistinct({ task: s.task, key: s.project.key })
           .from(s.taskAssigneeUser)
           .innerJoin(s.task, eq(s.task.id, s.taskAssigneeUser.taskId))
           .innerJoin(s.project, eq(s.project.id, s.task.projectId))
           .where(and(eq(s.task.teamId, teamId), eq(s.taskAssigneeUser.userId, target.userId)))
           .all()
       : tx
-          .select({ task: s.task, key: s.project.key })
+          .selectDistinct({ task: s.task, key: s.project.key })
           .from(s.taskAssigneeRole)
           .innerJoin(s.task, eq(s.task.id, s.taskAssigneeRole.taskId))
           .innerJoin(s.project, eq(s.project.id, s.task.projectId))
@@ -109,14 +177,19 @@ export function unassignFromTasks(
   }
   const after = assigneeLabels(tx, ids);
 
+  let changed = 0;
   for (const { task, key } of tasks) {
+    const from = before.get(task.id) ?? [];
+    const to = after.get(task.id) ?? [];
+    if (from.length === to.length) continue; // Only an earlier stage's assignment went.
+    changed += 1;
     recordActivity(tx, actor, {
       teamId: task.teamId,
       projectId: task.projectId,
       entityType: 'task',
       entityId: task.id,
       action: 'task.updated',
-      changes: { assignees: change(before.get(task.id) ?? [], after.get(task.id) ?? []) },
+      changes: { assignees: change(from, to) },
       meta: { ref: formatTaskRef(key, task.number), title: task.title, reason },
     });
     emitAfterCommit(tx, {
@@ -128,5 +201,5 @@ export function unassignFromTasks(
       actorId: actor.userId,
     });
   }
-  return tasks.length;
+  return changed;
 }

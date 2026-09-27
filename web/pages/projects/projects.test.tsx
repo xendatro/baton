@@ -29,7 +29,15 @@ const summary: ProjectSummary = {
   description: 'The customer-facing web app',
   icon: null,
   color: '#0ea5e9',
-  counts: { openTasks: 3, doneTasks: 1, openIssues: 2, resolvedIssues: 0 },
+  counts: {
+    tasks: 4,
+    assignedTasks: 2,
+    completedTasks: 1,
+    openTasks: 3,
+    doneTasks: 1,
+    openIssues: 2,
+    resolvedIssues: 0,
+  },
   path: '/t/acme/p/WEB',
   createdAt: '2026-09-01T10:00:00.000Z',
   updatedAt: '2026-09-01T10:00:00.000Z',
@@ -46,7 +54,7 @@ const project: Project = {
       projectId: 'p1',
       name: 'Open',
       color: '#6b7280',
-      category: 'open',
+      icon: 'circle',
       position: 0,
       isDefault: true,
       taskCount: 3,
@@ -56,7 +64,7 @@ const project: Project = {
       projectId: 'p1',
       name: 'Done',
       color: '#22c55e',
-      category: 'done',
+      icon: 'check-circle',
       position: 1,
       isDefault: false,
       taskCount: 1,
@@ -102,7 +110,7 @@ describe('project layout', { timeout: 20_000 }, () => {
     expect(screen.getByRole('link', { name: 'Overview' })).toHaveAttribute('aria-current', 'page');
     expect(await screen.findByRole('button', { name: 'Write a README' }, LAZY)).toBeVisible();
     expect(screen.getByText('(was OLD)')).toBeVisible();
-    expect(screen.getByRole('progressbar', { name: 'Tasks done' })).toHaveAttribute(
+    expect(screen.getByRole('progressbar', { name: 'Tasks completed' })).toHaveAttribute(
       'aria-valuenow',
       '25',
     );

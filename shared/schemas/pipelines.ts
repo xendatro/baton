@@ -24,13 +24,15 @@ export const PIPELINE_LIMITS = {
 // ---------------------------------------------------------------------------------------------
 
 /**
- * What happens to the assignees when a task enters the stage: `keep` (nothing), `specific` (assign
- * the users of `rule`), `pool` (unassign; anyone matching `rule` may claim it), `round_robin` /
- * `least_busy` (one of `rule`'s users), `author`, `mover`, `stage_holder` (whoever held it when it
- * last left `statusId`).
+ * Who a task's assignees are in the stage it enters (assignments belong to a task and a stage):
+ * `keep` (the assignees it had in this stage on an earlier visit, else the previous stage's),
+ * `nobody` (no assignees here), `specific` (the users of `rule`), `pool` (nobody; anyone matching
+ * `rule` may claim it), `round_robin` / `least_busy` (one of `rule`'s users), `author`, `mover`,
+ * `stage_holder` (whoever held it in `statusId`).
  */
 export const HANDOFF_MODES = [
   'keep',
+  'nobody',
   'specific',
   'pool',
   'round_robin',
@@ -102,6 +104,17 @@ const criteriaListSchema = z
     'Each criterion needs its own id',
   );
 
+/** What entering the stage does besides the hand-off (all off by default). */
+export const onEnterRulesSchema = z.object({
+  /** Resolve the open issues the task `fixes`. */
+  resolveIssues: z.boolean(),
+  /** Release the task's claim. */
+  releaseClaim: z.boolean(),
+  /** Tell the task's author (and whoever held it in the stage it left) it reached this stage. */
+  notifyAuthor: z.boolean(),
+});
+export type OnEnterRules = z.infer<typeof onEnterRulesSchema>;
+
 export const stageRulesSchema = z.object({
   /** Markdown: what to do in this stage. */
   instructions: z.string().max(PIPELINE_LIMITS.instructions),
@@ -109,6 +122,15 @@ export const stageRulesSchema = z.object({
   handoff: handoffSchema,
   /** On enter: who is notified (not assigned). */
   notify: principalRuleSchema.nullable(),
+  /** On enter: resolve fixed issues, release the claim, tell the author. */
+  onEnter: onEnterRulesSchema,
+  /**
+   * A task in this stage still blocks the tasks waiting on it (default). Tasks in a stage that
+   * doesn't are "completed" (`completedAt`).
+   */
+  blocksDependents: z.boolean(),
+  /** `claim_next_task` may pick tasks in this stage, and `claim_task` works here (default). */
+  claimable: z.boolean(),
   /** To leave forward: each needs evidence text. */
   exitCriteria: criteriaListSchema,
   /** To leave forward: who may move it out (null: whoever may move tasks). */
@@ -128,6 +150,9 @@ export const DEFAULT_STAGE_RULES: StageRules = {
   instructions: '',
   handoff: { mode: 'keep' },
   notify: null,
+  onEnter: { resolveIssues: false, releaseClaim: false, notifyAuthor: false },
+  blocksDependents: true,
+  claimable: true,
   exitCriteria: [],
   moveRule: null,
   approvals: null,
@@ -141,6 +166,10 @@ export const stageRulesPatchSchema = z.object({
   instructions: z.string().max(PIPELINE_LIMITS.instructions).optional(),
   handoff: handoffSchema.optional(),
   notify: principalRuleSchema.nullable().optional(),
+  /** Only the flags given change. */
+  onEnter: onEnterRulesSchema.partial().optional(),
+  blocksDependents: z.boolean().optional(),
+  claimable: z.boolean().optional(),
   exitCriteria: criteriaListSchema.optional(),
   moveRule: principalRuleSchema.nullable().optional(),
   approvals: approvalsRuleSchema.nullable().optional(),
@@ -161,6 +190,11 @@ export function hasStageRules(rules: StageRules): boolean {
     isGatedStage(rules) ||
     rules.handoff.mode !== 'keep' ||
     rules.notify !== null ||
+    rules.onEnter.resolveIssues ||
+    rules.onEnter.releaseClaim ||
+    rules.onEnter.notifyAuthor ||
+    !rules.blocksDependents ||
+    !rules.claimable ||
     rules.autoAdvance ||
     rules.nextStatusId !== null ||
     !rules.allowSendBack

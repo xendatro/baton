@@ -66,8 +66,8 @@ export const NOTIFICATION_KINDS: Record<NotificationType, NotificationKind> = {
   },
   task_done: {
     icon: SquareCheckBigIcon,
-    verb: 'completed a task',
-    label: 'Task done',
+    verb: 'moved a task to a new stage',
+    label: 'Stage reached',
     tone: 'text-emerald-600 dark:text-emerald-400',
   },
   agent_action_request: {

@@ -32,11 +32,17 @@ beforeEach(() => {
   key = createApiKey(ctx.db, { userId: ada.id }).key;
   const { project } = createProject(ctx.db, { teamId, key: 'WEB' });
   const task = createTask(ctx.db, { project, title: 'Ship it' });
-  ctx.db.orm.insert(s.taskAssigneeUser).values({ taskId: task.id, userId: ada.id }).run();
+  ctx.db.orm
+    .insert(s.taskAssigneeUser)
+    .values({ taskId: task.id, statusId: task.statusId, userId: ada.id })
+    .run();
   // The key acts as Ada's agent (agents A): its work is what is assigned to the agent.
   const agentTask = createTask(ctx.db, { project, title: 'Write the tests' });
   const agent = createAgent(ctx.db, ada.id);
-  ctx.db.orm.insert(s.taskAssigneeUser).values({ taskId: agentTask.id, userId: agent.id }).run();
+  ctx.db.orm
+    .insert(s.taskAssigneeUser)
+    .values({ taskId: agentTask.id, statusId: agentTask.statusId, userId: agent.id })
+    .run();
 });
 
 afterEach(() => ctx.close());

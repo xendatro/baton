@@ -354,7 +354,7 @@ describe('getIssue', () => {
 
     const seen = getIssue(ctx.deps, actorOf(owner), issue.id);
     expect(seen.linkedTasks).toMatchObject([
-      { ref: 'API-1', title: 'Fix it', kind: 'fixes', status: { name: 'Open', category: 'open' } },
+      { ref: 'API-1', title: 'Fix it', kind: 'fixes', status: { name: 'Open', icon: 'circle' } },
       { ref: 'API-2', title: 'Related', kind: 'relates', path: '/t/acme/p/API/tasks/2' },
     ]);
     expect(seen).toMatchObject({ resolved: true, resolvedBy: { id: owner.id }, subscribed: false });

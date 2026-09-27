@@ -496,7 +496,7 @@ const updateTaskTool = defineTool({
   name: 'update_task',
   title: 'Update task',
   description:
-    'Changes any field of a task. Lists (assignees, assigneeRoles, labels, blockedBy, issues) take {set} or {add, remove}. Title and description need to be the author or EDIT_ANY_CONTENT; the rest the author or UPDATE_TASKS. A new status puts the task at the end of that column (use move_task to place it exactly); entering a done status resolves the issues it fixes, notifies the author and assignees and releases the claim. Your writes renew your claim.',
+    'Changes any field of a task. Lists (assignees, assigneeRoles, labels, blockedBy, issues) take {set} or {add, remove}. Title and description need to be the author or EDIT_ANY_CONTENT; the rest the author or UPDATE_TASKS. A new status puts the task at the end of that column (use move_task to place it exactly) and applies that stage’s rules (its hand-off decides the assignees there; onEnter may resolve the issues it fixes, notify the author and release the claim). Assignees are those of the task’s current stage; setting them together with a new status makes them the new stage’s assignees.',
   input: toolInput({
     task: taskRef,
     title: z.string().min(1).max(LIMITS.title.max).optional().describe('New title'),
@@ -581,7 +581,7 @@ const moveTaskTool = defineTool({
   name: 'move_task',
   title: 'Move task',
   description:
-    "Moves a task to another status and/or position on the board: right after `after`, right before `before`, or (neither) to the end of the column. Moving into a done status marks it finished: it resolves the issues it fixes, notifies the author and assignees, and releases your claim — the usual last step of your work. In a project with a pipeline, leaving a stage forward needs its exit criteria met (pass `evidence`), its approvals and the right mover; a refused move says exactly what is missing. Stages can't be skipped, and moving back only goes to the previous stage. Passing only `evidence` saves it without moving.",
+    "Moves a task to another status and/or position on the board: right after `after`, right before `before`, or (neither) to the end of the column. Entering a stage applies its rules: the hand-off decides who is assigned there (a finishing stage usually assigns nobody), and onEnter may resolve the issues it fixes, notify the author and release your claim — moving to such a stage (see list_statuses) is the usual last step of your work. In a project with a pipeline, leaving a stage forward needs its exit criteria met (pass `evidence`), its approvals and the right mover; a refused move says exactly what is missing. Stages can't be skipped, and moving back only goes to the previous stage. Passing only `evidence` saves it without moving.",
   input: toolInput({
     task: taskRef,
     status: statusRef.optional().describe('Target status (default: the current one)'),
@@ -706,7 +706,7 @@ const claimNextTool = defineTool({
   name: 'claim_next_task',
   title: 'Claim next task',
   description:
-    'Start here to pick up work. Atomically claims the best task you can work on in a project: open status, not blocked, not claimed by anyone else, matching the optional filters. Tasks assigned to you or your roles come first, then unassigned ones; then higher priority, earlier due date, lower number. Returns the full task (read its description, then work; post progress with add_reply; finish with move_task to a done status, which releases the claim) or task: null when nothing is eligible. The claim is held by you through this key until you release it (release_task), finish the task, or someone takes it over; claims do not expire.',
+    'Start here to pick up work. Atomically claims the best task you can work on in a project: in a claimable stage, not blocked, not claimed by anyone else, matching the optional filters. Tasks assigned to you or your roles (in their current stage) come first, then unassigned ones; then higher priority, earlier due date, lower number. Returns the full task (read its description, then work; post progress with add_reply; finish with move_task to the next stage, e.g. one that releases the claim) or task: null when nothing is eligible. The claim is held by you through this key until you release it (release_task), finish the task, or someone takes it over; claims do not expire.',
   input: toolInput({
     project: projectRef,
     role: z.string().optional().describe('Only tasks assigned to this role (name, slug or id)'),
@@ -723,7 +723,7 @@ const claimNextTool = defineTool({
       .describe('Only tasks assigned to you or one of your roles'),
     moveToStatus: statusRef
       .optional()
-      .describe('Move the claimed task to this open status, e.g. "In Progress"'),
+      .describe('Move the claimed task to this claimable stage, e.g. "In Progress"'),
     leaseMinutes: leaseField.optional(),
   }),
   annotations: { destructiveHint: false },
@@ -759,13 +759,13 @@ const claimTaskTool = defineTool({
   name: 'claim_task',
   title: 'Claim task',
   description:
-    "Claims a specific task (needs UPDATE_TASKS or being its author), telling everyone you are working on it. Claiming a task you already hold renews it. If someone else holds a valid claim it fails with who holds it, unless force: true, which takes the claim over (UPDATE_TASKS; audited as a takeover) — only do that when the holder has clearly stopped. A task in a done status must be moved to an open status (moveToStatus) to be claimed. A task waiting in a pipeline stage's pool (get_task's stage.pool) can be claimed by the pool's members only, and claiming assigns it to you.",
+    "Claims a specific task (needs UPDATE_TASKS or being its author), telling everyone you are working on it. Claiming a task you already hold renews it. If someone else holds a valid claim it fails with who holds it, unless force: true, which takes the claim over (UPDATE_TASKS; audited as a takeover) — only do that when the holder has clearly stopped. A task in a stage that isn't claimable (e.g. Done) must be moved to one that is (moveToStatus) to be claimed. A task waiting in a pipeline stage's pool (get_task's stage.pool) can be claimed by the pool's members only, and claiming assigns it to you.",
   input: toolInput({
     task: taskRef,
     force: z.boolean().optional().describe("Take over someone else's claim"),
     moveToStatus: statusRef
       .optional()
-      .describe('Move the task to this open status, e.g. "In Progress"'),
+      .describe('Move the task to this claimable stage, e.g. "In Progress"'),
     leaseMinutes: leaseField.optional(),
   }),
   annotations: { destructiveHint: false },
@@ -802,7 +802,7 @@ const releaseTaskTool = defineTool({
   name: 'release_task',
   title: 'Release task',
   description:
-    "Releases your claim so someone else can pick the task up (e.g. you are stopping before it is done). Add a note on what was done and what is left: it is posted as a reply. Not needed after moving the task to a done status, which releases it automatically. Releasing someone else's claim needs UPDATE_TASKS.",
+    "Releases your claim so someone else can pick the task up (e.g. you are stopping before it is done). Add a note on what was done and what is left: it is posted as a reply. Not needed after moving the task to a stage that releases claims (onEnter.releaseClaim). Releasing someone else's claim needs UPDATE_TASKS.",
   input: toolInput({
     task: taskRef,
     note: z

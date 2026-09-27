@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { LIMITS, STATUS_CATEGORIES } from '@shared/constants';
+import { LIMITS, STATUS_CATEGORIES, STATUS_ICONS } from '@shared/constants';
 import {
   createLabelInputSchema,
   createProjectInputSchema,
@@ -82,7 +82,7 @@ const getProjectTool = defineTool({
   name: 'get_project',
   title: 'Get project',
   description:
-    'Everything about a project: description, README (markdown), task statuses in board order (category open/done, which one is the default for new tasks), labels with usage counts, counts, previous keys and URL.',
+    'Everything about a project: description, README (markdown), task statuses (stages) in board order with their icon and rules (which one is the default for new tasks), labels with usage counts, counts, previous keys and URL.',
   input: toolInput({ project: projectRef }),
   annotations: { readOnlyHint: true },
   handler: (ctx, input) =>
@@ -194,11 +194,70 @@ const restoreProjectTool = defineTool({
   },
 });
 
+/** Stage behaviour an agent can set on a status (the full pipeline rules are edited on the web). */
+const stageFields = {
+  icon: z
+    .enum(STATUS_ICONS)
+    .optional()
+    .describe(`Icon shape: ${STATUS_ICONS.join(', ')}`),
+  handoff: z
+    .enum(['keep', 'nobody'])
+    .optional()
+    .describe(
+      'Who is assigned when a task enters: keep (its assignees there last time, else the previous stage’s) or nobody. Other hand-offs are set on the web.',
+    ),
+  onEnter: z
+    .strictObject({
+      resolveIssues: z.boolean().optional().describe('Resolve the issues the task fixes'),
+      releaseClaim: z.boolean().optional().describe('Release the claim'),
+      notifyAuthor: z.boolean().optional().describe('Tell the author it reached this stage'),
+    })
+    .optional()
+    .describe('What entering the stage does (only the flags given change)'),
+  blocksDependents: z
+    .boolean()
+    .optional()
+    .describe('Tasks here still block the tasks waiting on them (default true)'),
+  claimable: z
+    .boolean()
+    .optional()
+    .describe('claim_next_task / claim_task may take tasks here (default true)'),
+  category: z
+    .enum(STATUS_CATEGORIES)
+    .optional()
+    .describe('Deprecated and ignored: statuses have no open/done category any more'),
+};
+
+/** The stage fields as a rules patch (undefined when none is given). */
+function stageRulesPatch(input: {
+  handoff?: 'keep' | 'nobody' | undefined;
+  onEnter?:
+    | {
+        resolveIssues?: boolean | undefined;
+        releaseClaim?: boolean | undefined;
+        notifyAuthor?: boolean | undefined;
+      }
+    | undefined;
+  blocksDependents?: boolean | undefined;
+  claimable?: boolean | undefined;
+}) {
+  const onEnter = input.onEnter
+    ? Object.fromEntries(Object.entries(input.onEnter).filter(([, value]) => value !== undefined))
+    : undefined;
+  const patch = {
+    ...(input.handoff ? { handoff: { mode: input.handoff } } : {}),
+    ...(onEnter ? { onEnter } : {}),
+    ...(input.blocksDependents !== undefined ? { blocksDependents: input.blocksDependents } : {}),
+    ...(input.claimable !== undefined ? { claimable: input.claimable } : {}),
+  };
+  return Object.keys(patch).length > 0 ? patch : undefined;
+}
+
 const listStatusesTool = defineTool({
   name: 'list_statuses',
   title: 'List statuses',
   description:
-    'Task statuses of a project in board order: name, color, category (open or done; done counts as finished), whether it is the default for new tasks, and how many tasks it holds.',
+    'Task statuses (stages) of a project in board order: name, color, icon, whether it is the default for new tasks, how many tasks it holds, and its rules (hand-off, onEnter effects such as resolving fixed issues or releasing the claim, blocksDependents, claimable, exit criteria, approvals).',
   input: toolInput({ project: projectRef }),
   annotations: { readOnlyHint: true },
   handler: (ctx, input) => {
@@ -211,21 +270,19 @@ const createStatusTool = defineTool({
   name: 'create_status',
   title: 'Create status',
   description:
-    'Adds a task status at the end of the board (needs MANAGE_STATUSES). Category done means tasks in it count as finished.',
+    'Adds a task status (stage) at the end of the board (needs MANAGE_STATUSES). A stage is just a column unless you give it rules: e.g. a finishing stage has handoff nobody, onEnter { resolveIssues, releaseClaim, notifyAuthor }, blocksDependents false and claimable false.',
   input: toolInput({
     project: projectRef,
     name: z.string().min(1).max(LIMITS.statusName.max).describe('Status name, e.g. In review'),
-    category: z
-      .enum(STATUS_CATEGORIES)
-      .default('open')
-      .describe('open (work in progress or to do) or done (finished)'),
     color: colorField.optional(),
     isDefault: z.boolean().optional().describe('Make it the default status for new tasks'),
+    ...stageFields,
   }),
   annotations: { destructiveHint: false },
   handler: (ctx, input) => {
-    const { project, ...fields } = input;
-    const parsed = parseInput(createStatusInputSchema, fields);
+    const { project, handoff, onEnter, blocksDependents, claimable, ...fields } = input;
+    const rules = stageRulesPatch({ handoff, onEnter, blocksDependents, claimable });
+    const parsed = parseInput(createStatusInputSchema, { ...fields, ...(rules ? { rules } : {}) });
     return createStatus(ctx.deps, ctx.actor, projectContext(ctx, project).id, parsed);
   },
 });
@@ -234,13 +291,13 @@ const updateStatusTool = defineTool({
   name: 'update_status',
   title: 'Update status',
   description:
-    'Renames, recolors or recategorizes a status, or makes it the default for new tasks (needs MANAGE_STATUSES). Changing the category marks all its tasks finished (done) or unfinished (open).',
+    'Renames a status, changes its color, icon or stage behaviour, or makes it the default for new tasks (needs MANAGE_STATUSES). Changing blocksDependents marks its tasks completed (false) or not (true).',
   input: toolInput({
     project: projectRef,
     status: statusRef,
     name: z.string().optional().describe('New name'),
     color: colorField.optional(),
-    category: z.enum(STATUS_CATEGORIES).optional().describe('open or done'),
+    ...stageFields,
     isDefault: z
       .literal(true)
       .optional()
@@ -248,10 +305,11 @@ const updateStatusTool = defineTool({
   }),
   annotations: { destructiveHint: false },
   handler: (ctx, input) => {
-    const { project, status, ...fields } = input;
+    const { project, status, handoff, onEnter, blocksDependents, claimable, ...fields } = input;
     const projectId = projectContext(ctx, project).id;
     const statusId = resolveStatus(ctx.deps.db.orm, projectId, status).id;
-    const parsed = parseInput(updateStatusInputSchema, fields);
+    const rules = stageRulesPatch({ handoff, onEnter, blocksDependents, claimable });
+    const parsed = parseInput(updateStatusInputSchema, { ...fields, ...(rules ? { rules } : {}) });
     return updateStatus(ctx.deps, ctx.actor, statusId, parsed);
   },
 });

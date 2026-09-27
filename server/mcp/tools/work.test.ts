@@ -43,7 +43,10 @@ beforeEach(() => {
     ] as const) {
       const task = createTask(ctx.db, { project, title });
       ctx.db.orm.update(s.task).set({ priority }).where(eq(s.task.id, task.id)).run();
-      ctx.db.orm.insert(s.taskAssigneeUser).values({ taskId: task.id, userId: ada.id }).run();
+      ctx.db.orm
+        .insert(s.taskAssigneeUser)
+        .values({ taskId: task.id, statusId: task.statusId, userId: ada.id })
+        .run();
     }
   }
 });

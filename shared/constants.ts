@@ -249,18 +249,63 @@ export type UserKind = (typeof USER_KINDS)[number];
 export const ACTOR_SOURCES = ['web', 'mcp', 'api', 'system'] as const;
 export type ActorSource = (typeof ACTOR_SOURCES)[number];
 
+/**
+ * Legacy (before 2026-09-27 "stages"): statuses were `open` or `done`. The `status.category` column
+ * is kept only so old databases migrate; nothing reads it. Old clients may still send `category`,
+ * which is accepted and ignored.
+ */
 export const STATUS_CATEGORIES = ['open', 'done'] as const;
 export type StatusCategory = (typeof STATUS_CATEGORIES)[number];
 
-/** Statuses every new project starts with. Exactly one is the default. */
+/** Shapes a status's icon can take (drawn in the status's color). */
+export const STATUS_ICONS = [
+  'circle',
+  'dashed-circle',
+  'half-circle',
+  'dot-circle',
+  'check-circle',
+  'x-circle',
+  'pause-circle',
+  'square',
+  'triangle',
+  'diamond',
+  'star',
+  'flag',
+] as const;
+export type StatusIconShape = (typeof STATUS_ICONS)[number];
+export const DEFAULT_STATUS_ICON: StatusIconShape = 'circle';
+
+/**
+ * The rules of the seeded "Done" stage (and of every former `done` status after migration 0012):
+ * entering it resolves the issues the task fixes, releases the claim and tells the author; nobody
+ * is assigned there, it doesn't block the tasks waiting on it and it can't be claimed.
+ */
+export const FINISHED_STAGE_RULES = {
+  handoff: { mode: 'nobody' as const },
+  onEnter: { resolveIssues: true, releaseClaim: true, notifyAuthor: true },
+  blocksDependents: false,
+  claimable: false,
+};
+
+/**
+ * Statuses every new project starts with: ordinary stages that can be renamed, recolored,
+ * reordered or deleted. Exactly one is the default.
+ */
 export const DEFAULT_STATUSES: ReadonlyArray<{
   name: string;
   color: string;
-  category: StatusCategory;
+  icon: StatusIconShape;
   isDefault: boolean;
+  rules: typeof FINISHED_STAGE_RULES | null;
 }> = [
-  { name: 'Open', color: '#6b7280', category: 'open', isDefault: true },
-  { name: 'Done', color: '#22c55e', category: 'done', isDefault: false },
+  { name: 'Open', color: '#6b7280', icon: 'circle', isDefault: true, rules: null },
+  {
+    name: 'Done',
+    color: '#22c55e',
+    icon: 'check-circle',
+    isDefault: false,
+    rules: FINISHED_STAGE_RULES,
+  },
 ];
 
 export const PRIORITY_VALUES = [0, 1, 2, 3, 4] as const;
@@ -331,6 +376,7 @@ export const NOTIFICATION_TYPES = [
   'reply',
   'issue_resolved',
   'issue_reopened',
+  /** A task reached a stage with `onEnter.notifyAuthor` ("Reached <stage>"; the name is historical). */
   'task_done',
   /** An agent asks its owner to sign off a destructive action (design §6); always delivered. */
   'agent_action_request',

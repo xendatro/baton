@@ -42,15 +42,17 @@ import {
   type TaskAccess,
   type TaskRow,
 } from './tasks';
+import { currentRoleRow } from './taskAssignees';
 import { assignedTo, isBlocked, isUnassigned } from './taskViews';
 import { getUserSummaries, getViaKeys } from './users';
 
 /**
  * Claims (SPEC §1.8): "(user, key) is actively working on this task". Agents claim the next
  * eligible task in one `BEGIN IMMEDIATE` transaction, so parallel callers never get the same
- * task. A claim is held until it is released, taken over, or the task reaches a done status
- * (claims don't expire since 2026-09-27; the sweeper in jobs/claims.ts only clears claims of
- * deleted accounts). Claiming and releasing need
+ * task. A claim is held until it is released, taken over, or the task enters a stage that
+ * releases claims (`onEnter.releaseClaim`) or hands it to someone else (claims don't expire since
+ * 2026-09-27; the sweeper in jobs/claims.ts only clears claims of deleted accounts). Only tasks in
+ * `claimable` stages are claimed. Claiming and releasing need
  * `UPDATE_TASKS` (or being the task's author); taking over someone else's claim needs
  * `UPDATE_TASKS` and is audited as a takeover.
  */
@@ -157,12 +159,12 @@ function moveOnClaim(
   };
 }
 
-/** The status to move claimed tasks to; it must be an open-category status of the project. */
-function requireOpenStatus(tx: Tx, projectId: string, statusId: string) {
+/** The status to move claimed tasks to; it must be a claimable stage of the project. */
+function requireClaimableStatus(tx: Tx, projectId: string, statusId: string) {
   const status = statusOfProject(tx, projectId, statusId);
-  if (status.category !== 'open') {
+  if (!status.claimable) {
     throw errors.validation(
-      `${status.name} is a done status; claimed tasks can only move to an open status`,
+      `Tasks in ${status.name} can’t be claimed; move claimed tasks to a stage where they can`,
     );
   }
   return status;
@@ -176,9 +178,9 @@ function requireOpenStatus(tx: Tx, projectId: string, statusId: string) {
 const CANDIDATES = 200;
 
 /**
- * Claims the best eligible task of a project, atomically: in an open-category status, not
- * blocked, not validly claimed, matching the filters. Tasks assigned to the caller (or their
- * roles) come first, then unassigned ones, then the rest; within those, higher priority, earlier
+ * Claims the best eligible task of a project, atomically: in a claimable stage, not blocked, not
+ * validly claimed, matching the filters. Tasks assigned to the caller (or their roles) in their
+ * current stage come first, then unassigned ones, then the rest; within those, higher priority, earlier
  * due date (none last) and lower number first. Returns `{ task: null }` when none is eligible.
  */
 export function claimNextTask(
@@ -210,7 +212,7 @@ export function claimNextTask(
 
   const claimedId = deps.db.write((tx) => {
     const now = new Date();
-    if (input.moveToStatusId) requireOpenStatus(tx, projectId, input.moveToStatusId);
+    if (input.moveToStatusId) requireClaimableStatus(tx, projectId, input.moveToStatusId);
     const candidates = tx
       .select()
       .from(s.task)
@@ -219,11 +221,11 @@ export function claimNextTask(
         and(
           eq(s.task.projectId, projectId),
           isNull(s.task.deletedAt),
-          eq(s.status.category, 'open'),
+          eq(s.status.claimable, true),
           isNull(s.task.claimedById),
           sql`not ${isBlocked}`,
           input.roleId
-            ? sql`exists (select 1 from ${s.taskAssigneeRole} where ${s.taskAssigneeRole.taskId} = ${s.task.id} and ${s.taskAssigneeRole.roleId} = ${input.roleId})`
+            ? sql`exists (select 1 from ${s.taskAssigneeRole} where ${s.taskAssigneeRole.taskId} = ${s.task.id} and ${currentRoleRow} and ${s.taskAssigneeRole.roleId} = ${input.roleId})`
             : undefined,
           input.labelId
             ? sql`exists (select 1 from ${s.taskLabel} where ${s.taskLabel.taskId} = ${s.task.id} and ${s.taskLabel.labelId} = ${input.labelId})`
@@ -297,7 +299,7 @@ function heldMessage(tx: Tx, task: TaskRow, ref: string): string {
 /**
  * Claims a specific task. Claiming a task you already hold renews it. A claim held by someone
  * else fails unless `force` (needs `UPDATE_TASKS`; audited as `task.claim_taken_over`). A task in
- * a done status must be moved to an open status (`moveToStatusId`) to be claimed.
+ * a stage that isn't claimable must be moved to one that is (`moveToStatusId`) to be claimed.
  */
 export function claimTask(
   deps: AppDeps,
@@ -334,10 +336,10 @@ export function claimTask(
       );
     }
     const status = statusOfProject(tx, project.id, task.statusId);
-    if (input.moveToStatusId) requireOpenStatus(tx, project.id, input.moveToStatusId);
-    else if (status.category === 'done') {
+    if (input.moveToStatusId) requireClaimableStatus(tx, project.id, input.moveToStatusId);
+    else if (!status.claimable) {
       throw errors.conflict(
-        `${ref} is ${status.name} (done). To work on it, claim it with an open status to move it to.`,
+        `Tasks in ${status.name} can’t be claimed. To work on ${ref}, claim it together with a stage to move it to, one where tasks can be claimed.`,
       );
     }
     const previousHolder = takeover ? holderLabel(tx, task) : null;

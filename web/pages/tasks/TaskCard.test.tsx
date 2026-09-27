@@ -11,7 +11,7 @@ const base: TaskCard = {
   title: 'Fix the login redirect',
   projectId: 'p',
   teamId: 't',
-  status: { id: 's', name: 'Todo', color: '#0ea5e9', category: 'open' },
+  status: { id: 's', name: 'Todo', color: '#0ea5e9', icon: 'circle' },
   priority: 4,
   dueDate: '2020-01-01',
   labels: [{ id: 'l', name: 'Bug', color: '#ef4444' }],
@@ -76,7 +76,8 @@ describe('TaskCardBody', () => {
         <TaskCardBody
           task={{
             ...base,
-            status: { id: 'd', name: 'Done', color: '#22c55e', category: 'done' },
+            status: { id: 'd', name: 'Done', color: '#22c55e', icon: 'check-circle' },
+            completedAt: '2030-01-02T00:00:00.000Z',
             blocked: false,
             blockers: [],
             claim: null,

@@ -8,6 +8,7 @@ import * as s from '../db/schema';
 import { newId } from '../lib/ids';
 import { generateApiKey } from '../lib/security';
 import { ensureAgent, findAgentId } from '../services/agents';
+import { seedStatusColumns } from '../services/pipelines';
 
 /**
  * Test data factories. They insert rows directly (bypassing services) using the same seeds the
@@ -234,7 +235,7 @@ export function createProject(db: Database, options: CreateProjectOptions): Crea
     const statuses = DEFAULT_STATUSES.map((seed, position) =>
       tx
         .insert(s.status)
-        .values({ projectId: project.id, ...seed, position })
+        .values({ projectId: project.id, ...seedStatusColumns(seed), position })
         .returning()
         .get(),
     );
@@ -407,13 +408,16 @@ export function createTask(
   options: CreateItemOptions & { statusId?: string },
 ): TaskRow {
   const n = nextSequence();
-  const statusId =
-    options.statusId ??
-    db.orm
-      .select({ id: s.status.id })
-      .from(s.status)
-      .where(and(eq(s.status.projectId, options.project.id), eq(s.status.isDefault, true)))
-      .get()?.id;
+  const status = db.orm
+    .select({ id: s.status.id, blocksDependents: s.status.blocksDependents })
+    .from(s.status)
+    .where(
+      options.statusId
+        ? eq(s.status.id, options.statusId)
+        : and(eq(s.status.projectId, options.project.id), eq(s.status.isDefault, true)),
+    )
+    .get();
+  const statusId = status?.id;
   if (!statusId) throw new Error('project has no default status');
   return db.orm
     .insert(s.task)
@@ -426,6 +430,8 @@ export function createTask(
       statusId,
       position: `a${n}`,
       authorId: options.authorId ?? null,
+      // Completed while in a stage that doesn't block its dependents (as the tasks service does).
+      completedAt: status.blocksDependents ? null : new Date(),
     })
     .returning()
     .get();

@@ -25,6 +25,7 @@ import {
   type UserRow,
 } from '../test/helpers';
 import { claimNextTask, claimTask, expireClaims, releaseTask, renewClaim } from './claims';
+import { updateStatus } from './statuses';
 import { createTask, getTask, updateTask } from './tasks';
 
 let ctx: TestContext;
@@ -156,7 +157,6 @@ describe('claim_next_task', () => {
         projectId: project.project.id,
         name: 'In Progress',
         color: '#f59e0b',
-        category: 'open',
         position: 2,
       })
       .returning()
@@ -171,7 +171,9 @@ describe('claim_next_task', () => {
     expect(task?.claim?.expiresAt).toBeNull();
     expect(actions(task?.id ?? '')).toEqual(['task.created', 'task.moved', 'task.claimed']);
     expect(events.map((e) => e.type)).toContain('task.claimed');
-    expect(() => next(miaAgent, { moveToStatusId: statusId(doneStatus) })).toThrow(/open status/);
+    expect(() => next(miaAgent, { moveToStatusId: statusId(doneStatus) })).toThrow(
+      /can’t be claimed/,
+    );
   });
 
   it('needs UPDATE_TASKS', async () => {
@@ -271,13 +273,30 @@ describe('claim_task', () => {
     expect(() => claimTask(ctx.deps, web(mia), own.id, { force: true })).toThrow(/Update tasks/);
   });
 
-  it('refuses done tasks unless moved to an open status', () => {
+  it('refuses tasks in a stage that isn’t claimable unless moved to one that is', () => {
     const task = newTask('Finished', { statusId: statusId(doneStatus) });
-    expect(() => claimTask(ctx.deps, miaAgent, task.id, {})).toThrow(/done/);
+    expect(() => claimTask(ctx.deps, miaAgent, task.id, {})).toThrow(
+      /Tasks in Done can’t be claimed/,
+    );
     const reopened = claimTask(ctx.deps, miaAgent, task.id, {
       moveToStatusId: statusId(openStatus),
     });
     expect(reopened).toMatchObject({ status: { name: 'Open' }, completedAt: null });
+  });
+
+  it('follows the claimable rule, not the stage’s name or place', () => {
+    // A stage that can't be claimed: claim_task refuses it, claim_next_task skips it.
+    updateStatus(ctx.deps, web(owner), statusId(openStatus), { rules: { claimable: false } });
+    const waiting = newTask('Waiting');
+    expect(() => claimTask(ctx.deps, miaAgent, waiting.id, {})).toThrow(/can’t be claimed/);
+    expect(next(miaAgent)).toBeNull();
+    expect(() => next(miaAgent, { moveToStatusId: statusId(openStatus) })).toThrow(
+      /can’t be claimed/,
+    );
+    // Done made claimable: its tasks can be claimed like any other.
+    updateStatus(ctx.deps, web(owner), statusId(doneStatus), { rules: { claimable: true } });
+    const finished = newTask('Finished', { statusId: statusId(doneStatus) });
+    expect(next(miaAgent)?.id).toBe(finished.id);
   });
 });
 
@@ -353,7 +372,7 @@ describe('release_task', () => {
     expect(row?.meta).toMatchObject({ previousHolder: '@bob (web)' });
   });
 
-  it('releases automatically when the task enters a done status', () => {
+  it('releases automatically when the task enters a stage with onEnter.releaseClaim', () => {
     const task = newTask('Almost');
     claimTask(ctx.deps, miaAgent, task.id, {});
     const finished = updateTask(ctx.deps, miaAgent, task.id, { statusId: statusId(doneStatus) });
@@ -369,6 +388,17 @@ describe('release_task', () => {
       .from(s.activity)
       .where(eq(s.activity.action, 'task.released'))
       .get();
-    expect(released?.meta).toMatchObject({ reason: 'done' });
+    expect(released?.meta).toMatchObject({ reason: 'stage', stage: 'Done' });
+  });
+
+  it('keeps the claim when the stage entered doesn’t release it', () => {
+    updateStatus(ctx.deps, web(owner), statusId(doneStatus), {
+      rules: { onEnter: { releaseClaim: false } },
+    });
+    const task = newTask('Almost');
+    claimTask(ctx.deps, miaAgent, task.id, {});
+    const moved = updateTask(ctx.deps, miaAgent, task.id, { statusId: statusId(doneStatus) });
+    expect(moved.claim?.user.username).toBe('mia');
+    expect(actions(task.id)).not.toContain('task.released');
   });
 });

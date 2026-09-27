@@ -119,7 +119,9 @@ export const teamProjectCardSchema = z.object({
   description: z.string(),
   icon: z.string().nullable(),
   color: z.string(),
-  /** Tasks in an open-category status. */
+  /** Tasks someone (a member or a role) is assigned to in their current stage. */
+  assignedTasks: z.number().int().nonnegative(),
+  /** Deprecated (older clients): tasks not completed (in a stage that blocks its dependents). */
   openTasks: z.number().int().nonnegative(),
   /** Unresolved issues. */
   openIssues: z.number().int().nonnegative(),

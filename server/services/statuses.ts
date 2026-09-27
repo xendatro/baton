@@ -1,5 +1,6 @@
 import { and, asc, count, desc, eq, isNull, sql } from 'drizzle-orm';
 import { generateNKeysBetween } from 'fractional-indexing';
+import { DEFAULT_STATUS_ICON } from '@shared/constants';
 import {
   PROJECT_LIMITS,
   type CreateStatusInput,
@@ -24,13 +25,15 @@ import { queueLinkedIssueEvents } from './linkEvents';
 import { enterStage, mergeRules, ruleChanges, ruleColumns, rulesOf } from './pipelines';
 import { requireProject, type ProjectRow } from './projects';
 import { requireSignoff } from './signoff';
+import { setStageAssignees, stageRoleIds, stageUserIds } from './taskAssignees';
 import { applyStatusTransition, taskMeta, type TaskRow } from './tasks';
 
 /**
- * Task statuses (SPEC §1.5): per project, ordered, each `open` or `done`, exactly one default for
- * new tasks. Every change needs `MANAGE_STATUSES`. A status's category decides whether its tasks
- * count as completed, so recategorizing sets or clears `task.completedAt`; deleting a status moves
- * its tasks to another one.
+ * Task statuses (SPEC §1.5): per project, ordered, exactly one default for new tasks. They are
+ * stages with no hidden category: what entering one does, whether its tasks block their
+ * dependents or can be claimed, and who is assigned there are its stage rules (pipelines). Every
+ * change needs `MANAGE_STATUSES`. Changing `blocksDependents` sets or clears `task.completedAt` of
+ * its tasks; deleting a status moves its tasks to another one.
  */
 
 export type StatusRow = typeof s.status.$inferSelect;
@@ -63,7 +66,7 @@ function toStatus(row: StatusRow, taskCount: number): Status {
     projectId: row.projectId,
     name: row.name,
     color: row.color,
-    category: row.category,
+    icon: row.icon,
     position: row.position,
     isDefault: row.isDefault,
     taskCount,
@@ -139,16 +142,17 @@ function setDefault(tx: Tx, projectId: string, statusId: string): void {
 }
 
 /**
- * Sets (`done`) or clears (`open`) the completion time of every task in the status, deleted ones
- * included so a restored task is consistent. Returns how many live tasks changed state.
+ * Sets (the stage no longer blocks its dependents) or clears (it does) the completion time of every
+ * task in the status, deleted ones included so a restored task is consistent. Returns how many
+ * live tasks changed state.
  */
-function syncCompletion(tx: Tx, statusId: string, category: 'open' | 'done'): number {
+export function syncCompletion(tx: Tx, statusId: string, blocksDependents: boolean): number {
   const live = tx
     .select({ n: count() })
     .from(s.task)
     .where(and(eq(s.task.statusId, statusId), isNull(s.task.deletedAt)))
     .get();
-  if (category === 'done') {
+  if (!blocksDependents) {
     tx.update(s.task)
       .set({ completedAt: new Date() })
       .where(and(eq(s.task.statusId, statusId), isNull(s.task.completedAt)))
@@ -189,7 +193,7 @@ export function createStatus(
         projectId,
         name: input.name,
         color: input.color ?? DEFAULT_STATUS_COLOR,
-        category: input.category,
+        icon: input.icon ?? DEFAULT_STATUS_ICON,
         position: (existing[0]?.position ?? -1) + 1,
         isDefault: false,
         createdAt: now,
@@ -216,8 +220,8 @@ export function createStatus(
       action: 'status.created',
       meta: {
         name: row.name,
-        category: row.category,
         color: row.color,
+        icon: row.icon,
         ...(input.isDefault ? { isDefault: true } : {}),
       },
     });
@@ -228,9 +232,9 @@ export function createStatus(
 }
 
 /**
- * Renames, recolors or recategorizes a status, or makes it the default (`MANAGE_STATUSES`).
- * A category change marks its tasks completed (`done`) or not (`open`) and is audited once, with
- * the number of tasks affected.
+ * Renames a status, changes its color, icon or rules, or makes it the default
+ * (`MANAGE_STATUSES`). `category` (legacy) is ignored. Changing `blocksDependents` marks its tasks
+ * completed or not and is audited once, with the number of tasks affected.
  */
 export function updateStatus(
   deps: AppDeps,
@@ -240,7 +244,7 @@ export function updateStatus(
 ): Status {
   const { orm } = deps.db;
   const { status, project } = requireManageableStatus(deps, actor, statusId);
-  const { rules: rulesPatch, ...fields } = input;
+  const { rules: rulesPatch, category: _legacy, ...fields } = input;
   const changes = diffFields(status, fields);
   const scope = { teamId: project.teamId, projectId: project.id };
   // Pipeline rules (design §5): validated against the project, audited in words.
@@ -264,14 +268,16 @@ export function updateStatus(
       .set({
         ...(input.name !== undefined ? { name: input.name } : {}),
         ...(input.color !== undefined ? { color: input.color } : {}),
-        ...(input.category !== undefined ? { category: input.category } : {}),
+        ...(input.icon !== undefined ? { icon: input.icon } : {}),
         ...(rules ? ruleColumns(rules) : {}),
         updatedAt: new Date(),
       })
       .where(eq(s.status.id, statusId))
       .run();
     const tasksAffected =
-      changes.category && input.category ? syncCompletion(tx, statusId, input.category) : null;
+      rules && changes.blocksDependents
+        ? syncCompletion(tx, statusId, rules.blocksDependents)
+        : null;
     recordActivity(tx, actor, {
       teamId: project.teamId,
       projectId: project.id,
@@ -354,10 +360,10 @@ export function reorderStatuses(
 /**
  * Deletes a status (`MANAGE_STATUSES`), moving its tasks to the end of `moveTo`'s column. The last
  * status can't be deleted; deleting the default makes `moveTo` the default. The deletion is audited
- * on the status (with the number of tasks moved), and each moved live task like any other move:
- * a `task.moved` row (`meta.reason: 'status_deleted'`) and, when the category changes, the
- * transition's side effects (entering done resolves its `fixes` issues, notifies `task_done` and
- * releases its claim; leaving done clears `completedAt`). Tasks in Trash just follow the status.
+ * on the status (with the number of tasks moved), and each moved live task enters `moveTo` like
+ * any other move: a `task.moved` row (`meta.reason: 'status_deleted'`), `moveTo`'s on-enter
+ * effects and hand-off (no exit rules are checked). Tasks in Trash just follow the status, taking
+ * their assignees along. The deleted stage's assignment history goes with it.
  */
 export function deleteStatus(
   deps: AppDeps,
@@ -397,7 +403,7 @@ export function deleteStatus(
     if (statuses.length <= 1) throw errors.conflict("A project's last status can't be deleted");
     const target = statuses.find((row) => row.id === query.moveTo);
     if (!target) throw errors.notFound('Status to move the tasks to');
-    // Re-read under the write lock: the category may have changed since the access check.
+    // Re-read under the write lock: the rules may have changed since the access check.
     const source = statuses.find((row) => row.id === statusId) ?? status;
 
     const tasks = tx
@@ -418,10 +424,23 @@ export function deleteStatus(
       const patch: Partial<TaskRow> = {
         statusId: target.id,
         ...(positions[index] ? { position: positions[index] } : {}),
-        completedAt: target.category === 'done' ? (task.completedAt ?? now) : null,
+        completedAt: target.blocksDependents ? null : (task.completedAt ?? now),
       };
       if (task.deletedAt) {
         tx.update(s.task).set(patch).where(eq(s.task.id, task.id)).run();
+        // Its assignees go with it (unless it already has some in `moveTo`).
+        if (
+          stageUserIds(tx, task.id, target.id).length === 0 &&
+          stageRoleIds(tx, task.id, target.id).length === 0
+        ) {
+          setStageAssignees(
+            tx,
+            task.id,
+            target.id,
+            stageUserIds(tx, task.id, source.id),
+            stageRoleIds(tx, task.id, source.id),
+          );
+        }
         continue;
       }
       const transition = applyStatusTransition(
@@ -480,7 +499,6 @@ export function deleteStatus(
       action: 'status.deleted',
       meta: {
         name: source.name,
-        category: source.category,
         movedTo: target.name,
         movedTasks: moved.length,
         ...(source.isDefault ? { newDefault: target.name } : {}),

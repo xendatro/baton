@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { ISSUE_LINK_KINDS, LIMITS, STATUS_CATEGORIES } from '../constants';
+import { ISSUE_LINK_KINDS, LIMITS, STATUS_ICONS } from '../constants';
 import {
   cursorPaginationSchema,
   idSchema,
@@ -86,13 +86,16 @@ export const linkedTaskSchema = z.object({
   /** `KEY-12`. */
   ref: z.string(),
   title: z.string(),
-  /** `fixes`: the issue resolves when the task is done; `relates`: no automation. */
+  /**
+   * `fixes`: the issue resolves when the task enters a stage that resolves fixed issues;
+   * `relates`: no automation.
+   */
   kind: z.enum(ISSUE_LINK_KINDS),
   status: z.object({
     id: z.string(),
     name: z.string(),
     color: z.string(),
-    category: z.enum(STATUS_CATEGORIES),
+    icon: z.enum(STATUS_ICONS),
   }),
   path: z.string(),
 });

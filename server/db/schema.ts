@@ -38,6 +38,7 @@ import {
   REACTION_TARGET_TYPES,
   REPLY_PARENT_TYPES,
   STATUS_CATEGORIES,
+  STATUS_ICONS,
   SUBSCRIBABLE_TYPES,
   THEMES,
   USER_KINDS,
@@ -51,6 +52,7 @@ import type {
   ApprovalsRule,
   ExitCriterion,
   Handoff,
+  OnEnterRules,
 } from '../../shared/schemas/pipelines';
 import type { FieldChange } from '../../shared/schemas/core';
 import { newId } from '../lib/ids';
@@ -489,7 +491,15 @@ export const status = sqliteTable(
       .references(() => project.id, { onDelete: 'cascade' }),
     name: text('name').notNull(),
     color: text('color').notNull(),
-    category: text('category', { enum: STATUS_CATEGORIES }).notNull(),
+    /**
+     * Legacy (open/done before 2026-09-27): unused. Kept so old databases migrate without
+     * rebuilding the table; new rows get 'open'.
+     */
+    category: text('category', { enum: STATUS_CATEGORIES })
+      .notNull()
+      .$defaultFn(() => 'open'),
+    /** Icon shape, drawn in `color`. */
+    icon: text('icon', { enum: STATUS_ICONS }).notNull().default('circle'),
     /** Column order, ascending. */
     position: integer('position').notNull(),
     isDefault: bool('is_default').notNull().default(false),
@@ -500,6 +510,12 @@ export const status = sqliteTable(
     handoff: text('handoff', { mode: 'json' }).$type<Handoff>(),
     /** On enter: who is notified. */
     notify: text('notify', { mode: 'json' }).$type<PrincipalRule>(),
+    /** On enter: resolve fixed issues, release the claim, tell the author (null: none). */
+    onEnter: text('on_enter', { mode: 'json' }).$type<Partial<OnEnterRules>>(),
+    /** Tasks here still block the tasks waiting on them. */
+    blocksDependents: bool('blocks_dependents').notNull().default(true),
+    /** `claim_next_task` / `claim_task` may take tasks here. */
+    claimable: bool('claimable').notNull().default(true),
     /** To leave forward: each needs evidence. */
     exitCriteria: text('exit_criteria', { mode: 'json' })
       .$type<ExitCriterion[]>()
@@ -637,7 +653,10 @@ export const task = sqliteTable(
     }),
     claimedAt: timestamp('claimed_at'),
     claimExpiresAt: timestamp('claim_expires_at'),
-    /** Set when the task enters a `done` status, cleared when it leaves. */
+    /**
+     * Set when the task enters a stage that doesn't block its dependents (`blocks_dependents` 0),
+     * cleared when it enters one that does.
+     */
     completedAt: timestamp('completed_at'),
     /**
      * Who may claim it while it waits in a `pool` hand-off stage (design §5); cleared when it is
@@ -683,19 +702,28 @@ export const taskLabel = sqliteTable(
   ],
 );
 
+/**
+ * Assignments belong to a task and a stage: a task's current assignees are its rows for its
+ * current status; rows of other statuses are who held it there (history, `stage_holder`, and
+ * restored when it returns to that stage).
+ */
 export const taskAssigneeUser = sqliteTable(
   'task_assignee_user',
   {
     taskId: text('task_id')
       .notNull()
       .references(() => task.id, { onDelete: 'cascade' }),
+    statusId: text('status_id')
+      .notNull()
+      .references(() => status.id, { onDelete: 'cascade' }),
     userId: text('user_id')
       .notNull()
       .references(() => user.id, { onDelete: 'cascade' }),
   },
   (t) => [
-    primaryKey({ columns: [t.taskId, t.userId] }),
+    primaryKey({ columns: [t.taskId, t.statusId, t.userId] }),
     index('task_assignee_user_user_idx').on(t.userId),
+    index('task_assignee_user_status_idx').on(t.statusId),
   ],
 );
 
@@ -705,13 +733,17 @@ export const taskAssigneeRole = sqliteTable(
     taskId: text('task_id')
       .notNull()
       .references(() => task.id, { onDelete: 'cascade' }),
+    statusId: text('status_id')
+      .notNull()
+      .references(() => status.id, { onDelete: 'cascade' }),
     roleId: text('role_id')
       .notNull()
       .references(() => role.id, { onDelete: 'cascade' }),
   },
   (t) => [
-    primaryKey({ columns: [t.taskId, t.roleId] }),
+    primaryKey({ columns: [t.taskId, t.statusId, t.roleId] }),
     index('task_assignee_role_role_idx').on(t.roleId),
+    index('task_assignee_role_status_idx').on(t.statusId),
   ],
 );
 

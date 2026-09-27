@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { LIMITS, STATUS_CATEGORIES } from '../constants';
+import { LIMITS, STATUS_CATEGORIES, STATUS_ICONS } from '../constants';
 import { PROJECT_KEY_PATTERN } from '../refs';
 import { emojiSchema, hexColorSchema, idSchema, projectKeySchema, timestampSchema } from './common';
 import { userSummarySchema } from './core';
@@ -102,7 +102,11 @@ export const labelDescriptionSchema = z
   .trim()
   .max(LIMITS.labelDescription.max, `At most ${LIMITS.labelDescription.max} characters`);
 
+/** Legacy: accepted from old clients and ignored (statuses have no category since 2026-09-27). */
 export const statusCategorySchema = z.enum(STATUS_CATEGORIES);
+
+/** The shape of a status's icon (drawn in its color). */
+export const statusIconSchema = z.enum(STATUS_ICONS);
 
 // ---------------------------------------------------------------------------------------------
 // Entities
@@ -113,8 +117,8 @@ export const statusSchema = z.object({
   projectId: z.string(),
   name: z.string(),
   color: z.string(),
-  /** `done` statuses count as finished (overdue logic, progress, claims, issue auto-resolution). */
-  category: statusCategorySchema,
+  /** Icon shape, drawn in `color`. */
+  icon: statusIconSchema,
   /** Column order, ascending from 0. */
   position: z.number().int().nonnegative(),
   /** New tasks start here. Exactly one status per project is the default. */
@@ -142,9 +146,15 @@ export const labelSchema = z.object({
 export type Label = z.infer<typeof labelSchema>;
 
 export const projectCountsSchema = z.object({
-  /** Tasks in an `open`-category status. */
+  /** Live tasks. */
+  tasks: z.number().int().nonnegative(),
+  /** Tasks someone (a member or a role) is assigned to in their current stage. */
+  assignedTasks: z.number().int().nonnegative(),
+  /** Tasks in a stage that doesn't block its dependents (`completedAt` set). */
+  completedTasks: z.number().int().nonnegative(),
+  /** Deprecated (older clients): `tasks - completedTasks`. */
   openTasks: z.number().int().nonnegative(),
-  /** Tasks in a `done`-category status. */
+  /** Deprecated (older clients): `completedTasks`. */
   doneTasks: z.number().int().nonnegative(),
   openIssues: z.number().int().nonnegative(),
   resolvedIssues: z.number().int().nonnegative(),
@@ -276,7 +286,10 @@ export type ResolveProjectQuery = z.infer<typeof resolveProjectQuerySchema>;
 export const createStatusInputSchema = z.object({
   name: statusNameSchema,
   color: hexColorSchema.optional(),
-  category: statusCategorySchema.default('open'),
+  /** Default `circle`. */
+  icon: statusIconSchema.optional(),
+  /** Deprecated: accepted and ignored (statuses have no category any more). */
+  category: statusCategorySchema.optional(),
   /** Make it the default status for new tasks. */
   isDefault: z.boolean().optional(),
   /** Pipeline rules (design §5). */
@@ -288,7 +301,8 @@ export const updateStatusInputSchema = z
   .object({
     name: statusNameSchema.optional(),
     color: hexColorSchema.optional(),
-    /** Recategorizing marks its tasks completed (done) or not completed (open). */
+    icon: statusIconSchema.optional(),
+    /** Deprecated: accepted and ignored (statuses have no category any more). */
     category: statusCategorySchema.optional(),
     /** Only `true`: make another status the default to unset this one. */
     isDefault: z.literal(true).optional(),

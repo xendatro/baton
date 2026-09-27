@@ -470,13 +470,16 @@ describe('wave B: issues ↔ tasks ↔ work', () => {
     const resolved = await call<{
       resolved: boolean;
       resolvedBy: { username: string } | null;
-      linkedTasks: Array<{ status: { category: string } }>;
+      linkedTasks: Array<{ status: { name: string; icon: string } }>;
     }>(memberKey, 'GET', `/issues/${issue.body.id}`);
     expect(resolved.body).toMatchObject({
       resolved: true,
       resolvedBy: { username: 'ethan-ai', kind: 'agent', agentOwner: { username: 'ethan' } },
     });
-    expect(resolved.body.linkedTasks[0]?.status.category).toBe('done');
+    expect(resolved.body.linkedTasks[0]?.status).toMatchObject({
+      name: 'Done',
+      icon: 'check-circle',
+    });
 
     const inbox = await call<{ items: Array<{ type: string; title: string; viaKeyName: string }> }>(
       memberWeb,

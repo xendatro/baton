@@ -106,7 +106,7 @@ export const LIVE_INVALIDATIONS: Readonly<Record<LiveEventType, Invalidation>> =
   'project.restored': (e) => [...projectChange(e), ...trash(e)],
   // Roles or overrides changed: the viewer's permissions (me) and visible projects may differ.
   'project_access.changed': projectChange,
-  // Work lists show statuses and labels, and a status's category decides what is still open.
+  // Work lists show statuses and labels, and a stage's rules decide what is completed or blocked.
   // Issues list the statuses of the tasks addressing them.
   'status.changed': (e) => [
     ...projectKeys(e, queryKeys.projects.statuses, queryKeys.tasks.all, queryKeys.issues.all),

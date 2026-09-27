@@ -63,7 +63,9 @@ async function createProjectViaApi(page: Page, team: SeededTeam, body: Record<st
 async function statusesOf(page: Page, projectId: string) {
   const res = await page.request.get(`/api/projects/${projectId}/statuses`);
   return (
-    (await res.json()) as { items: Array<{ name: string; isDefault: boolean; category: string }> }
+    (await res.json()) as {
+      items: Array<{ name: string; isDefault: boolean; icon: string; color: string }>;
+    }
   ).items;
 }
 
@@ -129,7 +131,7 @@ test('create a project from the palette, write its README, and re-key it', async
   expect(errors).toEqual([]);
 });
 
-test('manage statuses: add, set default, recategorize, reorder by keyboard, delete', async ({
+test('manage statuses: add, set default, pick an icon, reorder by keyboard, delete', async ({
   page,
 }) => {
   const owner = await signedInUser(page);
@@ -160,20 +162,26 @@ test('manage statuses: add, set default, recategorize, reorder by keyboard, dele
     .poll(async () => (await statusesOf(page, project.id)).find((s) => s.isDefault)?.name)
     .toBe('In review');
 
-  const category = page.getByRole('combobox', { name: 'Category of In review' });
-  await category.click();
-  await page.getByRole('option', { name: 'Done' }).click();
-  // Radix Select hands focus back to its trigger once its close animation ends. Filling another
-  // field before that lost the focus to the trigger mid-edit, which blurred (and so saved) the
-  // rename below before Enter was pressed.
-  await expect(page.getByRole('listbox')).toBeHidden();
-  await expect(category).toBeFocused();
+  // The icon: any shape in any color, picked independently in one popover.
+  const icon = page.getByRole('button', { name: /^In review icon: Circle/ });
+  await icon.click();
+  await page
+    .getByRole('radiogroup', { name: 'Shape' })
+    .getByRole('radio', { name: 'Star' })
+    .click();
+  await page.getByRole('radio', { name: 'Violet' }).click();
   await expect
-    .poll(
-      async () =>
-        (await statusesOf(page, project.id)).find((s) => s.name === 'In review')?.category,
-    )
-    .toBe('done');
+    .poll(async () => {
+      const status = (await statusesOf(page, project.id)).find((s) => s.name === 'In review');
+      return [status?.icon, status?.color];
+    })
+    .toEqual(['star', '#8b5cf6']);
+  // Radix hands focus back to the trigger once the popover's close animation ends. Filling
+  // another field before that lost the focus to the trigger mid-edit, which blurred (and so
+  // saved) the rename below before Enter was pressed.
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('radiogroup', { name: 'Shape' })).toBeHidden();
+  await expect(page.getByRole('button', { name: /^In review icon: Star/ })).toBeFocused();
 
   // Rename in place. The field's label follows the saved name, so hold on to the row (Open is
   // the first) instead.
@@ -208,9 +216,10 @@ test('manage statuses: add, set default, recategorize, reorder by keyboard, dele
   await expect(page.getByText('Deleted In review')).toBeVisible();
   await expect(page.getByTestId('status-row')).toHaveCount(2);
   const remaining = await statusesOf(page, project.id);
+  // Its tasks and the default go to the column before it.
   expect(remaining.map((s) => [s.name, s.isDefault])).toEqual([
-    ['To do', false],
-    ['Done', true],
+    ['To do', true],
+    ['Done', false],
   ]);
 });
 

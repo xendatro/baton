@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { DEFAULT_STAGE_RULES } from '@shared/schemas/pipelines';
 import type { Status } from '@shared/schemas/projects';
 import type { BoardResponse, TaskCard } from '@shared/schemas/tasks';
 import {
@@ -13,20 +14,23 @@ import {
 import { claimedAgo, dropTarget, groupTasks } from './helpers';
 import { moveOnBoard } from './queries';
 
-const status = (id: string, name: string, position: number, category: 'open' | 'done' = 'open') =>
+const status = (id: string, name: string, position: number, finished = false) =>
   ({
     id,
     projectId: 'p',
     name,
     color: '#6b7280',
-    category,
+    icon: finished ? ('check-circle' as const) : ('circle' as const),
     position,
     isDefault: position === 0,
     taskCount: 0,
+    rules: finished
+      ? { ...DEFAULT_STAGE_RULES, blocksDependents: false, claimable: false }
+      : DEFAULT_STAGE_RULES,
   }) satisfies Status;
 
 const open = status('s-open', 'Open', 0);
-const done = status('s-done', 'Done', 1, 'done');
+const done = status('s-done', 'Done', 1, true);
 
 function card(id: string, overrides: Partial<TaskCard> = {}): TaskCard {
   return {
@@ -36,7 +40,7 @@ function card(id: string, overrides: Partial<TaskCard> = {}): TaskCard {
     title: `Task ${id}`,
     projectId: 'p',
     teamId: 't',
-    status: { id: open.id, name: open.name, color: open.color, category: open.category },
+    status: { id: open.id, name: open.name, color: open.color, icon: open.icon },
     priority: 0,
     dueDate: null,
     labels: [],
@@ -156,6 +160,9 @@ describe('board drops', () => {
       [2, ['3', '1']],
     ]);
     expect(moved.columns[1]?.tasks[1]?.status.name).toBe('Done');
+    // Done doesn't block its dependents, so the moved card counts as completed at once.
+    expect(moved.columns[1]?.tasks[1]?.completedAt).not.toBeNull();
+    expect(moveOnBoard(moved, '1', open.id, 0).columns[0]?.tasks[0]?.completedAt).toBeNull();
     expect(moveOnBoard(board, 'missing', done.id, 0)).toBe(board);
   });
 });

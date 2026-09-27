@@ -178,19 +178,23 @@ test('a task deleted from its page is counted on the team home and restores from
 }) => {
   await signedInUser(page);
   const team = await createTeam(page, 'Task Force');
+  const { ownerId } = (await (
+    await page.request.get(`/api/teams/${team.id}`, { headers: ORIGIN })
+  ).json()) as { ownerId: string };
   const project = await page.request.post(`/api/teams/${team.id}/projects`, {
     data: { name: 'Operations', key: 'OPS' },
     headers: ORIGIN,
   });
   const { id: projectId } = (await project.json()) as { id: string };
   const created = await page.request.post(`/api/projects/${projectId}/tasks`, {
-    data: { title: 'Rotate the keys' },
+    data: { title: 'Rotate the keys', assigneeUserIds: [ownerId] },
     headers: ORIGIN,
   });
   expect(created.status()).toBe(201);
 
+  // The team home counts the tasks someone is assigned to in their current stage.
   await page.goto(`/t/${team.slug}`);
-  await expect(page.locator('#main').getByText('1 open task')).toBeVisible();
+  await expect(page.locator('#main').getByText('1 task assigned')).toBeVisible();
 
   await page.goto(`/t/${team.slug}/p/OPS/tasks/1`);
   await page.getByRole('button', { name: 'Task actions' }).click();

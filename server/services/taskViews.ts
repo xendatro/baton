@@ -28,6 +28,7 @@ import { unreadCountsByItem } from './notifications';
 import { pipelineSummaries, stageOf } from './pipelines';
 import { reactionsOf } from './reactions';
 import { statusesOf } from './statuses';
+import { currentRoleRow, currentUserRow } from './taskAssignees';
 import { blockersOf, blockingOf, linkedIssuesOf, openBlockerRefs } from './taskLinks';
 import { getUserSummaries, getViaKeys, toUserSummaries, userSummaryColumns } from './users';
 
@@ -85,7 +86,7 @@ export function toTaskCards(
         id: s.status.id,
         name: s.status.name,
         color: s.status.color,
-        category: s.status.category,
+        icon: s.status.icon,
       })
       .from(s.status)
       .where(inArray(s.status.id, [...new Set(rows.map((row) => row.statusId))]))
@@ -114,7 +115,8 @@ export function toTaskCards(
     .select({ taskId: s.taskAssigneeUser.taskId, ...userSummaryColumns })
     .from(s.taskAssigneeUser)
     .innerJoin(s.user, eq(s.user.id, s.taskAssigneeUser.userId))
-    .where(inArray(s.taskAssigneeUser.taskId, ids))
+    .innerJoin(s.task, eq(s.task.id, s.taskAssigneeUser.taskId))
+    .where(and(inArray(s.taskAssigneeUser.taskId, ids), currentUserRow))
     .orderBy(asc(sql`lower(${s.user.name})`))
     .all();
   const assigneeSummaries = toUserSummaries(db, assigneeRows);
@@ -139,7 +141,8 @@ export function toTaskCards(
       })
       .from(s.taskAssigneeRole)
       .innerJoin(s.role, eq(s.role.id, s.taskAssigneeRole.roleId))
-      .where(inArray(s.taskAssigneeRole.taskId, ids))
+      .innerJoin(s.task, eq(s.task.id, s.taskAssigneeRole.taskId))
+      .where(and(inArray(s.taskAssigneeRole.taskId, ids), currentRoleRow))
       .orderBy(desc(s.role.position))
       .all(),
     (row) => row.taskId,
@@ -220,6 +223,7 @@ export function toTaskSummary(card: TaskCard): TaskSummary {
     blocked: card.blocked,
     replyCount: card.replyCount,
     updatedAt: card.updatedAt,
+    completedAt: card.completedAt,
   };
 }
 
@@ -284,28 +288,70 @@ function plusDays(date: string, days: number): string {
   return format(addDays(new Date(year, month - 1, day), days), 'yyyy-MM-dd');
 }
 
-/** Tasks in an open-category status. */
-const inOpenStatus = sql`exists (select 1 from ${s.status} where ${s.status.id} = ${s.task.statusId} and ${s.status.category} = 'open')`;
+/** Tasks not completed (in a stage that blocks its dependents). */
+const notCompleted = sql`${s.task.completedAt} is null`;
 
-/** Tasks with a live blocker in an open-category status. */
+/** Tasks with a live blocker sitting in a stage that blocks its dependents. */
 export const isBlocked = sql`exists (
   select 1 from ${s.taskDependency}
   join ${s.task} as blocker on blocker.id = ${s.taskDependency.blockedByTaskId}
   join ${s.status} as blocker_status on blocker_status.id = blocker.status_id
   where ${s.taskDependency.taskId} = ${s.task.id}
     and blocker.deleted_at is null
-    and blocker_status.category = 'open')`;
+    and blocker_status.blocks_dependents = 1)`;
 
-/** Tasks assigned directly to `userId` or to one of `roleIds`. */
+/** Tasks assigned (in their current stage) directly to `userId` or to one of `roleIds`. */
 export function assignedTo(userId: string, roleIds: readonly string[]): SQL {
-  const direct = sql`exists (select 1 from ${s.taskAssigneeUser} where ${s.taskAssigneeUser.taskId} = ${s.task.id} and ${s.taskAssigneeUser.userId} = ${userId})`;
+  const direct = sql`exists (select 1 from ${s.taskAssigneeUser} where ${s.taskAssigneeUser.taskId} = ${s.task.id} and ${currentUserRow} and ${s.taskAssigneeUser.userId} = ${userId})`;
   if (roleIds.length === 0) return direct;
-  return sql`(${direct} or exists (select 1 from ${s.taskAssigneeRole} where ${s.taskAssigneeRole.taskId} = ${s.task.id} and ${inArray(s.taskAssigneeRole.roleId, [...roleIds])}))`;
+  return sql`(${direct} or exists (select 1 from ${s.taskAssigneeRole} where ${s.taskAssigneeRole.taskId} = ${s.task.id} and ${currentRoleRow} and ${inArray(s.taskAssigneeRole.roleId, [...roleIds])}))`;
 }
 
-/** Tasks nobody (no member, no role) is assigned to. */
-export const isUnassigned = sql`(not exists (select 1 from ${s.taskAssigneeUser} where ${s.taskAssigneeUser.taskId} = ${s.task.id})
-  and not exists (select 1 from ${s.taskAssigneeRole} where ${s.taskAssigneeRole.taskId} = ${s.task.id}))`;
+/** Tasks someone (a member or a role) is assigned to in their current stage. */
+export const isAssigned = sql`(exists (select 1 from ${s.taskAssigneeUser} where ${s.taskAssigneeUser.taskId} = ${s.task.id} and ${currentUserRow})
+  or exists (select 1 from ${s.taskAssigneeRole} where ${s.taskAssigneeRole.taskId} = ${s.task.id} and ${currentRoleRow}))`;
+
+/** Tasks nobody (no member, no role) is assigned to in their current stage. */
+export const isUnassigned = sql`(not ${isAssigned})`;
+
+export interface ProjectTaskCounts {
+  /** Live tasks. */
+  tasks: number;
+  /** …someone is assigned to in their current stage. */
+  assigned: number;
+  /** …in a stage that doesn't block its dependents. */
+  completed: number;
+}
+
+/** Task counts of each project (live tasks only), keyed by project id (every id present). */
+export function taskCountsByProject(
+  db: DbExecutor,
+  projectIds: readonly string[],
+): Map<string, ProjectTaskCounts> {
+  const counts = new Map<string, ProjectTaskCounts>(
+    projectIds.map((id) => [id, { tasks: 0, assigned: 0, completed: 0 }]),
+  );
+  if (projectIds.length === 0) return counts;
+  const rows = db
+    .select({
+      projectId: s.task.projectId,
+      tasks: count(),
+      assigned: sql<number>`coalesce(sum(case when ${isAssigned} then 1 else 0 end), 0)`,
+      completed: sql<number>`coalesce(sum(case when ${s.task.completedAt} is not null then 1 else 0 end), 0)`,
+    })
+    .from(s.task)
+    .where(and(inArray(s.task.projectId, [...projectIds]), isNull(s.task.deletedAt)))
+    .groupBy(s.task.projectId)
+    .all();
+  for (const row of rows) {
+    counts.set(row.projectId, {
+      tasks: row.tasks,
+      assigned: Number(row.assigned),
+      completed: Number(row.completed),
+    });
+  }
+  return counts;
+}
 
 /** Claimed tasks (claims don't expire; `now` is kept for callers). */
 export function claimValidAt(_now: Date): SQL {
@@ -317,9 +363,9 @@ function assigneeCondition(value: string, viewer: Membership): SQL {
   if (value === 'unassigned') return isUnassigned;
   const [kind, id = ''] = value.split(':');
   if (kind === 'user') {
-    return sql`exists (select 1 from ${s.taskAssigneeUser} where ${s.taskAssigneeUser.taskId} = ${s.task.id} and ${s.taskAssigneeUser.userId} = ${id})`;
+    return sql`exists (select 1 from ${s.taskAssigneeUser} where ${s.taskAssigneeUser.taskId} = ${s.task.id} and ${currentUserRow} and ${s.taskAssigneeUser.userId} = ${id})`;
   }
-  return sql`exists (select 1 from ${s.taskAssigneeRole} where ${s.taskAssigneeRole.taskId} = ${s.task.id} and ${s.taskAssigneeRole.roleId} = ${id})`;
+  return sql`exists (select 1 from ${s.taskAssigneeRole} where ${s.taskAssigneeRole.taskId} = ${s.task.id} and ${currentRoleRow} and ${s.taskAssigneeRole.roleId} = ${id})`;
 }
 
 function textCondition(q: string): SQL | undefined {
@@ -356,7 +402,7 @@ export function filterConditions(
     const today = filters.today ?? utcToday(now);
     switch (filters.due) {
       case 'overdue':
-        conditions.push(sql`${s.task.dueDate} < ${today}`, inOpenStatus);
+        conditions.push(sql`${s.task.dueDate} < ${today}`, notCompleted);
         break;
       case 'today':
         conditions.push(eq(s.task.dueDate, today));

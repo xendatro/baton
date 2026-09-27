@@ -75,9 +75,7 @@ function RelatedTaskRow({
       <StatusIcon status={task.status} />
       <Link to={task.path} className="flex min-w-0 items-center gap-1.5 hover:underline">
         <span className="shrink-0 font-mono text-xs text-muted-foreground">{task.ref}</span>
-        <span
-          className={cn('truncate', task.status.category === 'done' && 'text-muted-foreground')}
-        >
+        <span className={cn('truncate', task.completedAt && 'text-muted-foreground')}>
           {task.title}
         </span>
       </Link>

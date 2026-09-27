@@ -1,7 +1,11 @@
 import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { useSyncExternalStore } from 'react';
 import { okResponseSchema } from '@shared/schemas/common';
-import { DEFAULT_STAGE_RULES } from '@shared/schemas/pipelines';
+import {
+  DEFAULT_STAGE_RULES,
+  type StageRules,
+  type StageRulesPatch,
+} from '@shared/schemas/pipelines';
 import {
   deleteLabelResponseSchema,
   deleteStatusResponseSchema,
@@ -239,7 +243,7 @@ function refreshStatuses(queryClient: QueryClient, projectId: string) {
 
 /**
  * Applies `update` to the cached status list at once, rolling back if the request fails
- * (reordering, the default radio, category and color changes feel instant).
+ * (reordering, the default radio, icon and color changes feel instant).
  */
 function optimisticStatuses(
   queryClient: QueryClient,
@@ -252,6 +256,16 @@ function optimisticStatuses(
   return () => {
     if (previous) queryClient.setQueryData(key, previous);
   };
+}
+
+/** The rules after a partial change (on-enter flags merge; everything else replaces). */
+function mergeRules(current: StageRules | undefined, patch: StageRulesPatch): StageRules {
+  const base = current ?? DEFAULT_STAGE_RULES;
+  const { onEnter, ...rest } = patch;
+  const defined = Object.fromEntries(
+    Object.entries(rest).filter(([, value]) => value !== undefined),
+  ) as Partial<StageRules>;
+  return { ...base, ...defined, onEnter: { ...base.onEnter, ...onEnter } };
 }
 
 export function useCreateStatus(projectId: string) {
@@ -279,11 +293,9 @@ export function useUpdateStatus(projectId: string) {
                 ...status,
                 ...(input.name !== undefined ? { name: input.name } : {}),
                 ...(input.color !== undefined ? { color: input.color } : {}),
-                ...(input.category !== undefined ? { category: input.category } : {}),
+                ...(input.icon !== undefined ? { icon: input.icon } : {}),
                 ...(input.isDefault ? { isDefault: true } : {}),
-                ...(input.rules
-                  ? { rules: { ...(status.rules ?? DEFAULT_STAGE_RULES), ...input.rules } }
-                  : {}),
+                ...(input.rules ? { rules: mergeRules(status.rules, input.rules) } : {}),
               };
             }
             return input.isDefault ? { ...status, isDefault: false } : status;

@@ -22,7 +22,7 @@ const todayField = dueDateSchema
   );
 
 const TASK_FIELDS_NOTE =
-  'Each task has ref (team-slug/KEY-12), title, status (name, category open/done), priority (0 none, 1 low, 2 medium, 3 high, 4 urgent), dueDate (YYYY-MM-DD or null), labels, assignees (users and roles), claim (holder, via key, lease end) or null, blocked, team, project, url, and assignment (direct: assigned to you by name; roles: your roles it is assigned to).';
+  'Each task has ref (team-slug/KEY-12), title, status (name, color, icon), priority (0 none, 1 low, 2 medium, 3 high, 4 urgent), dueDate (YYYY-MM-DD or null), labels, assignees (users and roles), claim (holder, via key, lease end) or null, blocked, team, project, url, and assignment (direct: assigned to you by name; roles: your roles it is assigned to).';
 
 /** Tasks with absolute URLs and team-qualified refs (`team/KEY-12`). */
 function absoluteTasks(ctx: ToolContext, tasks: readonly MyTask[]): MyTask[] {
@@ -65,7 +65,7 @@ const offsetCursorSchema = z.tuple([z.number().int().nonnegative()]);
 const myTasksTool = defineTool({
   name: 'my_tasks',
   title: 'My tasks',
-  description: `Open tasks assigned to you, directly or through one of your roles, across all your teams and projects (tasks in done statuses are left out). Use it to decide what to work on next; claim one with claim_task or let claim_next_task pick. ${TASK_FIELDS_NOTE}`,
+  description: `Tasks assigned to you, directly or through one of your roles, in their current stage, across all your teams and projects (a stage that assigns nobody, like a finishing one, takes a task off everyone's list). Use it to decide what to work on next; claim one with claim_task or let claim_next_task pick. ${TASK_FIELDS_NOTE}`,
   input: toolInput({
     team: z.string().optional().describe('Only tasks of this team (slug or id)'),
     project: z
@@ -139,7 +139,7 @@ const myTasksTool = defineTool({
 const dashboardSummaryTool = defineTool({
   name: 'dashboard_summary',
   title: 'Dashboard summary',
-  description: `Your dashboard: counts (open tasks assigned to you, overdue, due within 7 days, claimed by you), the most urgent assigned tasks, overdue and due-soon tasks, tasks you or your agents have claimed (with the key and lease), the latest activity across your teams that you may see (compact: who, via which key, action, item ref, title, changes, url), and your teams with their projects and open task/issue counts. ${TASK_FIELDS_NOTE}`,
+  description: `Your dashboard: counts (tasks assigned to you in their current stage, overdue, due within 7 days, claimed by you), the most urgent assigned tasks, overdue and due-soon tasks, tasks you or your agents have claimed (with the key and lease), the latest activity across your teams that you may see (compact: who, via which key, action, item ref, title, changes, url), and your teams with their projects and assigned task / open issue counts. ${TASK_FIELDS_NOTE}`,
   input: toolInput({ today: todayField }),
   annotations: { readOnlyHint: true },
   handler: (ctx, input) => {

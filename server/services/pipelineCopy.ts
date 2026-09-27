@@ -20,12 +20,13 @@ import { recordActivity } from './activity';
 import { emitAfterCommit } from './events';
 import { mergeRules, projectStatuses, ruleColumns, rulesOf, type StatusRow } from './pipelines';
 import { requireProject } from './projects';
-import { statusesOf } from './statuses';
+import { statusesOf, syncCompletion } from './statuses';
 
 /**
  * "Copy pipeline from…" (design §5): copies another project's statuses and their rules into this
  * one. Statuses are matched by name (case-insensitive): a match gets the source's rules (its name,
- * color and category stay, so no task changes state), a status the target lacks is created, and
+ * color and icon stay; its tasks' completion follows the copied `blocksDependents`), a status the
+ * target lacks is created with the source's color and icon, and
  * the target's other statuses stay after the copied ones. People, roles and project roles the
  * target team doesn't have are listed by the preview and must be re-picked (or explicitly dropped)
  * in `replacements`; nothing is dropped silently.
@@ -297,7 +298,7 @@ export function copyPipeline(
           projectId: target.project.id,
           name: row.name,
           color: row.color,
-          category: row.category,
+          icon: row.icon,
           position: existing.length + created.length,
           isDefault: false,
           createdAt: now,
@@ -314,8 +315,8 @@ export function copyPipeline(
         action: 'status.created',
         meta: {
           name: row.name,
-          category: row.category,
           color: row.color,
+          icon: row.icon,
           copiedFrom: source.project.key,
         },
       });
@@ -343,10 +344,19 @@ export function copyPipeline(
         nextStatusId: rules.nextStatusId ? (idMap.get(rules.nextStatusId) ?? null) : null,
       };
       const valid = mergeRules(tx, targetScope, targetId, DEFAULT_STAGE_RULES, mapped);
+      const before = tx
+        .select({ blocksDependents: s.status.blocksDependents })
+        .from(s.status)
+        .where(eq(s.status.id, targetId))
+        .get();
       tx.update(s.status)
         .set({ ...ruleColumns(valid), updatedAt: now })
         .where(eq(s.status.id, targetId))
         .run();
+      // Its tasks' completion follows whether the stage blocks its dependents.
+      if (before && before.blocksDependents !== valid.blocksDependents) {
+        syncCompletion(tx, targetId, valid.blocksDependents);
+      }
     }
 
     // The copied order first, then the target's own other statuses.

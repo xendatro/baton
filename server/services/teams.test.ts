@@ -158,7 +158,7 @@ describe('reading teams', () => {
     }
   });
 
-  it('lists project cards with open task and unresolved issue counts', () => {
+  it('lists project cards with assigned task and unresolved issue counts', () => {
     const { team } = createTeamFixture(ctx.db, { ownerId: ethan.id, slug: 'acme' });
     const web = createProject(ctx.db, { teamId: team.id, key: 'WEB', name: 'Web' });
     const api = createProject(ctx.db, { teamId: team.id, key: 'API', name: 'API' });
@@ -168,8 +168,12 @@ describe('reading teams', () => {
       .set({ deletedAt: new Date() })
       .where(eq(s.project.id, gone.project.id))
       .run();
-    const done = web.statuses.find((status) => status.category === 'done');
-    createTask(ctx.db, { project: web.project });
+    const done = web.statuses.find((status) => status.name === 'Done');
+    const assigned = createTask(ctx.db, { project: web.project });
+    ctx.db.orm
+      .insert(s.taskAssigneeUser)
+      .values({ taskId: assigned.id, statusId: assigned.statusId, userId: ethan.id })
+      .run();
     createTask(ctx.db, { project: web.project });
     createTask(ctx.db, { project: web.project, statusId: done?.id });
     const deletedTask = createTask(ctx.db, { project: web.project });
@@ -183,9 +187,11 @@ describe('reading teams', () => {
     ctx.db.orm.update(s.issue).set({ resolved: true }).where(eq(s.issue.id, resolved.id)).run();
 
     const overview = teamOverviewSchema.parse(getTeamOverview(ctx.deps, actorOf(ethan), team.id));
-    expect(overview.projects.map((p) => [p.key, p.openTasks, p.openIssues])).toEqual([
-      ['API', 0, 0],
-      ['WEB', 2, 1],
+    expect(
+      overview.projects.map((p) => [p.key, p.assignedTasks, p.openTasks, p.openIssues]),
+    ).toEqual([
+      ['API', 0, 0, 0],
+      ['WEB', 1, 2, 1],
     ]);
     expect(api.project.id).toBe(overview.projects[0]?.id);
   });

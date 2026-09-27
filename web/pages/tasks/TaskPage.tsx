@@ -142,6 +142,9 @@ function TaskView({ task, team, project }: { task: Task; team: MeTeam; project: 
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const statuses = useStatuses(project.id);
+  // Whether tasks in the task's stage can be claimed (its `claimable` rule).
+  const stageClaimable =
+    statuses.data?.find((status) => status.id === task.status.id)?.rules?.claimable ?? true;
   const labels = useLabels(project.id);
   const createLabel = useCreateLabel(project.id);
   const people = useAssignables(team.id);
@@ -293,7 +296,7 @@ function TaskView({ task, team, project }: { task: Task; team: MeTeam; project: 
           },
         ]
       : []),
-    ...(canUpdate && !task.claim && task.status.category === 'open'
+    ...(canUpdate && !task.claim && stageClaimable
       ? [
           {
             id: 'task.claim',
@@ -382,7 +385,7 @@ function TaskView({ task, team, project }: { task: Task; team: MeTeam; project: 
       save(
         { statusId },
         {
-          status: { id: next.id, name: next.name, color: next.color, category: next.category },
+          status: { id: next.id, name: next.name, color: next.color, icon: next.icon },
         },
       ),
     );
@@ -451,6 +454,7 @@ function TaskView({ task, team, project }: { task: Task; team: MeTeam; project: 
             viewerId={viewerId}
             canClaim={canUpdate || Boolean(task.stage?.pool?.canClaim)}
             canTakeOver={access.has('UPDATE_TASKS')}
+            claimable={stageClaimable}
           />
           <dl className="grid grid-cols-1 gap-1">
             <Property label="Status" hotkey="s">
@@ -596,7 +600,7 @@ function TaskView({ task, team, project }: { task: Task; team: MeTeam; project: 
                   {task.dueDate ? (
                     <DueDate
                       value={task.dueDate}
-                      done={task.status.category === 'done'}
+                      done={task.completedAt !== null}
                       className="text-sm"
                     />
                   ) : (

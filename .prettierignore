@@ -5,3 +5,4 @@ test-results/
 server/db/migrations/
 package-lock.json
 SPEC.md
+.claude/

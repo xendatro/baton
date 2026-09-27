@@ -13,6 +13,8 @@ export default defineConfig([
     'playwright-report/',
     'test-results/',
     'server/db/migrations/',
+    // Agent worktrees (full checkouts) while parallel work is in progress.
+    '.claude/',
   ]),
   js.configs.recommended,
   tseslint.configs.recommendedTypeChecked,

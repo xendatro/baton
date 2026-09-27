@@ -99,7 +99,8 @@ export const taskClaimSchema = z.object({
   via: viaKeySchema.nullable(),
   claimedAt: timestampSchema,
   /** The lease ends here unless the holder renews it (any write by the holder renews it). */
-  expiresAt: timestampSchema,
+  /** Always null: claims are held until released (2026-09-27). */
+  expiresAt: timestampSchema.nullable(),
 });
 export type TaskClaim = z.infer<typeof taskClaimSchema>;
 

@@ -35,7 +35,7 @@ import {
 } from './access';
 import { recordActivity } from './activity';
 import { attachmentsByParent, attachToParent, referencedPendingUploads } from './attachments';
-import { isClaimValid, renewClaimOnWrite } from './claimLease';
+import { isClaimValid } from './claimLease';
 import { emitAfterCommit } from './events';
 import {
   notifyAssigned,
@@ -966,7 +966,6 @@ export function updateTask(
       .where(eq(s.task.id, taskId))
       .returning()
       .get();
-    renewClaimOnWrite(tx, actor, taskId, now);
     recordActivity(tx, actor, {
       teamId: team.id,
       projectId: project.id,
@@ -1102,7 +1101,6 @@ export function moveTask(deps: AppDeps, actor: Actor, taskId: string, input: Mov
       .where(eq(s.task.id, taskId))
       .returning()
       .get();
-    renewClaimOnWrite(tx, actor, taskId, now);
     recordActivity(tx, actor, {
       teamId: team.id,
       projectId: project.id,

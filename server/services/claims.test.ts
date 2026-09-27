@@ -23,9 +23,7 @@ import {
   type TestContext,
   type UserRow,
 } from '../test/helpers';
-import { leaseMinutesOf } from './claimLease';
 import { claimNextTask, claimTask, expireClaims, releaseTask, renewClaim } from './claims';
-import { createReply, editReply } from './replies';
 import { createTask, getTask, updateTask } from './tasks';
 
 let ctx: TestContext;
@@ -150,7 +148,7 @@ describe('claim_next_task', () => {
     expect(next(miaOtherAgent)).toBeNull();
   });
 
-  it('claims for (user, key) with a lease, optionally moving the task, and audits it', () => {
+  it('claims for (user, key), optionally moving the task, and audits it', () => {
     const inProgress = ctx.db.orm
       .insert(s.status)
       .values({
@@ -163,17 +161,14 @@ describe('claim_next_task', () => {
       .returning()
       .get();
     newTask('Work');
-    const before = Date.now();
+    // `leaseMinutes` is still accepted from older agents, and ignored.
     const task = next(miaAgent, { leaseMinutes: 90, moveToStatusId: inProgress.id });
     expect(taskSchema.parse(task)).toBeTruthy();
     expect(task?.status.name).toBe('In Progress');
     expect(task?.claim?.user.username).toBe('mia');
     expect(task?.claim?.via?.keyName).toBe('Claude on laptop');
-    const expires = Date.parse(task?.claim?.expiresAt ?? '');
-    expect(expires - before).toBeGreaterThanOrEqual(90 * 60_000 - 1000);
-    expect(expires - before).toBeLessThanOrEqual(90 * 60_000 + 5000);
+    expect(task?.claim?.expiresAt).toBeNull();
     expect(actions(task?.id ?? '')).toEqual(['task.created', 'task.moved', 'task.claimed']);
-    expect(leaseMinutesOf(ctx.db.orm, task?.id ?? '')).toBe(90);
     expect(events.map((e) => e.type)).toContain('task.claimed');
     expect(() => next(miaAgent, { moveToStatusId: statusId(doneStatus) })).toThrow(/open status/);
   });
@@ -283,70 +278,42 @@ describe('claim_task', () => {
 });
 
 describe('leases', () => {
-  it('renews on any write by the holder (updates, replies) but not by others', () => {
+  // Claims are held until released, taken over or finished (2026-09-27): no expiry, no renewal.
+  it('keeps a claim until it is released, however long it takes', () => {
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(new Date('2030-01-01T10:00:00Z'));
     const task = newTask('Long job');
     claimTask(ctx.deps, miaAgent, task.id, { leaseMinutes: 60 });
-    const expiry = () => getTask(ctx.deps, web(owner), task.id).claim?.expiresAt;
-    expect(expiry()).toBe('2030-01-01T11:00:00.000Z');
+    expect(getTask(ctx.deps, web(owner), task.id).claim).toMatchObject({ expiresAt: null });
 
-    vi.setSystemTime(new Date('2030-01-01T10:20:00Z'));
-    updateTask(ctx.deps, miaAgent, task.id, { priority: 2 });
-    expect(expiry()).toBe('2030-01-01T11:20:00.000Z');
-
-    vi.setSystemTime(new Date('2030-01-01T10:30:00Z'));
-    const reply = createReply(ctx.deps, miaAgent, {
-      parentType: 'task',
-      parentId: task.id,
-      body: 'Progress: tests pass',
-    });
-    expect(expiry()).toBe('2030-01-01T11:30:00.000Z');
-
-    vi.setSystemTime(new Date('2030-01-01T10:40:00Z'));
-    editReply(ctx.deps, miaAgent, reply.id, { body: 'Progress: all tests pass' });
-    expect(expiry()).toBe('2030-01-01T11:40:00.000Z');
-
-    // Someone else writing (or the same user through another key) doesn't renew it.
-    vi.setSystemTime(new Date('2030-01-01T10:50:00Z'));
-    updateTask(ctx.deps, web(mia), task.id, { priority: 3 });
-    createReply(ctx.deps, miaOtherAgent, { parentType: 'task', parentId: task.id, body: 'Hi' });
-    expect(expiry()).toBe('2030-01-01T11:40:00.000Z');
-
-    // Explicit renewal keeps the lease length, or takes a new one.
-    vi.setSystemTime(new Date('2030-01-01T11:00:00Z'));
-    expect(renewClaim(ctx.deps, miaAgent, task.id, {}).claim?.expiresAt).toBe(
-      '2030-01-01T12:00:00.000Z',
-    );
-    expect(renewClaim(ctx.deps, miaAgent, task.id, { leaseMinutes: 10 }).claim?.expiresAt).toBe(
-      '2030-01-01T11:10:00.000Z',
-    );
+    vi.setSystemTime(new Date('2030-01-09T10:00:00Z'));
+    expect(expireClaims(ctx.deps)).toBe(0);
+    expect(getTask(ctx.deps, web(owner), task.id).claim?.user.username).toBe('mia');
+    expect(next(web(bob))).toBeNull();
+    // renew_claim is kept for older agents: it only confirms the holder.
+    expect(renewClaim(ctx.deps, miaAgent, task.id, {}).claim?.user.username).toBe('mia');
     expect(() => renewClaim(ctx.deps, miaOtherAgent, task.id, {})).toThrow(/not by you/);
   });
 
-  it('expires stale claims in the sweeper, audited as a system action', () => {
-    vi.useFakeTimers({ toFake: ['Date'] });
-    vi.setSystemTime(new Date('2030-01-01T10:00:00Z'));
+  it('clears the claims of deleted accounts in the sweeper, audited as a system action', () => {
     const task = newTask('Abandoned');
     const kept = newTask('Kept');
-    claimTask(ctx.deps, miaAgent, task.id, { leaseMinutes: 5 });
-    claimTask(ctx.deps, web(bob), kept.id, { leaseMinutes: 60 });
-    expect(expireClaims(ctx.deps, new Date('2030-01-01T10:04:00Z'))).toBe(0);
+    claimTask(ctx.deps, miaAgent, task.id, {});
+    claimTask(ctx.deps, web(bob), kept.id, {});
+    expect(expireClaims(ctx.deps)).toBe(0);
+    // Deleting an account nulls its claims' holder (ON DELETE SET NULL).
+    ctx.db.orm.update(s.task).set({ claimedById: null }).where(eq(s.task.id, task.id)).run();
     events = [];
-    expect(expireClaims(ctx.deps, new Date('2030-01-01T10:06:00Z'))).toBe(1);
+    expect(expireClaims(ctx.deps)).toBe(1);
     const row = ctx.db.orm
       .select()
       .from(s.activity)
       .where(eq(s.activity.action, 'task.claim_expired'))
       .get();
     expect(row).toMatchObject({ actorId: null, source: 'system', entityId: task.id });
-    expect(row?.meta).toMatchObject({ ref: 'API-1', holder: '@mia via Claude on laptop' });
     expect(events.map((e) => e.type)).toEqual(['activity.created', 'task.released']);
-    vi.setSystemTime(new Date('2030-01-01T10:06:00Z'));
     expect(getTask(ctx.deps, web(owner), task.id).claim).toBeNull();
     expect(getTask(ctx.deps, web(owner), kept.id).claim?.user.username).toBe('bob');
-    // Renewing an expired, swept claim needs a new claim.
-    expect(() => renewClaim(ctx.deps, miaAgent, task.id, {})).toThrow(/not claimed/);
   });
 
   it('registers the sweeper as an every-minute job', () => {

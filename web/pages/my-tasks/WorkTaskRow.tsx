@@ -95,7 +95,6 @@ export function WorkTaskRow({
                   holder={task.claim.user}
                   via={task.claim.via}
                   claimedAt={task.claim.claimedAt}
-                  expiresAt={task.claim.expiresAt}
                   className="h-5 max-w-72 shrink-0"
                 />
               ) : null}

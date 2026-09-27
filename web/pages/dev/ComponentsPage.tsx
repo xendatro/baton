@@ -129,7 +129,6 @@ function ThemeSwitch() {
 }
 
 const minutesAgo = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString();
-const inMinutes = (minutes: number) => new Date(Date.now() + minutes * 60_000).toISOString();
 const inDays = (days: number) => toDueDate(new Date(Date.now() + days * 86_400_000));
 
 function Gallery() {
@@ -216,19 +215,16 @@ function Gallery() {
             holder={fixtures.ethan}
             via={{ keyId: 'k', keyName: 'Claude on laptop' }}
             claimedAt={minutesAgo(4)}
-            expiresAt={inMinutes(26)}
           />
           <ClaimBadge
             holder={fixtures.ada}
             via={null}
             claimedAt={minutesAgo(90)}
-            expiresAt={inMinutes(30)}
           />
           <ClaimBadge
             holder={fixtures.grace}
             via={{ keyId: 'k2', keyName: 'Codex desktop' }}
             claimedAt={minutesAgo(50)}
-            expiresAt={minutesAgo(20)}
           />
         </Row>
         <Row label="EntityIcon">

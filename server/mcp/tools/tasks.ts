@@ -100,7 +100,7 @@ const leaseField = z
   .min(CLAIM_LEASE.minMinutes)
   .max(CLAIM_LEASE.maxMinutes)
   .describe(
-    `Lease in minutes (${CLAIM_LEASE.minMinutes}–${CLAIM_LEASE.maxMinutes}, default ${CLAIM_LEASE.defaultMinutes}); any write you make on the task renews it`,
+    `Ignored: claims no longer expire (kept so older calls still work; ${CLAIM_LEASE.minMinutes}–${CLAIM_LEASE.maxMinutes})`,
   );
 
 function listChange<T extends z.ZodType>(item: T, description: string) {
@@ -614,7 +614,7 @@ const claimNextTool = defineTool({
   name: 'claim_next_task',
   title: 'Claim next task',
   description:
-    'Start here to pick up work. Atomically claims the best task you can work on in a project: open status, not blocked, not claimed by anyone else, matching the optional filters. Tasks assigned to you or your roles come first, then unassigned ones; then higher priority, earlier due date, lower number. Returns the full task (read its description, then work; post progress with add_reply; finish with move_task to a done status, which releases the claim) or task: null when nothing is eligible. The claim is held by you through this key; it lasts leaseMinutes and every write you make on the task (updates, replies) renews it — call renew_claim during long silent work, release_task if you stop.',
+    'Start here to pick up work. Atomically claims the best task you can work on in a project: open status, not blocked, not claimed by anyone else, matching the optional filters. Tasks assigned to you or your roles come first, then unassigned ones; then higher priority, earlier due date, lower number. Returns the full task (read its description, then work; post progress with add_reply; finish with move_task to a done status, which releases the claim) or task: null when nothing is eligible. The claim is held by you through this key until you release it (release_task), finish the task, or someone takes it over; claims do not expire.',
   input: toolInput({
     project: projectRef,
     role: z.string().optional().describe('Only tasks assigned to this role (name, slug or id)'),
@@ -694,7 +694,7 @@ const renewClaimTool = defineTool({
   name: 'renew_claim',
   title: 'Renew claim',
   description:
-    'Extends your claim on a task to a full lease from now (the same length as before unless leaseMinutes is given). Writes on the task renew it too, so call this only during long stretches without updates or replies. Fails if you do not hold the claim.',
+    'Deprecated: claims no longer expire, so there is nothing to renew. Confirms you still hold the claim (fails if you do not).',
   input: toolInput({ task: taskRef, leaseMinutes: leaseField.optional() }),
   annotations: { destructiveHint: false, idempotentHint: true },
   handler: (ctx, input) => {

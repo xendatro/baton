@@ -1,4 +1,4 @@
-import { BotIcon, HandIcon, TimerIcon } from 'lucide-react';
+import { BotIcon, HandIcon } from 'lucide-react';
 import { useState } from 'react';
 import { toast } from 'sonner';
 import type { Task } from '@shared/schemas/tasks';
@@ -10,7 +10,7 @@ import { Button } from '@web/components/ui/button';
 import { errorMessage } from '@web/lib/api';
 import { formatDateTime } from '@web/lib/format';
 import { cn } from '@web/lib/utils';
-import { claimedAgo, leaseLeft } from './helpers';
+import { claimedAgo } from './helpers';
 import { useClaimAction, type ClaimAction } from './queries';
 
 /**
@@ -78,13 +78,6 @@ export function ClaimPanel({ task, viewerId, canClaim, canTakeOver }: ClaimPanel
           </div>
           <p className="flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
             <span title={formatDateTime(claim.claimedAt)}>{claimedAgo(claim.claimedAt, now)}</span>
-            <span
-              className="inline-flex items-center gap-1"
-              title={`Lease ends ${formatDateTime(claim.expiresAt)}`}
-            >
-              <TimerIcon className="size-3.5" aria-hidden="true" />
-              {leaseLeft(claim.expiresAt, now)}
-            </span>
           </p>
         </div>
       ) : (
@@ -107,15 +100,6 @@ export function ClaimPanel({ task, viewerId, canClaim, canTakeOver }: ClaimPanel
           ) : null}
           {mineOnWeb ? (
             <>
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={action.isPending}
-                onClick={() => void run({ kind: 'renew' }, 'Lease renewed').catch(() => {})}
-              >
-                <TimerIcon aria-hidden="true" />
-                Renew
-              </Button>
               <Button
                 size="sm"
                 variant="outline"

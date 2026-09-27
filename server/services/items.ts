@@ -7,7 +7,6 @@ import * as s from '../db/schema';
 import { errors } from '../lib/errors';
 import { appPaths } from '../lib/urls';
 import { requireMember, type Membership } from './access';
-import { renewClaimOnWrite } from './claimLease';
 
 /**
  * Issues and tasks as generic "items": the things replies, subscriptions and attachments hang
@@ -109,12 +108,7 @@ function makeResolver(type: ItemType): ItemResolver {
 /** Item resolvers by type. */
 export const itemResolvers: Readonly<Record<ItemType, ItemResolver>> = {
   issue: makeResolver('issue'),
-  task: {
-    ...makeResolver('task'),
-    onThreadWrite: (tx, actor, id) => {
-      renewClaimOnWrite(tx, actor, id);
-    },
-  },
+  task: makeResolver('task'),
 };
 
 export function findItem(db: DbExecutor, type: ItemType, id: string): ItemInfo | null {

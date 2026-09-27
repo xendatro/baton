@@ -267,7 +267,7 @@ describe('task MCP tools', () => {
     ).toMatch(/priority/i);
   });
 
-  it('creates a task from an issue and renews and releases claims', async () => {
+  it('creates a task from an issue and claims and releases it', async () => {
     const client = await connect(mia);
     createIssue(ctx.db, { project: project.project, title: 'Slow search', body: 'It takes 5s' });
     const task = await call<TaskOut & { description: string }>(client, 'create_task_from_issue', {
@@ -276,11 +276,16 @@ describe('task MCP tools', () => {
     expect(task.description).toContain('From issue [API#1]');
     expect(task.issues).toEqual([expect.objectContaining({ ref: 'acme/API#1', kind: 'fixes' })]);
     await call(client, 'claim_task', { task: task.ref, leaseMinutes: 10 });
-    const renewed = await call<TaskOut & { claim: { expiresAt: string } }>(client, 'renew_claim', {
-      task: task.ref,
-      leaseMinutes: 120,
-    });
-    expect(Date.parse(renewed.claim.expiresAt) - Date.now()).toBeGreaterThan(110 * 60_000);
+    const renewed = await call<TaskOut & { claim: { expiresAt: string | null } }>(
+      client,
+      'renew_claim',
+      {
+        task: task.ref,
+        leaseMinutes: 120,
+      },
+    );
+    // Claims don't expire any more; renew_claim only confirms the holder.
+    expect(renewed.claim.expiresAt).toBeNull();
     const released = await call<TaskOut & { replyCount: number }>(client, 'release_task', {
       task: task.ref,
       note: 'Stopping here: profiling shows the FTS query is fine.',

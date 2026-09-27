@@ -154,7 +154,7 @@ describe('listMyTasks', () => {
     });
   });
 
-  it('shows a valid claim with its key and ignores an expired one', () => {
+  it('shows claims with their key, including ones past their old lease (claims no longer expire)', () => {
     const { apiKey } = createApiKey(ctx.db, { userId: ada.id, name: 'Claude on laptop' });
     const claimed = newTask('Claimed');
     const expired = newTask('Expired');
@@ -178,7 +178,7 @@ describe('listMyTasks', () => {
       user: { username: 'ada' },
       via: { keyId: apiKey.id, keyName: 'Claude on laptop' },
     });
-    expect(byTitle.Expired?.claim).toBeNull();
+    expect(byTitle.Expired?.claim).toMatchObject({ user: { username: 'owner' }, expiresAt: null });
   });
 
   it('marks tasks blocked only by live blockers in open statuses', () => {

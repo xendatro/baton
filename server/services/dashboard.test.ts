@@ -120,7 +120,7 @@ describe('getDashboard', () => {
     expect(dashboard.today).toBe('2026-03-10');
   });
 
-  it('lists the valid claims I hold on the web or through my keys, newest first', () => {
+  it('lists the claims I hold on the web or through my keys, newest first', () => {
     const { apiKey } = createApiKey(ctx.db, { userId: ada.id, name: 'Codex desktop' });
     const now = Date.now();
     const lease = (minutesAgo: number, key: string | null = null) => ({
@@ -131,15 +131,17 @@ describe('getDashboard', () => {
     });
     newTask('By my agent', lease(1, apiKey.id));
     newTask('On the web', lease(5));
-    newTask('Expired', lease(40));
+    // Past its old 30-minute lease: claims no longer expire, so it still counts.
+    newTask('Old claim', lease(40));
     newTask('Someone else', { ...lease(2), claimedById: owner.id });
 
     const dashboard = getDashboard(ctx.deps, actor(ada), { today: TODAY });
-    expect(dashboard.counts.claimed).toBe(2);
+    expect(dashboard.counts.claimed).toBe(3);
     expect(dashboard.claimed.map((task) => [task.title, task.claim?.via?.keyName ?? null])).toEqual(
       [
         ['By my agent', 'Codex desktop'],
         ['On the web', null],
+        ['Old claim', null],
       ],
     );
     expect(dashboard.claimed[0]?.assignment).toEqual({ direct: false, roles: [] });

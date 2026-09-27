@@ -1,5 +1,4 @@
-import { and, asc, desc, eq, inArray, isNotNull, isNull, lte, or, sql } from 'drizzle-orm';
-import { CLAIM_LEASE } from '@shared/constants';
+import { and, asc, desc, eq, inArray, isNotNull, isNull, sql } from 'drizzle-orm';
 import { formatTaskRef } from '@shared/refs';
 import type {
   ClaimNextResponse,
@@ -13,10 +12,9 @@ import type { Actor, AppDeps } from '../context';
 import type { Tx } from '../db';
 import * as s from '../db/schema';
 import { errors } from '../lib/errors';
-import { formatDistanceStrict } from 'date-fns';
 import { requirePermission, type Membership } from './access';
 import { recordActivity } from './activity';
-import { isClaimValid, isHolder, leaseEnd, leaseMinutesOf } from './claimLease';
+import { isClaimValid, isHolder } from './claimLease';
 import { emitAfterCommit } from './events';
 import { queueLinkedIssueEvents } from './linkEvents';
 import { requireProject } from './projects';
@@ -40,13 +38,13 @@ import { getUserSummaries, getViaKeys } from './users';
 /**
  * Claims (SPEC §1.8): "(user, key) is actively working on this task". Agents claim the next
  * eligible task in one `BEGIN IMMEDIATE` transaction, so parallel callers never get the same
- * task. Leases last 5–240 minutes (30 by default); any write by the holder renews them, and the
- * sweeper (jobs/claims.ts) clears expired ones every minute. Claiming and releasing need
+ * task. A claim is held until it is released, taken over, or the task reaches a done status
+ * (claims don't expire since 2026-09-27; the sweeper in jobs/claims.ts only clears claims of
+ * deleted accounts). Claiming and releasing need
  * `UPDATE_TASKS` (or being the task's author); taking over someone else's claim needs
  * `UPDATE_TASKS` and is audited as a takeover.
  */
 
-const DEFAULT_LEASE = CLAIM_LEASE.defaultMinutes;
 
 /** "ethan via Claude on laptop" / "ethan (web)" for audit meta and messages. */
 function holderLabel(tx: Tx, task: Pick<TaskRow, 'claimedById' | 'claimedViaKeyId'>): string {
@@ -60,12 +58,13 @@ function holderLabel(tx: Tx, task: Pick<TaskRow, 'claimedById' | 'claimedViaKeyI
   return key ? `${name} via ${key.keyName}` : `${name} (web)`;
 }
 
-function claimColumns(actor: Actor, now: Date, minutes: number) {
+/** A claim held until it is released, taken over or the task is finished (no expiry). */
+function claimColumns(actor: Actor, now: Date) {
   return {
     claimedById: actor.userId,
     claimedViaKeyId: actor.key?.id ?? null,
     claimedAt: now,
-    claimExpiresAt: leaseEnd(now, minutes),
+    claimExpiresAt: null,
   };
 }
 
@@ -163,7 +162,6 @@ export function claimNextTask(
       .get();
     if (!label) throw errors.validation('That label is not a label of this project');
   }
-  const minutes = input.leaseMinutes ?? DEFAULT_LEASE;
   const mine = assignedTo(actor.userId, membership.roleIds);
 
   const claimedId = deps.db.write((tx) => {
@@ -178,11 +176,7 @@ export function claimNextTask(
           eq(s.task.projectId, projectId),
           isNull(s.task.deletedAt),
           eq(s.status.category, 'open'),
-          or(
-            isNull(s.task.claimedById),
-            isNull(s.task.claimExpiresAt),
-            lte(s.task.claimExpiresAt, now),
-          ),
+          isNull(s.task.claimedById),
           sql`not ${isBlocked}`,
           input.roleId
             ? sql`exists (select 1 from ${s.taskAssigneeRole} where ${s.taskAssigneeRole.taskId} = ${s.task.id} and ${s.taskAssigneeRole.roleId} = ${input.roleId})`
@@ -206,17 +200,15 @@ export function claimNextTask(
     if (!candidate) return null;
     const task = candidate.task;
     const patch: Partial<TaskRow> = {
-      ...claimColumns(actor, now, minutes),
+      ...claimColumns(actor, now),
       ...(input.moveToStatusId
         ? moveOnClaim(tx, actor, { project, team }, task, input.moveToStatusId, now)
         : {}),
     };
-    const updated = tx
-      .update(s.task)
+    tx.update(s.task)
       .set({ ...patch, updatedAt: now })
       .where(eq(s.task.id, task.id))
-      .returning()
-      .get();
+      .run();
     recordActivity(tx, actor, {
       teamId: task.teamId,
       projectId,
@@ -225,8 +217,6 @@ export function claimNextTask(
       action: 'task.claimed',
       meta: {
         ...taskMeta(task, project.key),
-        leaseMinutes: minutes,
-        expiresAt: updated.claimExpiresAt?.toISOString() ?? null,
         next: true,
       },
     });
@@ -250,11 +240,8 @@ function freshTask(tx: Tx, taskId: string): TaskRow {
   return row;
 }
 
-function heldMessage(tx: Tx, task: TaskRow, ref: string, now: Date): string {
-  const left = task.claimExpiresAt
-    ? formatDistanceStrict(task.claimExpiresAt, now, { roundingMethod: 'ceil' })
-    : 'a while';
-  return `${ref} is claimed by ${holderLabel(tx, task)} for another ${left}. Pick another task, or take it over with force (needs the Update tasks permission).`;
+function heldMessage(tx: Tx, task: TaskRow, ref: string): string {
+  return `${ref} is claimed by ${holderLabel(tx, task)}. Pick another task, or take it over with force (needs the Update tasks permission).`;
 }
 
 /**
@@ -272,7 +259,6 @@ export function claimTask(
   const access = requireTask(orm, actor, taskId);
   const { project, membership } = access;
   requireClaimPermission(membership, access.task);
-  const minutes = input.leaseMinutes ?? DEFAULT_LEASE;
   const ref = formatTaskRef(project.key, access.task.number);
 
   deps.db.write((tx) => {
@@ -282,7 +268,7 @@ export function claimTask(
     const mineAlready = valid && isHolder(task, actor);
     const takeover = valid && !mineAlready;
     if (takeover) {
-      if (!input.force) throw errors.conflict(heldMessage(tx, task, ref, now));
+      if (!input.force) throw errors.conflict(heldMessage(tx, task, ref));
       requirePermission(
         membership,
         'UPDATE_TASKS',
@@ -298,19 +284,15 @@ export function claimTask(
     }
     const previousHolder = takeover ? holderLabel(tx, task) : null;
     const patch: Partial<TaskRow> = {
-      ...(mineAlready
-        ? { claimExpiresAt: leaseEnd(now, minutes) }
-        : claimColumns(actor, now, minutes)),
+      ...(mineAlready ? {} : claimColumns(actor, now)),
       ...(input.moveToStatusId
         ? moveOnClaim(tx, actor, access, task, input.moveToStatusId, now)
         : {}),
     };
-    const updated = tx
-      .update(s.task)
+    tx.update(s.task)
       .set({ ...patch, updatedAt: now })
       .where(eq(s.task.id, taskId))
-      .returning()
-      .get();
+      .run();
     recordActivity(tx, actor, {
       teamId: task.teamId,
       projectId: task.projectId,
@@ -323,8 +305,6 @@ export function claimTask(
           : 'task.claimed',
       meta: {
         ...taskMeta(task, project.key),
-        leaseMinutes: minutes,
-        expiresAt: updated.claimExpiresAt?.toISOString() ?? null,
         ...(previousHolder ? { previousHolder } : {}),
       },
     });
@@ -360,24 +340,8 @@ export function renewClaim(
           : `${ref} is not claimed by you. Claim it first (claim_task).`,
       );
     }
-    const minutes = input.leaseMinutes ?? leaseMinutesOf(tx, taskId);
-    const expiresAt = leaseEnd(now, minutes);
-    tx.update(s.task)
-      .set({ claimExpiresAt: expiresAt, updatedAt: sql`${s.task.updatedAt}` })
-      .where(eq(s.task.id, taskId))
-      .run();
-    recordActivity(tx, actor, {
-      teamId: task.teamId,
-      projectId: task.projectId,
-      entityType: 'task',
-      entityId: taskId,
-      action: 'task.claim_renewed',
-      meta: {
-        ...taskMeta(task, project.key),
-        leaseMinutes: minutes,
-        expiresAt: expiresAt.toISOString(),
-      },
-    });
+    // Claims don't expire (2026-09-27): renewing only confirms the caller still holds it.
+    void input; // `leaseMinutes` is accepted and ignored, for older agents.
     emitAfterCommit(tx, taskEvent('task.claimed', task, actor));
   });
   return getTask(deps, actor, taskId);
@@ -444,11 +408,10 @@ export function releaseTask(
 // ---------------------------------------------------------------------------------------------
 
 /**
- * Clears every claim whose lease ended by `now` (and claims of deleted accounts), writing a
- * system `task.claim_expired` row per live task and a `task.released` event. Returns how many
- * claims expired.
+ * Clears the claims of deleted accounts (claims themselves don't expire), writing a system
+ * `task.claim_expired` row per live task and a `task.released` event. Returns how many it cleared.
  */
-export function expireClaims(deps: Pick<AppDeps, 'db'>, now: Date = new Date()): number {
+export function expireClaims(deps: Pick<AppDeps, 'db'>, _now: Date = new Date()): number {
   return deps.db.write((tx) => {
     const rows = tx
       .select({ task: s.task, key: s.project.key })
@@ -456,12 +419,9 @@ export function expireClaims(deps: Pick<AppDeps, 'db'>, now: Date = new Date()):
       .innerJoin(s.project, eq(s.project.id, s.task.projectId))
       .where(
         and(
-          or(isNotNull(s.task.claimedAt), isNotNull(s.task.claimedById)),
-          or(
-            isNull(s.task.claimedById),
-            isNull(s.task.claimExpiresAt),
-            lte(s.task.claimExpiresAt, now),
-          ),
+          // Claims don't expire: only claims whose holder's account was deleted are cleared.
+          isNotNull(s.task.claimedAt),
+          isNull(s.task.claimedById),
         ),
       )
       .all();

@@ -163,12 +163,13 @@ export function toTaskCards(
     if (!project || !status) return [];
     const holder = row.claimedById ? holders.get(row.claimedById) : undefined;
     const claim =
-      holder && row.claimedAt && row.claimExpiresAt && isClaimValid(row, now)
+      holder && row.claimedAt && isClaimValid(row, now)
         ? {
             user: holder,
             via: row.claimedViaKeyId ? (keys.get(row.claimedViaKeyId) ?? null) : null,
             claimedAt: row.claimedAt.toISOString(),
-            expiresAt: row.claimExpiresAt.toISOString(),
+            // Claims don't expire (2026-09-27); kept for older clients.
+            expiresAt: null,
           }
         : null;
     const openBlockers = blockers.get(row.id) ?? [];
@@ -302,9 +303,9 @@ export function assignedTo(userId: string, roleIds: readonly string[]): SQL {
 export const isUnassigned = sql`(not exists (select 1 from ${s.taskAssigneeUser} where ${s.taskAssigneeUser.taskId} = ${s.task.id})
   and not exists (select 1 from ${s.taskAssigneeRole} where ${s.taskAssigneeRole.taskId} = ${s.task.id}))`;
 
-/** Tasks with a claim whose lease has not ended. */
-export function claimValidAt(now: Date): SQL {
-  return sql`(${s.task.claimedById} is not null and ${s.task.claimExpiresAt} > ${now.getTime()})`;
+/** Claimed tasks (claims don't expire; `now` is kept for callers). */
+export function claimValidAt(_now: Date): SQL {
+  return sql`(${s.task.claimedById} is not null)`;
 }
 
 function assigneeCondition(value: string, viewer: Membership): SQL {

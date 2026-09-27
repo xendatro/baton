@@ -358,7 +358,7 @@ Schemas: `shared/schemas/tasks.ts`. `TaskSummary` = `{ id, ref, number, title, p
 (`unreadCount`, sent by the board and the list: the viewer's unread notifications about the task and its replies, BAT-16);
 `Task` = `TaskCard` + `{ description, teamSlug, projectKey, author, via, editedAt, lastActivityAt, blockedBy: RelatedTask[], blocking: RelatedTask[], issues: LinkedIssue[], attachments, reactions: ReactionSummary[], subscribed }`,
 where `RelatedTask` = `{ id, ref, number, title, status, path }` and `LinkedIssue` = `{ id, ref, number, title, resolved, kind: 'fixes'|'relates', projectId, path }`.
-`claim` is null unless a lease is running. Reads need team membership (404 otherwise).
+`claim` is null unless someone holds a claim (claims don't expire; `claim.expiresAt` is always null). Reads need team membership (404 otherwise).
 
 Filters (board, list and `list_tasks`; the values of one filter are alternatives, different filters
 combine): `q` (title/description words, `12` or `KEY-12`), `status` (ids), `assignee` (`me` = me or
@@ -388,10 +388,11 @@ due filters; default the server's UTC date). Lists are comma-separated.
 | `POST /api/tasks/:taskId/claim/renew`             | `{ leaseMinutes? }` (default: the lease length chosen when claiming)                                                                                                                                                                                                                       | `Task`; `409` unless you (same user and key) hold the claim                                                                                                                                             | the holder                                                                          |
 | `POST /api/tasks/:taskId/release`                 | `{ note? }` (posted as a reply first; needs `REPLY`)                                                                                                                                                                                                                                       | `Task` (a no-op when nobody holds a claim)                                                                                                                                                              | the holder, or `UPDATE_TASKS`                                                       |
 
-Claims are held by (user, API key); the web holds them without a key ("ethan (web)"). Any write by
-the holder on the task renews the lease (updates, moves, replies and reply edits), entering a done
-status releases it, and the sweeper (`expire-claims`, every minute) clears expired leases with a
-system `task.claim_expired` row. Audit actions: `task.created` (`meta.fromIssue`), `task.updated`,
+Claims are held by (user, API key); the web holds them without a key ("ethan (web)"). A claim is
+held until it is released, taken over or the task enters a done status; claims don't expire
+(2026-09-27: `leaseMinutes` is accepted and ignored, and `claim/renew` only confirms the holder).
+The sweeper (`expire-claims`, every minute) only clears claims whose holder's account was deleted,
+with a system `task.claim_expired` row. Audit actions: `task.created` (`meta.fromIssue`), `task.updated`,
 `task.moved`, `task.deleted`, `task.restored`, `task.claimed` (`meta.leaseMinutes`, `meta.next`),
 `task.claim_renewed`, `task.claim_taken_over` (`meta.previousHolder`), `task.released`
 (`meta.reason: 'done'` when a done status released it, `meta.previousHolder`),

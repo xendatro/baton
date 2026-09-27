@@ -10,7 +10,7 @@ import {
   writeFilters,
   writeListOptions,
 } from './filters';
-import { claimedAgo, dropTarget, groupTasks, leaseLeft } from './helpers';
+import { claimedAgo, dropTarget, groupTasks } from './helpers';
 import { moveOnBoard } from './queries';
 
 const status = (id: string, name: string, position: number, category: 'open' | 'done' = 'open') =>
@@ -195,11 +195,7 @@ describe('list groups', () => {
 
 describe('claim wording', () => {
   const now = Date.parse('2030-01-01T12:00:00Z');
-  it('describes the lease left and the claim age', () => {
-    expect(leaseLeft('2030-01-01T12:25:30Z', now)).toBe('25 min left');
-    expect(leaseLeft('2030-01-01T14:05:00Z', now)).toBe('2 h 5 min left');
-    expect(leaseLeft('2030-01-01T13:00:00Z', now)).toBe('1 h left');
-    expect(leaseLeft('2030-01-01T11:59:00Z', now)).toBe('expiring');
+  it('describes the claim age', () => {
     expect(claimedAgo('2030-01-01T11:59:50Z', now)).toBe('Claimed just now');
     expect(claimedAgo('2030-01-01T11:48:00Z', now)).toBe('Claimed 12m ago');
   });

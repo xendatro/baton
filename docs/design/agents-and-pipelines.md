@@ -48,7 +48,10 @@ type Principal =
   | { type: 'role'; roleId: string; scope: 'people' | 'agents' | 'both' } // team role
   | { type: 'project_role'; roleId: string; scope: 'people' | 'agents' | 'both' }
   | { type: 'everyone'; scope: 'people' | 'agents' | 'both' };
-interface PrincipalRule { allow: Principal[]; deny: Principal[] } // allow any, minus deny
+interface PrincipalRule {
+  allow: Principal[];
+  deny: Principal[];
+} // allow any, minus deny
 ```
 
 `scope: 'agents'` of a role means the agents whose owners have the role, plus agents that hold
@@ -67,7 +70,7 @@ the role themselves. Resolver: `matchesRule(db, {teamId, projectId}, userId, rul
 - **Project roles**: `project_role` (per project; name, slug, color, position) with members
   (people or agents). Managed with `MANAGE_PROJECT_ACCESS` (or team MANAGE_PROJECTS/admin).
 - **Overrides**: `project_permission_override (project, subject: team_role | project_role | user,
-  allow[], deny[])`. Effective project permissions, Discord-style: team role permissions (project
+allow[], deny[])`. Effective project permissions, Discord-style: team role permissions (project
   -level subset) → apply team-role and project-role overrides (all denies, then all allows) →
   apply the user's own override (deny, then allow). Team owner and ADMINISTRATOR bypass. Agents:
   then intersect with the owner's result.
@@ -77,7 +80,7 @@ the role themselves. Resolver: `matchesRule(db, {teamId, projectId}, userId, rul
 ## 4. Listener and jobs (agents at work)
 
 - `agent_job`: `(agent, team, project, kind, target (task|issue|reply), trigger reply, payload,
-  status pending|claimed|done|cancelled, session, lease_until)`. Kinds: `mention` (agent's
+status pending|claimed|done|cancelled, session)`. Kinds: `mention` (agent's
   username in a reply/task/issue body), `assigned` (task assigned to the agent), `pool` (task
   entered a stage whose hand-off pool includes the agent; first claim wins, the task is assigned to
   the claimer and the others' pool jobs are cancelled), `thread_reply` (a reply in a thread the
@@ -86,8 +89,9 @@ the role themselves. Resolver: `matchesRule(db, {teamId, projectId}, userId, rul
 - MCP `start_listener { projects: [KEY…] (required), timeoutSeconds ≤ 110 }`: registers or
   refreshes the session (`agent_session`: agent, key, projects, last_seen) for **those projects
   only**, then returns the pending jobs it can claim at once, or waits up to the timeout for the
-  first one. Returned jobs are **claimed atomically** by this session (lease 10 min, renewed by any
-  write the agent makes to the target or by calling `start_listener` again). The agent's harness
+  first one. Returned jobs are **claimed atomically** by this session and held until it completes or
+  releases them — no timers (like task claims since 2026-09-27); only when the session disappears
+  (not seen for 90 s) are its claimed jobs put back for another session. The agent's harness
   spawns a subagent per job and loops. `complete_job { jobId, agreeDone? }`, `release_job { jobId }`.
   Jobs of other projects wait until a listener for them runs.
 - Two sessions of one agent never get the same job; two different agents mentioned together each
@@ -101,7 +105,7 @@ the role themselves. Resolver: `matchesRule(db, {teamId, projectId}, userId, rul
   agent replies in that thread until a human replies. Tool descriptions explain this.
 - **Presence**: an agent is online while a listener session was seen in the last 90 s; a person is
   online while they have a live-updates connection (SSE or long-poll) open. `GET
-  /api/teams/:id/presence` and a throttled `presence.changed` live event.
+/api/teams/:id/presence` and a throttled `presence.changed` live event.
 
 ## 5. Pipelines (per-project stage rules)
 
@@ -130,7 +134,7 @@ Every status (stage) gets optional rules (`status` columns, JSON where noted):
   that don't exist in the target team are flagged for re-picking, never silently dropped.
 - MCP: `get_task` includes the stage's instructions, criteria (with evidence), approvals status and
   what is missing to move on; `move_task` accepts `evidence`; new `approve_task { task, decision,
-  comment? }`; pool tasks are claimed with `claim_task`.
+comment? }`; pool tasks are claimed with `claim_task`.
 - Rollout data (after deploy, by the lead, **not** Caden's projects): BAT's In-Review needs
   1 approval from people (agents denied).
 

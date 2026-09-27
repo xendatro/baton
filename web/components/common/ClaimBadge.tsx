@@ -11,26 +11,22 @@ export interface ClaimBadgeProps {
   via: ViaKey | null;
   /** ISO timestamps. */
   claimedAt: string;
-  expiresAt: string;
   className?: string;
 }
 
 /**
- * "ethan via Claude on laptop · 4m": who is working on an item. An expired lease is shown
- * struck through and muted, since the item is free to claim again.
+ * "ethan via Claude on laptop · 4m": who is working on an item. Claims are held until released,
+ * so there is no expiry to show.
  */
-export function ClaimBadge({ holder, via, claimedAt, expiresAt, className }: ClaimBadgeProps) {
+export function ClaimBadge({ holder, via, claimedAt, className }: ClaimBadgeProps) {
   const now = useNow();
-  const stale = new Date(expiresAt).getTime() <= now;
   const holderName = holder?.name ?? 'Deleted user';
-  const description = `${holderName} ${via ? `via ${via.keyName}` : '(web)'} claimed this ${formatAge(claimedAt, new Date(now))} ago; ${stale ? 'the claim expired' : 'lease ends'} ${formatDateTime(expiresAt)}`;
+  const description = `${holderName} ${via ? `via ${via.keyName}` : '(web)'} claimed this ${formatAge(claimedAt, new Date(now))} ago (${formatDateTime(claimedAt)})`;
   return (
     <span
       className={cn(
         'inline-flex h-6 max-w-full min-w-0 items-center gap-1.5 rounded-full border px-2 text-xs',
-        stale
-          ? 'border-dashed text-muted-foreground'
-          : 'border-emerald-500/40 bg-emerald-500/10 text-foreground',
+        'border-emerald-500/40 bg-emerald-500/10 text-foreground',
         className,
       )}
       title={description}
@@ -43,12 +39,12 @@ export function ClaimBadge({ holder, via, claimedAt, expiresAt, className }: Cla
           <HandIcon className="size-3.5 shrink-0" />
         )}
         <UserAvatar user={holder} size="xs" />
-        <span className={cn('truncate', stale && 'line-through')}>
+        <span className="truncate">
           <span className="font-medium">{holderName}</span>{' '}
           {via ? <span className="text-muted-foreground">via {via.keyName}</span> : '(web)'}
         </span>
         <span className="shrink-0 text-muted-foreground">
-          · {stale ? 'expired' : formatAge(claimedAt, new Date(now))}
+          · {formatAge(claimedAt, new Date(now))}
         </span>
       </span>
     </span>

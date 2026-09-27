@@ -424,16 +424,11 @@ describe('CDI-09: the trash purge removes notifications of purged projects', () 
 });
 
 describe('CDI-12: files added to a task are writes on the task', () => {
-  it('uploading to the task (or to a reply on it) renews the holder’s claim', async () => {
+  it('uploading to the task (or to a reply on it) counts as activity on it', async () => {
     const task = createTask(ctx.deps, actorOf(owner), api.project.id, { title: 'Work' });
-    claimTask(ctx.deps, actorOf(bob), task.id, { leaseMinutes: 5 });
-    const soon = new Date(Date.now() + 60 * 1000);
+    claimTask(ctx.deps, actorOf(bob), task.id, {});
     const past = new Date(Date.now() - 60 * 1000);
-    ctx.db.orm
-      .update(s.task)
-      .set({ claimExpiresAt: soon, lastActivityAt: past })
-      .where(eq(s.task.id, task.id))
-      .run();
+    ctx.db.orm.update(s.task).set({ lastActivityAt: past }).where(eq(s.task.id, task.id)).run();
 
     await uploadAttachmentContent(ctx.deps, actorOf(bob), {
       teamId: team.team.id,
@@ -444,7 +439,8 @@ describe('CDI-12: files added to a task are writes on the task', () => {
     });
 
     const row = taskRow(task.id);
-    expect(row.claimExpiresAt?.getTime()).toBeGreaterThan(Date.now() + 4 * 60 * 1000);
+    // Claims don't expire any more (2026-09-27), so there is no lease to renew.
+    expect(row.claimedById).toBe(bob.id);
     expect(row.lastActivityAt.getTime()).toBeGreaterThan(past.getTime());
   });
 });

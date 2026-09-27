@@ -400,7 +400,7 @@ test("shows an agent's claim with its key, live", async ({ page, playwright }) =
     await card.click();
     const details = page.getByRole('complementary', { name: 'Task details' });
     await expect(details.getByText('Claude on laptop')).toBeVisible();
-    await expect(details.getByText(/min left/)).toBeVisible();
+    await expect(details.getByText(/^Claimed (just now|\d+[mhd] ago)$/)).toBeVisible();
     await expect(details.getByRole('button', { name: 'Release' })).toBeVisible();
 
     const done = await agent.post(`/api/tasks/${task.id}/move`, {

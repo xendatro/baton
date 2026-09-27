@@ -132,16 +132,6 @@ export function groupTasks(
 // Claims
 // ---------------------------------------------------------------------------------------------
 
-/** "25 min left", "1 h 5 min left", "expiring". */
-export function leaseLeft(expiresAt: string, now: number): string {
-  const minutes = Math.floor((Date.parse(expiresAt) - now) / 60_000);
-  if (minutes <= 0) return 'expiring';
-  if (minutes < 60) return `${minutes} min left`;
-  const hours = Math.floor(minutes / 60);
-  const rest = minutes % 60;
-  return rest ? `${hours} h ${rest} min left` : `${hours} h left`;
-}
-
 /** "Claimed just now", "Claimed 12m ago", "Claimed 3h ago", "Claimed 2d ago". */
 export function claimedAgo(claimedAt: string, now: number): string {
   const minutes = Math.floor((now - Date.parse(claimedAt)) / 60_000);

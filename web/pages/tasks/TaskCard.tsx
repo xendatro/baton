@@ -47,7 +47,6 @@ export function TaskCardBody({ task }: { task: TaskCardData }) {
           holder={task.claim.user}
           via={task.claim.via}
           claimedAt={task.claim.claimedAt}
-          expiresAt={task.claim.expiresAt}
           className="self-start"
         />
       ) : null}

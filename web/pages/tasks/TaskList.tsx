@@ -189,7 +189,6 @@ function Row({ task }: { task: TaskCard }) {
               holder={task.claim.user}
               via={task.claim.via}
               claimedAt={task.claim.claimedAt}
-              expiresAt={task.claim.expiresAt}
             />
           ) : null}
         </div>

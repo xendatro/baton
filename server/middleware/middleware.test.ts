@@ -1,5 +1,5 @@
 import { eq } from 'drizzle-orm';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { LIMITS, RATE_LIMITS } from '@shared/constants';
 import { apiErrorSchema } from '@shared/schemas/common';
 import {
@@ -163,11 +163,17 @@ describe('rate limits', () => {
     const user = createUser(ctx.db);
     const { key } = createApiKey(ctx.db, { userId: user.id });
     let last: Response | undefined;
-    for (let i = 0; i <= RATE_LIMITS.writesPerUser; i += 1) {
-      last = await ctx.app.request(
-        '/api/notifications/read',
-        json('POST', { all: true }, bearer(key)),
-      );
+    // The clock stands still, so the bucket can't refill while a slow run sends the requests.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      for (let i = 0; i <= RATE_LIMITS.writesPerUser; i += 1) {
+        last = await ctx.app.request(
+          '/api/notifications/read',
+          json('POST', { all: true }, bearer(key)),
+        );
+      }
+    } finally {
+      vi.useRealTimers();
     }
     expect(last?.status).toBe(429);
     expect(await errorCode(last as Response)).toBe('rate_limited');

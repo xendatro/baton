@@ -7,6 +7,7 @@ import { SidebarInset, SidebarProvider } from '@web/components/ui/sidebar';
 import { useMe } from '@web/lib/auth';
 import { setShortcutsHelpOpen, useHotkey } from '@web/lib/hotkeys';
 import { useLiveEvents } from '@web/lib/live';
+import { useNavigationHistory } from '@web/lib/navigationHistory';
 import { useRouteContext } from '@web/lib/routeContext';
 import { useSyncProfileTheme } from '@web/lib/theme';
 import { useDocumentTitle } from '@web/lib/title';
@@ -68,6 +69,7 @@ function Shell() {
   useDocumentTitle(titleParts(crumbs, location.pathname), 0);
   useSyncProfileTheme(me?.user.theme);
   useGlobalHotkeys();
+  useNavigationHistory();
   const [sidebarOpen] = useState(sidebarInitiallyOpen);
 
   return (

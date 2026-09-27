@@ -387,3 +387,52 @@ test('members see only what their permissions allow, and the tasks addressing an
   ).toBeVisible();
   await other.context.close();
 });
+
+test('the back link returns to the filtered issue list where it was left (BAT-11)', async ({
+  page,
+}) => {
+  const owner = await signedInUser(page);
+  const team = seedTeam(owner);
+  const project = await createProject(page, team, 'BCK');
+  const bug = await createLabel(page, project.id, 'Bug');
+  await createIssue(page, project.id, { title: 'Not a bug at all' });
+  for (let index = 1; index <= 20; index += 1) {
+    await createIssue(page, project.id, { title: `Crash number ${index}`, labelIds: [bug.id] });
+  }
+  const rows = page.getByRole('list', { name: 'Issues' }).getByRole('listitem');
+  const scrollY = () => page.evaluate(() => (globalThis as unknown as { scrollY: number }).scrollY);
+
+  // Opened directly, the link goes to the issue list.
+  await page.goto(`/t/${team.slug}/p/BCK/issues/1`);
+  await page.getByRole('link', { name: 'Back to Issues' }).click();
+  await expect(page).toHaveURL(new RegExp(`/t/${team.slug}/p/BCK/issues$`));
+  await expect(rows).toHaveCount(21);
+
+  // Filter the list, scroll down and open an issue from it.
+  await page.getByRole('button', { name: 'Filter by label' }).click();
+  await page.getByRole('option', { name: 'Bug' }).click();
+  await page.keyboard.press('Escape');
+  await expect(page).toHaveURL(/label=Bug/);
+  await expect(rows).toHaveCount(20);
+  // Closing the popover returns focus to its button at the top; scroll only after that.
+  await expect(page.getByRole('button', { name: 'Labels: 1 selected' })).toBeFocused();
+  const oldest = page.getByRole('link', { name: 'Crash number 1', exact: true });
+  await oldest.scrollIntoViewIfNeeded();
+  const scrolled = await scrollY();
+  expect(scrolled).toBeGreaterThan(0);
+  await oldest.click();
+  await expect(page.getByRole('heading', { level: 1, name: 'Crash number 1 #2' })).toBeVisible();
+
+  // Back: the filter and the scroll position are kept.
+  await page.getByRole('link', { name: 'Back to Issues' }).click();
+  await expect(page).toHaveURL(new RegExp(`/t/${team.slug}/p/BCK/issues\\?label=Bug$`));
+  await expect(rows).toHaveCount(20);
+  await expect.poll(scrollY).toBeGreaterThan(scrolled - 5);
+
+  // `u` does the same.
+  await page.getByRole('link', { name: 'Crash number 2', exact: true }).click();
+  await expect(page.getByRole('heading', { level: 1, name: 'Crash number 2 #3' })).toBeVisible();
+  await page.keyboard.press('u');
+  await expect(page).toHaveURL(/label=Bug$/);
+  await expect(rows).toHaveCount(20);
+});

@@ -25,6 +25,7 @@ import { Skeleton } from '@web/components/ui/skeleton';
 import { Switch } from '@web/components/ui/switch';
 import { errorMessage } from '@web/lib/api';
 import { isDesktopApp, useDesktopState } from '@web/lib/desktop';
+import { hardestFirst } from '@web/lib/difficulty';
 import { useRouteContext } from '@web/lib/routeContext';
 import { useDocumentTitle } from '@web/lib/title';
 import { ChainEditor } from '../settings/ChainEditor';
@@ -281,7 +282,7 @@ function ModelsCard({ projectId, settings }: { projectId: string; settings: MyPr
   return (
     <SettingsCard
       title="Models by difficulty"
-      description="Which harness and model your agent runs for this project’s tasks, by their difficulty. When a harness is out of usage, the desktop app moves on to the next step."
+      description="Which harness and model your agent runs for this project’s tasks, by their difficulty. When a harness is out of usage, the desktop app moves on to the next step. Hardest first: a level on your defaults uses the closest easier level you mapped, then a harder one, then your account’s models."
       footer={
         <div className="flex w-full justify-end">
           <Button size="sm" onClick={submit} disabled={!dirty || update.isPending}>
@@ -308,8 +309,8 @@ function ModelsCard({ projectId, settings }: { projectId: string; settings: MyPr
           .
         </p>
       ) : (
-        <ul className="grid gap-3" aria-label="Models by difficulty level">
-          {levels.data.map((level) => {
+        <ul className="grid gap-3" aria-label="Models by difficulty level, hardest first">
+          {hardestFirst(levels.data).map((level) => {
             const chain = mapping[level.id];
             const inherits = chain === undefined;
             const resolved = resolveChain({

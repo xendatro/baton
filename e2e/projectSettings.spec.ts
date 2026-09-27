@@ -38,7 +38,7 @@ test('your settings for a project: a model override and notifications', async ({
   await expect(page.getByRole('heading', { name: 'Your settings for this project' })).toBeVisible();
 
   // Models: every level uses my defaults until I override one.
-  const levels = page.getByRole('list', { name: 'Models by difficulty level' });
+  const levels = page.getByRole('list', { name: 'Models by difficulty level, hardest first' });
   const hard = levels.getByRole('listitem').filter({ hasText: 'Hard' });
   await expect(hard.getByText('From your defaults: Claude Code opus')).toBeVisible();
   await hard.getByRole('switch', { name: 'Hard: use my defaults' }).click();

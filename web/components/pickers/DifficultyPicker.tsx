@@ -3,6 +3,7 @@ import type { TaskDifficultySummary } from '@shared/schemas/tasks';
 import { DifficultyBadge } from '@web/components/common/DifficultyBadge';
 import { Button } from '@web/components/ui/button';
 import { CommandGroup, CommandItem } from '@web/components/ui/command';
+import { hardestFirst } from '@web/lib/difficulty';
 import { PickerShell, type PickerControlProps } from './PickerShell';
 import { useOpenState } from './useOpenState';
 
@@ -15,8 +16,8 @@ export interface DifficultyPickerProps extends PickerControlProps {
 }
 
 /**
- * Picks a task's difficulty level (BAT-24): the project's levels easiest first, and "No
- * difficulty" (each person's agent then uses their default model).
+ * Picks a task's difficulty level (BAT-24): the project's levels, shown hardest first (BAT-30), and
+ * "No difficulty" (each person's agent then uses their default model).
  */
 export function DifficultyPicker({
   levels,
@@ -54,8 +55,8 @@ export function DifficultyPicker({
       className="w-52"
       align={align}
     >
-      <CommandGroup>
-        {levels.map((level) => (
+      <CommandGroup heading={levels.length > 1 ? 'Hardest → easiest' : undefined}>
+        {hardestFirst(levels).map((level) => (
           <CommandItem
             key={level.id}
             value={level.id}
@@ -66,6 +67,8 @@ export function DifficultyPicker({
             {level.id === value ? <CheckIcon className="ml-auto" aria-label="selected" /> : null}
           </CommandItem>
         ))}
+      </CommandGroup>
+      <CommandGroup>
         <CommandItem
           value="none"
           keywords={['none', 'no difficulty', 'default']}

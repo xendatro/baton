@@ -117,7 +117,7 @@ describe('creating tasks', () => {
       ref: 'API-1',
       number: 1,
       title: 'Fix login',
-      status: { id: statusId(open), name: 'Open', category: 'open' },
+      status: { id: statusId(open), name: 'Open', icon: 'circle' },
       priority: 0,
       dueDate: null,
       claim: null,
@@ -388,7 +388,7 @@ describe('moving tasks', () => {
   });
 });
 
-describe('done statuses', () => {
+describe('the seeded Done stage (onEnter: resolve issues, notify, release; assigns nobody)', () => {
   it('resolves fixed issues, notifies the issue author, task author and assignees', () => {
     const fixed = createIssue(ctx.db, {
       project: project.project,

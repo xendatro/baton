@@ -17,7 +17,7 @@ import { toActivityEntries, type ActivityRow } from './activity';
 import { canSeeAttachmentHistory } from './attachments';
 import { trashedItem, trashedReply, type TrashEntry } from './items';
 import {
-  assignedOpenCondition,
+  assignedWorkCondition,
   claimedByCondition,
   countTasks,
   dueSoonUntil,
@@ -61,7 +61,7 @@ function assignedCounts(
     .innerJoin(s.status, eq(s.status.id, s.task.statusId))
     .innerJoin(s.project, eq(s.project.id, s.task.projectId))
     .innerJoin(s.team, eq(s.team.id, s.task.teamId))
-    .where(assignedOpenCondition(scope))
+    .where(assignedWorkCondition(scope))
     .get();
   return {
     assigned: Number(row?.assigned ?? 0),
@@ -273,7 +273,7 @@ export function getDashboard(
     };
   }
 
-  const assignedOpen = assignedOpenCondition(scope);
+  const assignedWork = assignedWorkCondition(scope);
   const list = (where: SQL | undefined, order: SQL[], limit = DASHBOARD_LIST_LIMIT) =>
     toMyTasks(
       orm,
@@ -291,10 +291,10 @@ export function getDashboard(
   return {
     today,
     counts: { ...assignedCounts(orm, scope, today), claimed: countTasks(orm, claimedWhere) },
-    assigned: list(assignedOpen, taskOrder('priority')),
-    overdue: list(and(assignedOpen, lt(s.task.dueDate, today)), taskOrder('due')),
+    assigned: list(assignedWork, taskOrder('priority')),
+    overdue: list(and(assignedWork, lt(s.task.dueDate, today)), taskOrder('due')),
     dueSoon: list(
-      and(assignedOpen, gte(s.task.dueDate, today), lte(s.task.dueDate, dueSoonUntil(today))),
+      and(assignedWork, gte(s.task.dueDate, today), lte(s.task.dueDate, dueSoonUntil(today))),
       taskOrder('due'),
     ),
     claimed: list(claimedWhere, [desc(s.task.claimedAt), asc(s.task.id)], CLAIMED_LIMIT),

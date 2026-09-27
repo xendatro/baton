@@ -3,7 +3,8 @@ import type { HandoffMode, StageRules } from '@shared/schemas/pipelines';
 /** Wording of pipeline stage rules (design §5) in Project settings → Statuses. */
 
 export const HANDOFF_LABELS: Record<HandoffMode, string> = {
-  keep: 'Keep the assignees',
+  keep: 'Keep the assignees (whoever had it here before, else the previous stage’s)',
+  nobody: 'Assign nobody',
   specific: 'Assign specific people',
   pool: 'Put it in a pool (anyone matching can claim it)',
   round_robin: 'Assign one of them in turn (round robin)',
@@ -20,6 +21,11 @@ export function countRules(rules: StageRules | undefined): number {
     rules.instructions.trim() !== '',
     rules.handoff.mode !== 'keep',
     rules.notify !== null,
+    rules.onEnter.resolveIssues,
+    rules.onEnter.releaseClaim,
+    rules.onEnter.notifyAuthor,
+    !rules.blocksDependents,
+    !rules.claimable,
     rules.exitCriteria.length > 0,
     rules.moveRule !== null,
     rules.approvals !== null,

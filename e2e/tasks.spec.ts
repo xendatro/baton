@@ -421,7 +421,7 @@ test("shows an agent's claim with its key, live", async ({ page, playwright }) =
       data: { statusId: project.statuses.find((status) => status.name === 'Done')?.id },
     });
     expect(done.status(), await done.text()).toBe(200);
-    await expect(details.getByText('Done — nobody is working on it.')).toBeVisible();
+    await expect(details.getByText('Tasks in Done aren’t claimed.')).toBeVisible();
   } finally {
     await agent.dispose();
   }

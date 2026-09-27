@@ -48,10 +48,11 @@ async function createWorld(request: APIRequestContext, projectName = 'Web app'):
     id: string;
     key: string;
     name: string;
-    statuses: Array<{ id: string; category: 'open' | 'done' }>;
+    statuses: Array<{ id: string; name: string }>;
   }>(request, `/api/teams/${team.id}/projects`, { name: projectName, key: 'WEB' });
-  const status = (category: 'open' | 'done') =>
-    project.statuses.find((candidate) => candidate.category === category)?.id ?? '';
+  // A new project's two stages: Open (default) and Done (assigns nobody, finishes the task).
+  const status = (name: 'Open' | 'Done') =>
+    project.statuses.find((candidate) => candidate.name === name)?.id ?? '';
   const role = await post<{ id: string }>(request, `/api/teams/${team.id}/roles`, {
     name: 'Design',
   });
@@ -63,7 +64,7 @@ async function createWorld(request: APIRequestContext, projectName = 'Web app'):
   return {
     userId: team.ownerId,
     team,
-    project: { ...project, openStatusId: status('open'), doneStatusId: status('done') },
+    project: { ...project, openStatusId: status('Open'), doneStatusId: status('Done') },
     roleId: role.id,
   };
 }
@@ -94,11 +95,18 @@ async function createTasks(
         title: task.title,
         priority: task.priority ?? 0,
         dueDate: task.dueDate ?? null,
-        ...(task.statusId ? { statusId: task.statusId } : {}),
         assigneeUserIds: task.assignUser ? [task.assignUser] : [],
         assigneeRoleIds: task.assignRole ? [task.assignRole] : [],
       },
     );
+    // Moved there after creation, so the stage's hand-off applies (Done assigns nobody).
+    if (task.statusId) {
+      const moved = await request.post(`/api/tasks/${row.id}/move`, {
+        data: { statusId: task.statusId },
+        headers: ORIGIN,
+      });
+      expect(moved.ok(), await moved.text()).toBe(true);
+    }
     if (task.claimWith) {
       const claimed = await request.post(`/api/tasks/${row.id}/claim`, {
         data: {},
@@ -212,11 +220,11 @@ test('the dashboard shows my work, claims, live activity and my teams', async ({
   await expect(claimedTask).toContainText('via the Claude on laptop key');
 
   const feed = page.getByRole('list', { name: 'Recent activity' });
-  await expect(feed).toContainText('created project Web app');
+  await expect(feed).toContainText('created task WEB-1 “Ship the release”');
 
   const teams = page.getByRole('region', { name: 'Teams and projects' });
-  // Open tasks of the project, whoever they are assigned to.
-  await expect(teams.getByRole('link', { name: /Web app/ })).toContainText('Open tasks:5');
+  // Tasks of the project someone holds in their current stage, whoever it is.
+  await expect(teams.getByRole('link', { name: /Web app/ })).toContainText('Assigned tasks:3');
 
   // A reply is written through the API: the activity feed updates live.
   await post(page.request, '/api/replies', {
@@ -255,7 +263,7 @@ test('My tasks groups by project, filters from the URL and the keyboard', async 
   await page.keyboard.press('m');
   await expect(page).toHaveURL(/\/my-tasks$/);
   await expect(page.getByRole('heading', { name: 'My tasks' })).toBeVisible();
-  await expect(page.getByText('3 open tasks')).toBeVisible();
+  await expect(page.getByText('3 assigned tasks')).toBeVisible();
 
   const team = page.getByRole('region', { name: world.team.name });
   await expect(team.getByRole('heading', { level: 3 })).toHaveText(['API platform', 'Web app']);
@@ -266,17 +274,17 @@ test('My tasks groups by project, filters from the URL and the keyboard', async 
   await page.getByRole('button', { name: 'Filter by due' }).click();
   await page.getByRole('option', { name: 'Overdue' }).click();
   await expect(page).toHaveURL(/due=overdue/);
-  await expect(page.getByText('1 open task')).toBeVisible();
+  await expect(page.getByText('1 assigned task')).toBeVisible();
   await expect(page.getByRole('link', { name: /Fix the login redirect/ })).toBeVisible();
 
   await page.getByRole('button', { name: 'Clear', exact: true }).click();
-  await expect(page.getByText('3 open tasks')).toBeVisible();
+  await expect(page.getByText('3 assigned tasks')).toBeVisible();
 
   await page.keyboard.press('/');
   await expect(page.getByRole('searchbox', { name: 'Search my tasks' })).toBeFocused();
   await page.keyboard.type('webhooks');
   await expect(page).toHaveURL(/q=webhooks/);
-  await expect(page.getByText('1 open task')).toBeVisible();
+  await expect(page.getByText('1 assigned task')).toBeVisible();
 
   // Filters survive a reload, since they live in the URL.
   await page.reload();

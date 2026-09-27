@@ -159,7 +159,7 @@ function GroupMark({ group }: { group: TaskGroup }) {
 }
 
 function Row({ task }: { task: TaskCard }) {
-  const done = task.status.category === 'done';
+  const done = task.completedAt !== null;
   return (
     <tr className="group border-b transition-colors hover:bg-muted/40">
       <td className="py-2 pr-2 pl-4 align-top font-mono text-xs text-muted-foreground tabular-nums sm:pl-6">

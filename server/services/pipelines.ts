@@ -1,9 +1,9 @@
 import { and, asc, count, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type { Principal, PrincipalRule } from '@shared/principals';
 import { formatTaskRef } from '@shared/refs';
+import type { StatusIconShape } from '@shared/constants';
 import {
   DEFAULT_STAGE_RULES,
-  hasStageRules,
   isGatedStage,
   RULE_HANDOFF_MODES,
   stageRulesSchema,
@@ -34,6 +34,7 @@ import { notifyAssigned, notifyUsers, type NotifiedSet } from './notifications';
 import { onStageApprovalsReset, onTaskEnteredStage } from './pipelineHooks';
 import { matchesRule, expandRule } from './principals';
 import { autoSubscribe } from './subscriptions';
+import { currentUserRow, setStageAssignees, stageRoleIds, stageUserIds } from './taskAssignees';
 import {
   appendPosition,
   applyStatusTransition,
@@ -80,6 +81,9 @@ export function rulesOf(row: StatusRow): StageRules {
     instructions: row.instructions,
     handoff: row.handoff ?? { mode: 'keep' },
     notify: row.notify ?? null,
+    onEnter: { ...DEFAULT_STAGE_RULES.onEnter, ...row.onEnter },
+    blocksDependents: row.blocksDependents,
+    claimable: row.claimable,
     exitCriteria: row.exitCriteria,
     moveRule: row.moveRule ?? null,
     approvals: row.approvals
@@ -105,16 +109,37 @@ export function ruleColumns(rules: StageRules) {
             ? { statusId: rules.handoff.statusId }
             : {}),
         };
+  const { onEnter } = rules;
   return {
     instructions: rules.instructions,
     handoff,
     notify: rules.notify,
+    onEnter: onEnter.resolveIssues || onEnter.releaseClaim || onEnter.notifyAuthor ? onEnter : null,
+    blocksDependents: rules.blocksDependents,
+    claimable: rules.claimable,
     exitCriteria: rules.exitCriteria,
     moveRule: rules.moveRule,
     approvals: rules.approvals,
     autoAdvance: rules.autoAdvance,
     nextStatusId: rules.nextStatusId,
     allowSendBack: rules.allowSendBack,
+  };
+}
+
+/** Status columns of a seeded status (new projects, test fixtures): its icon and rules. */
+export function seedStatusColumns(seed: {
+  name: string;
+  color: string;
+  icon: StatusIconShape;
+  isDefault: boolean;
+  rules: Partial<StageRules> | null;
+}) {
+  return {
+    name: seed.name,
+    color: seed.color,
+    icon: seed.icon,
+    isDefault: seed.isDefault,
+    ...ruleColumns({ ...DEFAULT_STAGE_RULES, ...seed.rules }),
   };
 }
 
@@ -144,11 +169,23 @@ function previousStage(statuses: readonly StatusRow[], from: StatusRow): StatusR
   return index > 0 ? (statuses[index - 1] ?? null) : null;
 }
 
-/** Does any status of the project have pipeline rules (or instructions)? */
+/**
+ * Does any status of the project have workflow rules a task page shows (instructions, hand-offs
+ * to people, notify, exit rules, auto-advance, next stage, no send-back)? A stage's own behaviour
+ * (on-enter effects, blocking, claimable, assigning nobody) shows nothing on its own.
+ */
 function hasPipeline(statuses: readonly StatusRow[]): boolean {
   return statuses.some((row) => {
     const rules = rulesOf(row);
-    return hasStageRules(rules) || rules.instructions.trim() !== '';
+    return (
+      isGatedStage(rules) ||
+      (rules.handoff.mode !== 'keep' && rules.handoff.mode !== 'nobody') ||
+      rules.notify !== null ||
+      rules.autoAdvance ||
+      rules.nextStatusId !== null ||
+      !rules.allowSendBack ||
+      rules.instructions.trim() !== ''
+    );
   });
 }
 
@@ -261,6 +298,7 @@ export function describeRule(db: DbExecutor, rule: PrincipalRule): string {
 
 const HANDOFF_WORDS: Record<StageRules['handoff']['mode'], string> = {
   keep: 'Keep the assignees',
+  nobody: 'Assign nobody',
   specific: 'Assign',
   pool: 'Pool for',
   round_robin: 'Round robin among',
@@ -289,10 +327,18 @@ function ruleSummaries(db: DbExecutor, rules: StageRules): Record<keyof StageRul
     : handoff.mode === 'stage_holder'
       ? `${HANDOFF_WORDS.stage_holder} ${statusName(handoff.statusId) ?? 'a deleted stage'}`
       : HANDOFF_WORDS[handoff.mode];
+  const onEnter = [
+    ...(rules.onEnter.resolveIssues ? ['resolve fixed issues'] : []),
+    ...(rules.onEnter.releaseClaim ? ['release the claim'] : []),
+    ...(rules.onEnter.notifyAuthor ? ['notify the author'] : []),
+  ];
   return {
     instructions: excerpt(rules.instructions, 140),
     handoff: handoffText,
     notify: rules.notify ? ruleText(rules.notify, book) : null,
+    onEnter: onEnter.length > 0 ? onEnter.join(', ') : null,
+    blocksDependents: rules.blocksDependents,
+    claimable: rules.claimable,
     exitCriteria: rules.exitCriteria.map((criterion) => criterion.text),
     moveRule: rules.moveRule ? ruleText(rules.moveRule, book) : null,
     approvals: rules.approvals
@@ -379,7 +425,11 @@ export function mergeRules(
   current: StageRules,
   patch: StageRulesPatch,
 ): StageRules {
-  const parsed = stageRulesSchema.safeParse({ ...current, ...patch });
+  const parsed = stageRulesSchema.safeParse({
+    ...current,
+    ...patch,
+    onEnter: { ...current.onEnter, ...patch.onEnter },
+  });
   if (!parsed.success) {
     const issue = parsed.error.issues[0];
     throw errors.validation(issue?.message ?? 'Invalid stage rules', {
@@ -708,24 +758,6 @@ export function recordForced(
 // Entering a stage
 // ---------------------------------------------------------------------------------------------
 
-function directUserAssignees(tx: Tx, taskId: string): string[] {
-  return tx
-    .select({ id: s.taskAssigneeUser.userId })
-    .from(s.taskAssigneeUser)
-    .where(eq(s.taskAssigneeUser.taskId, taskId))
-    .all()
-    .map((row) => row.id);
-}
-
-function roleAssignees(tx: Tx, taskId: string): string[] {
-  return tx
-    .select({ id: s.taskAssigneeRole.roleId })
-    .from(s.taskAssigneeRole)
-    .where(eq(s.taskAssigneeRole.taskId, taskId))
-    .all()
-    .map((row) => row.id);
-}
-
 /** Candidates of a rule who can see the project, in a stable order (by id). */
 function ruleCandidates(tx: Tx, scope: Scope, rule: PrincipalRule | undefined): string[] {
   if (!rule) return [];
@@ -746,6 +778,10 @@ function roundRobin(tx: Tx, statusId: string, candidates: readonly string[]): st
   return [next ?? candidates[0] ?? ''].filter(Boolean);
 }
 
+/**
+ * Of `candidates`, whoever is directly assigned to the fewest other live tasks of the project in
+ * those tasks' current stages.
+ */
 function leastBusy(tx: Tx, task: TaskRow, candidates: readonly string[]): string[] {
   if (candidates.length === 0) return [];
   const load = new Map(
@@ -753,12 +789,11 @@ function leastBusy(tx: Tx, task: TaskRow, candidates: readonly string[]): string
       .select({ userId: s.taskAssigneeUser.userId, n: count() })
       .from(s.taskAssigneeUser)
       .innerJoin(s.task, eq(s.task.id, s.taskAssigneeUser.taskId))
-      .innerJoin(s.status, eq(s.status.id, s.task.statusId))
       .where(
         and(
           eq(s.task.projectId, task.projectId),
           isNull(s.task.deletedAt),
-          eq(s.status.category, 'open'),
+          currentUserRow,
           sql`${s.task.id} <> ${task.id}`,
           inArray(s.taskAssigneeUser.userId, [...candidates]),
         ),
@@ -774,60 +809,63 @@ function leastBusy(tx: Tx, task: TaskRow, candidates: readonly string[]): string
   return best ? [best] : [];
 }
 
-function stageHolders(tx: Tx, taskId: string, statusId: string | undefined): string[] {
-  if (!statusId) return [];
-  const row = tx
-    .select({ holders: s.taskStageEntry.holderUserIds })
-    .from(s.taskStageEntry)
-    .where(
-      and(
-        eq(s.taskStageEntry.taskId, taskId),
-        eq(s.taskStageEntry.statusId, statusId),
-        sql`${s.taskStageEntry.holderUserIds} is not null`,
-      ),
-    )
-    .orderBy(desc(s.taskStageEntry.enteredAt), desc(s.taskStageEntry.id))
-    .get();
-  return row?.holders ?? [];
+interface Assignees {
+  users: string[];
+  roles: string[];
 }
 
-/** Whom the hand-off of `rules` assigns (null: leave the assignees alone). */
-function handoffUsers(
+function sameSet(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((id) => b.includes(id));
+}
+
+function isEmpty(assignees: Assignees): boolean {
+  return assignees.users.length === 0 && assignees.roles.length === 0;
+}
+
+/**
+ * Whom a hand-off picks by itself (`specific`, `round_robin`, `least_busy`, `author`, `mover`,
+ * `stage_holder`); null for the other modes, or when nobody matched.
+ */
+function handoffPick(
   tx: Tx,
   actor: Actor | null,
   task: TaskRow,
   status: StatusRow,
   rules: StageRules,
-): string[] | null {
+): Assignees | null {
   const scope = { teamId: task.teamId, projectId: task.projectId };
   const viewers = (ids: string[]) => projectViewerIds(tx, task.projectId, ids).sort();
   const { handoff } = rules;
-  let ids: string[];
+  let users: string[];
+  let roles: string[] = [];
   switch (handoff.mode) {
     case 'keep':
+    case 'nobody':
     case 'pool':
       return null;
     case 'specific':
-      ids = ruleCandidates(tx, scope, handoff.rule);
+      users = ruleCandidates(tx, scope, handoff.rule);
       break;
     case 'round_robin':
-      ids = roundRobin(tx, status.id, ruleCandidates(tx, scope, handoff.rule));
+      users = roundRobin(tx, status.id, ruleCandidates(tx, scope, handoff.rule));
       break;
     case 'least_busy':
-      ids = leastBusy(tx, task, ruleCandidates(tx, scope, handoff.rule));
+      users = leastBusy(tx, task, ruleCandidates(tx, scope, handoff.rule));
       break;
     case 'author':
-      ids = task.authorId ? viewers([task.authorId]) : [];
+      users = task.authorId ? viewers([task.authorId]) : [];
       break;
     case 'mover':
-      ids = actor ? viewers([actor.userId]) : [];
+      users = actor ? viewers([actor.userId]) : [];
       break;
     case 'stage_holder':
-      ids = viewers(stageHolders(tx, task.id, handoff.statusId));
+      // Whoever held it in that stage: its assignments there (people who can still see the
+      // project, and roles).
+      users = handoff.statusId ? viewers(stageUserIds(tx, task.id, handoff.statusId)) : [];
+      roles = handoff.statusId ? stageRoleIds(tx, task.id, handoff.statusId) : [];
       break;
   }
-  // Nobody matched: the task keeps its assignees rather than ending up with nobody.
-  return ids.length > 0 ? ids : null;
+  return users.length > 0 || roles.length > 0 ? { users, roles } : null;
 }
 
 function userLabels(tx: Tx, ids: readonly string[]): string[] {
@@ -856,13 +894,29 @@ interface EnterContext {
 export interface EnterOptions {
   /** The task was just created with explicit assignees: the hand-off leaves them alone. */
   keepAssignees?: boolean;
+  /**
+   * The same request set the assignees explicitly while moving the task (`update_task` with a
+   * status and assignees): they become the new stage's assignees and the hand-off is skipped.
+   */
+  assignees?: Assignees;
 }
 
 /**
  * Everything that happens when a task enters `to` (inside the caller's write, after the status
  * column and the move's own audit row are written): closes the visit of `from` (remembering who
- * held it), dismisses leftover approvals of an earlier visit of `to`, applies the hand-off and
- * `notify`, records the new visit and calls the Wave 2C hook. Returns the task row afterwards.
+ * held it), dismisses leftover approvals of an earlier visit of `to`, decides `to`'s assignees
+ * with the hand-off, applies `notify`, records the new visit and calls the Wave 2C hook. Returns
+ * the task row afterwards.
+ *
+ * Assignments belong to a task and a stage: `from`'s rows stay as history ("who held it there"),
+ * and `to`'s rows become the task's current assignees:
+ *   - `keep`: the assignees it had in `to` on an earlier visit, when it had any there (restored);
+ *     otherwise a copy of `from`'s;
+ *   - `nobody` and `pool`: none;
+ *   - `specific`, `round_robin`, `least_busy`, `author`, `mover`, `stage_holder`: whom they pick,
+ *     or as `keep` when nobody matched.
+ * A task created with assignees keeps them; one created without goes through the first stage's
+ * hand-off like any entry.
  */
 export function enterStage(
   tx: Tx,
@@ -876,10 +930,19 @@ export function enterStage(
 ): TaskRow {
   const { task } = context;
   const rules = rulesOf(to);
+  // Who had the task before: the stage it left (at creation, whom it was created with).
+  const previous: Assignees = {
+    users: stageUserIds(tx, task.id, from?.id ?? to.id),
+    roles: stageRoleIds(tx, task.id, from?.id ?? to.id),
+  };
+  // Who held it in `to` on an earlier visit.
+  const earlier: Assignees = from
+    ? { users: stageUserIds(tx, task.id, to.id), roles: stageRoleIds(tx, task.id, to.id) }
+    : previous;
 
   // Close the previous visit(s), remembering who held the task.
   if (from) {
-    const holders = directUserAssignees(tx, task.id);
+    const holders = previous.users;
     const open = tx
       .select({ id: s.taskStageEntry.id, statusId: s.taskStageEntry.statusId })
       .from(s.taskStageEntry)
@@ -922,28 +985,36 @@ export function enterStage(
   if (task.poolRule) patch.poolRule = null;
   let assignedUserIds: string[] = [];
   let pool: PrincipalRule | null = null;
-  const beforeUsers = directUserAssignees(tx, task.id);
-  const beforeRoles = roleAssignees(tx, task.id);
-  let afterUsers = beforeUsers;
-  let afterRoles = beforeRoles;
-  if (!options.keepAssignees && rules.handoff.mode !== 'keep') {
-    if (rules.handoff.mode === 'pool' && rules.handoff.rule) {
-      pool = rules.handoff.rule;
-      patch.poolRule = pool;
-      afterUsers = [];
-      afterRoles = [];
+  let after: Assignees;
+  let restored = false;
+  const none: Assignees = { users: [], roles: [] };
+  if (options.assignees) {
+    after = options.assignees;
+  } else if (options.keepAssignees) {
+    after = previous;
+  } else if (rules.handoff.mode === 'nobody') {
+    after = none;
+  } else if (rules.handoff.mode === 'pool' && rules.handoff.rule) {
+    pool = rules.handoff.rule;
+    patch.poolRule = pool;
+    after = none;
+  } else {
+    const picked = handoffPick(tx, actor, task, to, rules);
+    if (picked) {
+      assignedUserIds = picked.users;
+      after = picked;
+    } else if (from && !isEmpty(earlier)) {
+      after = earlier;
+      restored = true;
     } else {
-      const users = handoffUsers(tx, actor, task, to, rules);
-      if (users) {
-        assignedUserIds = users;
-        afterUsers = users;
-        afterRoles = [];
-      }
+      after = previous;
     }
   }
-  const usersChanged =
-    afterUsers.length !== beforeUsers.length || afterUsers.some((id) => !beforeUsers.includes(id));
-  const rolesChanged = afterRoles.length !== beforeRoles.length;
+
+  if (!sameSet(after.users, earlier.users) || !sameSet(after.roles, earlier.roles)) {
+    setStageAssignees(tx, task.id, to.id, after.users, after.roles);
+  }
+  const changed = !sameSet(after.users, previous.users) || !sameSet(after.roles, previous.roles);
   const target = {
     teamId: task.teamId,
     entityType: 'task' as const,
@@ -952,14 +1023,8 @@ export function enterStage(
     snippet: `Moved to ${to.name}`,
     url: appPaths.task(context.teamSlug, context.projectKey, task.number),
   };
-  if (usersChanged || rolesChanged) {
-    tx.delete(s.taskAssigneeUser).where(eq(s.taskAssigneeUser.taskId, task.id)).run();
-    tx.delete(s.taskAssigneeRole).where(eq(s.taskAssigneeRole.taskId, task.id)).run();
-    if (afterUsers.length > 0) {
-      tx.insert(s.taskAssigneeUser)
-        .values(afterUsers.map((userId) => ({ taskId: task.id, userId })))
-        .run();
-    }
+  // Explicit assignees are audited and notified by the request that set them.
+  if (changed && !options.assignees) {
     recordActivity(tx, actor, {
       teamId: task.teamId,
       projectId: task.projectId,
@@ -968,16 +1033,22 @@ export function enterStage(
       action: 'task.handed_off',
       changes: {
         assignees: change(
-          [...userLabels(tx, beforeUsers), ...roleLabels(tx, beforeRoles)],
-          userLabels(tx, afterUsers),
+          [...userLabels(tx, previous.users), ...roleLabels(tx, previous.roles)],
+          [...userLabels(tx, after.users), ...roleLabels(tx, after.roles)],
         ),
       },
-      meta: { ...taskMeta(task, context.projectKey), stage: to.name, mode: rules.handoff.mode },
+      meta: {
+        ...taskMeta(task, context.projectKey),
+        stage: to.name,
+        mode: rules.handoff.mode,
+        ...(restored ? { restored: true } : {}),
+      },
     });
-    const added = afterUsers.filter((id) => !beforeUsers.includes(id));
-    if (added.length > 0) {
-      autoSubscribe(tx, added, 'task', task.id);
-      notifyAssigned(tx, actor, target, { userIds: added }, notified);
+    const addedUsers = after.users.filter((id) => !previous.users.includes(id));
+    const addedRoles = after.roles.filter((id) => !previous.roles.includes(id));
+    if (addedUsers.length > 0 || addedRoles.length > 0) {
+      autoSubscribe(tx, addedUsers, 'task', task.id);
+      notifyAssigned(tx, actor, target, { userIds: addedUsers, roleIds: addedRoles }, notified);
     }
   }
   // The claim goes with the hand-off (a pool always frees it) unless the holder still has the task.
@@ -986,7 +1057,7 @@ export function enterStage(
     handedOff &&
     task.claimedById &&
     isClaimValid(task, now) &&
-    !afterUsers.includes(task.claimedById)
+    !after.users.includes(task.claimedById)
   ) {
     Object.assign(patch, releasedClaim());
     recordActivity(tx, actor, {
@@ -1034,7 +1105,7 @@ export function enterStage(
 
 /**
  * Moves the task to `to` on the system's initiative (auto-advance, Request changes): end of the
- * column, done/open side effects, a `task.moved` row (`meta` says why), the entry rules, and the
+ * column, the stage's on-enter effects, a `task.moved` row (`meta` says why), the entry rules, and the
  * live events.
  */
 function changeStatus(
@@ -1137,15 +1208,7 @@ export function maybeAutoAdvance(tx: Tx, actor: Actor, taskId: string, now: Date
 function canGiveEvidence(tx: DbExecutor, membership: Membership, task: TaskRow): boolean {
   if (canUpdateTask(membership, task)) return true;
   if (task.claimedById === membership.userId) return true;
-  return tx
-    .select({ userId: s.taskAssigneeUser.userId })
-    .from(s.taskAssigneeUser)
-    .where(
-      and(eq(s.taskAssigneeUser.taskId, task.id), eq(s.taskAssigneeUser.userId, membership.userId)),
-    )
-    .get()
-    ? true
-    : false;
+  return stageUserIds(tx, task.id, task.statusId).includes(membership.userId);
 }
 
 /**
@@ -1400,11 +1463,9 @@ export function poolClaimRefusal(db: DbExecutor, task: TaskRow, ref: string): st
  * the claimer becomes its only assignee. Returns the audit change of the assignees.
  */
 export function takeFromPool(tx: Tx, actor: Actor, task: TaskRow): Changes {
-  const beforeUsers = directUserAssignees(tx, task.id);
-  const beforeRoles = roleAssignees(tx, task.id);
-  tx.delete(s.taskAssigneeUser).where(eq(s.taskAssigneeUser.taskId, task.id)).run();
-  tx.delete(s.taskAssigneeRole).where(eq(s.taskAssigneeRole.taskId, task.id)).run();
-  tx.insert(s.taskAssigneeUser).values({ taskId: task.id, userId: actor.userId }).run();
+  const beforeUsers = stageUserIds(tx, task.id, task.statusId);
+  const beforeRoles = stageRoleIds(tx, task.id, task.statusId);
+  setStageAssignees(tx, task.id, task.statusId, [actor.userId], []);
   tx.update(s.task).set({ poolRule: null }).where(eq(s.task.id, task.id)).run();
   autoSubscribe(tx, [actor.userId], 'task', task.id);
   return {
@@ -1523,13 +1584,7 @@ export function stageOf(db: DbExecutor, viewer: Actor, task: TaskRow): TaskStage
     if (reasons.length > 0) blockedMoves[target.id] = reasons.join('; ');
   }
   const nextCheck = next ? evaluateMove(db, subject, statuses, current, next, memo) : null;
-  const assigned = db
-    .select({ userId: s.taskAssigneeUser.userId })
-    .from(s.taskAssigneeUser)
-    .where(
-      and(eq(s.taskAssigneeUser.taskId, task.id), eq(s.taskAssigneeUser.userId, viewer.userId)),
-    )
-    .get();
+  const assigned = stageUserIds(db, task.id, task.statusId).includes(viewer.userId);
 
   const previousEvidence = statuses
     .filter((row) => row.id !== current.id)

@@ -302,7 +302,10 @@ describe('hidden projects (no VIEW_PROJECT)', () => {
     const hidden = createTask(ctx.db, { project: api.project, authorId: alice.id });
     const shown = createTask(ctx.db, { project: web.project, authorId: alice.id });
     for (const task of [hidden, shown]) {
-      ctx.db.orm.insert(s.taskAssigneeUser).values({ taskId: task.id, userId: bob.id }).run();
+      ctx.db.orm
+        .insert(s.taskAssigneeUser)
+        .values({ taskId: task.id, statusId: task.statusId, userId: bob.id })
+        .run();
     }
     const mine = listMyTasks(ctx.deps, actorOf(bob), myTasksQuerySchema.parse({}));
     expect(mine.items.map((item) => item.id)).toEqual([shown.id]);

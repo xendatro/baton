@@ -34,8 +34,10 @@ import { HANDOFF_LABELS } from './stageRules';
 
 /**
  * The rules of one stage (design §5), edited in a dialog from Project settings → Statuses: what to
- * do here, who gets the task and who hears about it when it enters, and what it needs to move on
- * (exit criteria, who may move it, approvals), plus auto-advance, the next stage and send-back.
+ * do here, who gets the task, who hears about it and what else happens when it enters (resolve
+ * fixed issues, release the claim, tell the author), how tasks behave while here (block their
+ * dependents, can be claimed), and what it needs to move on (exit criteria, who may move it,
+ * approvals), plus auto-advance, the next stage and send-back.
  */
 
 export interface StageRulesDialogProps {
@@ -224,6 +226,36 @@ function RulesForm({
             options={options}
             disabled={!canManage}
           />
+          <CheckRow
+            label="Resolve the issues it fixes"
+            checked={rules.onEnter.resolveIssues}
+            onChange={(resolveIssues) => set('onEnter', { ...rules.onEnter, resolveIssues })}
+          />
+          <CheckRow
+            label="Release its claim"
+            checked={rules.onEnter.releaseClaim}
+            onChange={(releaseClaim) => set('onEnter', { ...rules.onEnter, releaseClaim })}
+          />
+          <CheckRow
+            label="Tell the author (and whoever had it) that it got here"
+            checked={rules.onEnter.notifyAuthor}
+            onChange={(notifyAuthor) => set('onEnter', { ...rules.onEnter, notifyAuthor })}
+          />
+        </Group>
+
+        <Group title="While a task is here">
+          <CheckRow
+            label="It still blocks the tasks waiting on it"
+            description="Off: tasks here count as completed and no longer block anything."
+            checked={rules.blocksDependents}
+            onChange={(checked) => set('blocksDependents', checked)}
+          />
+          <CheckRow
+            label="It can be claimed"
+            description="Off: Claim and claim_next_task skip tasks here."
+            checked={rules.claimable}
+            onChange={(checked) => set('claimable', checked)}
+          />
         </Group>
 
         <Group title="To move on">
@@ -405,20 +437,34 @@ function Group({ title, children }: { title: string; children: ReactNode }) {
 
 function CheckRow({
   label,
+  description,
   checked,
   onChange,
 }: {
   label: string;
+  description?: string;
   checked: boolean;
   onChange: (checked: boolean) => void;
 }) {
   const id = useId();
   return (
-    <div className="flex items-center gap-2">
-      <Checkbox id={id} checked={checked} onCheckedChange={(value) => onChange(value === true)} />
-      <Label htmlFor={id} className="font-normal">
-        {label}
-      </Label>
+    <div className="grid gap-0.5">
+      <div className="flex items-center gap-2">
+        <Checkbox
+          id={id}
+          checked={checked}
+          onCheckedChange={(value) => onChange(value === true)}
+          aria-describedby={description ? `${id}-description` : undefined}
+        />
+        <Label htmlFor={id} className="font-normal">
+          {label}
+        </Label>
+      </div>
+      {description ? (
+        <p id={`${id}-description`} className="pl-6 text-xs text-muted-foreground">
+          {description}
+        </p>
+      ) : null}
     </div>
   );
 }

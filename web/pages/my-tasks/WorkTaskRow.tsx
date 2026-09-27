@@ -36,7 +36,7 @@ export function WorkTaskRow({
 }: WorkTaskRowProps) {
   const hint = assignmentHint(task);
   const extraLabels = task.labels.length - LABELS_SHOWN;
-  const done = task.status.category === 'done';
+  const done = Boolean(task.completedAt);
   return (
     <li className={className}>
       <Link

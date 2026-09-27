@@ -35,10 +35,16 @@ function actor(user: UserRow): Actor {
 
 function assign(task: TaskRow, assignees: { users?: UserRow[]; roles?: string[] }) {
   for (const user of assignees.users ?? []) {
-    ctx.db.orm.insert(s.taskAssigneeUser).values({ taskId: task.id, userId: user.id }).run();
+    ctx.db.orm
+      .insert(s.taskAssigneeUser)
+      .values({ taskId: task.id, statusId: task.statusId, userId: user.id })
+      .run();
   }
   for (const roleId of assignees.roles ?? []) {
-    ctx.db.orm.insert(s.taskAssigneeRole).values({ taskId: task.id, roleId }).run();
+    ctx.db.orm
+      .insert(s.taskAssigneeRole)
+      .values({ taskId: task.id, statusId: task.statusId, roleId })
+      .run();
   }
 }
 
@@ -56,8 +62,9 @@ function newTask(title: string, options: { project?: CreatedProject; statusId?: 
   });
 }
 
+/** The seeded Done stage (assigns nobody, doesn't block its dependents). */
 function doneStatus(project: CreatedProject = web): string {
-  const done = project.statuses.find((status) => status.category === 'done');
+  const done = project.statuses.find((status) => status.name === 'Done');
   if (!done) throw new Error('no done status');
   return done.id;
 }
@@ -89,7 +96,7 @@ describe('due dates', () => {
 });
 
 describe('listMyTasks', () => {
-  it('lists open tasks assigned to me directly, through my roles and through @everyone', () => {
+  it('lists tasks assigned to me in their current stage, directly, through my roles and through @everyone', () => {
     const direct = newTask('Direct');
     assign(direct, { users: [ada] });
     const viaRole = newTask('Via backend');
@@ -103,12 +110,23 @@ describe('listMyTasks', () => {
     assign(newTask('Other role'), { roles: [frontend.id] });
     assign(newTask('Other user'), { users: [owner] });
     newTask('Unassigned');
-    assign(newTask('Finished', { statusId: doneStatus() }), { users: [ada] });
+    // Held in an earlier stage only: history, not her work any more.
+    const finished = newTask('Finished');
+    assign(finished, { users: [ada] });
+    update(finished, { statusId: doneStatus() });
+    // No status filter: assigned in its current stage (even Done) is her work.
+    assign(newTask('Assigned in Done', { statusId: doneStatus() }), { users: [ada] });
 
     const result = mine();
-    expect(result.total).toBe(4);
+    expect(result.total).toBe(5);
     const byTitle = Object.fromEntries(result.items.map((task) => [task.title, task]));
-    expect(Object.keys(byTitle).sort()).toEqual(['Both', 'Direct', 'Via backend', 'Via everyone']);
+    expect(Object.keys(byTitle).sort()).toEqual([
+      'Assigned in Done',
+      'Both',
+      'Direct',
+      'Via backend',
+      'Via everyone',
+    ]);
     expect(byTitle.Direct?.assignment).toEqual({ direct: true, roles: [] });
     expect(byTitle['Via backend']?.assignment).toEqual({
       direct: false,
@@ -141,7 +159,7 @@ describe('listMyTasks', () => {
       title: 'Fix login',
       projectId: web.project.id,
       teamId,
-      status: { name: 'Open', category: 'open' },
+      status: { name: 'Open', icon: 'circle' },
       priority: 3,
       dueDate: '2026-03-12',
       labels: [{ id: label.id, name: 'Bug', color: '#ef4444' }],
@@ -181,7 +199,7 @@ describe('listMyTasks', () => {
     expect(byTitle.Expired?.claim).toMatchObject({ user: { username: 'owner' }, expiresAt: null });
   });
 
-  it('marks tasks blocked only by live blockers in open statuses', () => {
+  it('marks tasks blocked only by live blockers in stages that block their dependents', () => {
     const blocked = newTask('Blocked');
     const unblocked = newTask('Unblocked');
     const deletedBlocker = newTask('Behind a deleted task');

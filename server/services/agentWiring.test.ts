@@ -69,7 +69,6 @@ describe('pipeline stages create agent jobs', () => {
   it('offers a pooled task to the pool’s agents and cancels the others’ jobs on a claim', () => {
     const pool = createStatus(ctx.deps, web(owner), project.project.id, {
       name: 'Development',
-      category: 'open',
     });
     updateStatus(ctx.deps, web(owner), pool.id, {
       rules: {
@@ -105,7 +104,6 @@ describe('pipeline stages create agent jobs', () => {
   it('asks the agents who may approve a stage for their approval', () => {
     const review = createStatus(ctx.deps, web(owner), project.project.id, {
       name: 'AI Review',
-      category: 'open',
     });
     updateStatus(ctx.deps, web(owner), review.id, {
       rules: {

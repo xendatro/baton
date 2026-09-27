@@ -367,24 +367,29 @@ function StatLink({
 }
 
 function StatsCard({ project, base }: { project: Project; base: string }) {
-  const { openTasks, doneTasks, openIssues, resolvedIssues } = project.counts;
-  const totalTasks = openTasks + doneTasks;
-  const percent = totalTasks === 0 ? 0 : Math.round((doneTasks / totalTasks) * 100);
+  const {
+    tasks: totalTasks,
+    assignedTasks,
+    completedTasks,
+    openIssues,
+    resolvedIssues,
+  } = project.counts;
+  const percent = totalTasks === 0 ? 0 : Math.round((completedTasks / totalTasks) * 100);
   return (
     <Card title="Progress">
       <div className="grid grid-cols-2 gap-2">
         <StatLink
           to={`${base}/tasks`}
           icon={CircleDotIcon}
-          label="Open tasks"
-          value={openTasks}
+          label="Assigned tasks"
+          value={assignedTasks}
           tone="open"
         />
         <StatLink
           to={`${base}/tasks`}
           icon={CheckCircle2Icon}
-          label="Done tasks"
-          value={doneTasks}
+          label="Completed tasks"
+          value={completedTasks}
           tone="done"
         />
         <StatLink
@@ -404,15 +409,15 @@ function StatsCard({ project, base }: { project: Project; base: string }) {
       </div>
       <div className="mt-4">
         <div className="mb-1.5 flex justify-between text-xs text-muted-foreground">
-          <span>Tasks done</span>
+          <span>Tasks completed</span>
           <span className="tabular-nums">
-            {totalTasks === 0 ? 'No tasks yet' : `${doneTasks} of ${totalTasks} · ${percent}%`}
+            {totalTasks === 0 ? 'No tasks yet' : `${completedTasks} of ${totalTasks} · ${percent}%`}
           </span>
         </div>
         <div
           className="h-1.5 overflow-hidden rounded-full bg-muted"
           role="progressbar"
-          aria-label="Tasks done"
+          aria-label="Tasks completed"
           aria-valuemin={0}
           aria-valuemax={100}
           aria-valuenow={percent}

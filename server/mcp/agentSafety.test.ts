@@ -578,7 +578,7 @@ describe('MCP-10: errors name the MCP parameters and accepted values', () => {
     );
     await call(client, 'move_task', { task: 'WEB-1', status: 'Done' });
     const done = await callError(client, 'claim_task', { task: 'WEB-1' });
-    expect(done).toContain('WEB-1 is Done (done)');
+    expect(done).toContain('Tasks in Done can’t be claimed. To work on WEB-1');
     expect(done).not.toContain('moveToStatusId');
   });
 });

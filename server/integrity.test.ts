@@ -129,7 +129,6 @@ describe('CDI-01: deleting a status moves its tasks like any other move', () => 
   it('resolves fixes issues, notifies task_done, releases claims and audits each task', () => {
     const inProgress = createStatus(ctx.deps, actorOf(owner), api.project.id, {
       name: 'In progress',
-      category: 'open',
     });
     const issue = createIssue(ctx.deps, actorOf(owner), api.project.id, { title: 'Crash' });
     const task = createTask(ctx.deps, actorOf(owner), api.project.id, {
@@ -154,7 +153,12 @@ describe('CDI-01: deleting a status moves its tasks like any other move', () => 
     const resolved = ctx.db.orm.select().from(s.issue).where(eq(s.issue.id, issue.id)).get();
     expect(resolved?.resolved).toBe(true);
     expect(actions('issue', issue.id)).toContain('issue.resolved');
-    expect(actions('task', task.id).slice(-2)).toEqual(['task.moved', 'task.released']);
+    // Done assigns nobody: Bob's assignment stays as history of In progress.
+    expect(actions('task', task.id).slice(-3)).toEqual([
+      'task.moved',
+      'task.released',
+      'task.handed_off',
+    ]);
     const moved = ctx.db.orm
       .select()
       .from(s.activity)
@@ -173,10 +177,10 @@ describe('CDI-01: deleting a status moves its tasks like any other move', () => 
     expect(eventsOf('status.changed')).toHaveLength(1);
   });
 
-  it('clears completedAt when the tasks leave done, and leaves tasks in Trash un-audited', () => {
+  it('clears completedAt when the tasks enter a blocking stage, and leaves tasks in Trash un-audited', () => {
     const shipped = createStatus(ctx.deps, actorOf(owner), api.project.id, {
       name: 'Shipped',
-      category: 'done',
+      rules: { blocksDependents: false },
     });
     const live = createTask(ctx.deps, actorOf(owner), api.project.id, {
       title: 'Live',

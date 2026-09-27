@@ -54,7 +54,6 @@ beforeEach(async () => {
       projectId: project.id,
       name: 'In Progress',
       color: '#f59e0b',
-      category: 'open',
       position: 1,
     })
     .run();
@@ -180,12 +179,12 @@ describe('MCP agent workflow', () => {
 
     // Finishing the task resolves the issue it fixes and releases the claim.
     events.length = 0;
-    const done = await call<{ status: { name: string; category: string }; claim: unknown }>(
+    const done = await call<{ status: { name: string; icon: string }; claim: unknown }>(
       agent,
       'move_task',
       { task: 'WEB-1', status: 'Done' },
     );
-    expect(done.status).toMatchObject({ name: 'Done', category: 'done' });
+    expect(done.status).toMatchObject({ name: 'Done', icon: 'check-circle' });
     expect(done.claim).toBeNull();
     expect(events.map((event) => event.type)).toEqual(
       expect.arrayContaining(['task.updated', 'task.released', 'issue.updated']),
@@ -194,12 +193,12 @@ describe('MCP agent workflow', () => {
     const resolved = await call<{
       resolved: boolean;
       resolvedBy: { username: string } | null;
-      linkedTasks: Array<{ ref: string; kind: string; status: { category: string } }>;
+      linkedTasks: Array<{ ref: string; kind: string; status: { name: string } }>;
     }>(agent, 'get_issue', { issue: 'WEB#1' });
     expect(resolved.resolved).toBe(true);
     expect(resolved.resolvedBy?.username).toBe('ethan-ai');
     expect(resolved.linkedTasks).toMatchObject([
-      { ref: 'northwind/WEB-1', kind: 'fixes', status: { category: 'done' } },
+      { ref: 'northwind/WEB-1', kind: 'fixes', status: { name: 'Done' } },
     ]);
 
     // The issue's author is Maya's agent, which has no inbox (agents hear through their jobs).

@@ -204,7 +204,7 @@ describe('project MCP tools', () => {
       status: 'in progress',
       name: 'Doing',
     });
-    expect(renamed).toMatchObject({ name: 'Doing', category: 'open' });
+    expect(renamed).toMatchObject({ name: 'Doing', icon: 'circle' });
 
     const reordered = await call<{ statuses: Array<{ name: string; isDefault: boolean }> }>(
       client,

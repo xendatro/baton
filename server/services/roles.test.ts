@@ -249,7 +249,10 @@ describe('deleteRole', () => {
       .run();
     const project = createProject(ctx.db, { teamId: team.team.id });
     const task = createTask(ctx.db, { project: project.project });
-    ctx.db.orm.insert(s.taskAssigneeRole).values({ taskId: task.id, roleId: role.id }).run();
+    ctx.db.orm
+      .insert(s.taskAssigneeRole)
+      .values({ taskId: task.id, statusId: task.statusId, roleId: role.id })
+      .run();
 
     deleteRole(ctx.deps, actorOf(manager), team.team.id, role.id);
     expect(

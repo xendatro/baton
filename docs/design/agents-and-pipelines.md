@@ -109,14 +109,32 @@ status pending|claimed|done|cancelled, session)`. Kinds: `mention` (agent's
 
 ## 5. Pipelines (per-project stage rules)
 
+Statuses are stages with **no hidden open/done category** (2026-09-27 "stages"): each has a name,
+color, a user-chosen **icon shape** and optional rules. A new project's Open and Done are ordinary
+stages (Done carries the finishing rules below); nothing depends on a stage being "done".
+
+**Assignments belong to (task, stage)**: a task's assignees are its assignments in its current
+stage; assigning edits those; other stages' assignments are history ("who held it in Development").
+"Your work" (My tasks, dashboard) is every task whose current-stage assignees include you or your
+roles, whatever the stage.
+
 Every status (stage) gets optional rules (`status` columns, JSON where noted):
 
 - `instructions` (markdown): what to do here; shown on the task and included in agent jobs.
-- **On enter** — `handoff` `{ mode, rule?, statusId? }` with modes `keep` (default), `specific`
-  (assign the users of `rule`), `pool` (unassign; anyone matching `rule` may claim — people see a
-  Claim button, agents get `pool` jobs), `round_robin` / `least_busy` (among `rule`'s users),
-  `author`, `mover`, `stage_holder` (whoever held the task in `statusId`); `notify` (a
-  PrincipalRule; notified, not assigned).
+- **On enter** — `handoff` `{ mode, rule?, statusId? }` decides the stage's assignees, with modes
+  `keep` (default: the assignees the task had in this stage on an earlier visit, when it had any;
+  otherwise the previous stage's), `nobody` (no assignees here), `specific` (assign the users of
+  `rule`), `pool` (nobody; anyone matching `rule` may claim — people see a Claim button, agents get
+  `pool` jobs), `round_robin` / `least_busy` (among `rule`'s users), `author`, `mover`,
+  `stage_holder` (whoever held the task in `statusId`: its assignments there); `notify` (a
+  PrincipalRule; notified, not assigned); `onEnter` `{ resolveIssues, releaseClaim, notifyAuthor }`
+  (resolve the issues the task fixes, release its claim, tell the author and the previous holders it
+  reached the stage; all off by default).
+- **While here** — `blocksDependents` (default on: its tasks still block the tasks waiting on
+  them; off: they count as completed, `completedAt`) and `claimable` (default on: `claim_next_task`
+  may pick its tasks and `claim_task` works without moving them).
+- The seeded Done (and every former done status, by migration 0012) is: hand-off `nobody`, all
+  three `onEnter` effects, `blocksDependents` and `claimable` off, icon `check-circle`.
 - **To leave (forward)** — `exit_criteria` `[{ id, text }]` (each needs evidence text: the mover
   supplies it, e.g. `move_task { evidence: { <id>: "…" } }`; saved per task/stage and **locked**
   once the task leaves the stage); `move_rule` (PrincipalRule; who may move it out); `approvals`

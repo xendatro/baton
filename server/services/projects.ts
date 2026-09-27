@@ -38,7 +38,9 @@ import { emitAfterCommit } from './events';
 import { labelsOf } from './labels';
 import { notifyMentions, refreshNotificationText } from './notifications';
 import { requireSignoff } from './signoff';
+import { seedStatusColumns } from './pipelines';
 import { statusesOf } from './statuses';
+import { taskCountsByProject } from './taskViews';
 import { getUserSummaries } from './users';
 
 /**
@@ -85,6 +87,9 @@ export function requireProject(
 const README_EXCERPT_LENGTH = 140;
 
 const EMPTY_COUNTS: ProjectCounts = {
+  tasks: 0,
+  assignedTasks: 0,
+  completedTasks: 0,
   openTasks: 0,
   doneTasks: 0,
   openIssues: 0,
@@ -95,18 +100,14 @@ const EMPTY_COUNTS: ProjectCounts = {
 function projectCounts(db: DbExecutor, projectIds: readonly string[]): Map<string, ProjectCounts> {
   const counts = new Map<string, ProjectCounts>(projectIds.map((id) => [id, { ...EMPTY_COUNTS }]));
   if (projectIds.length === 0) return counts;
-  const tasks = db
-    .select({ projectId: s.task.projectId, category: s.status.category, n: count() })
-    .from(s.task)
-    .innerJoin(s.status, eq(s.status.id, s.task.statusId))
-    .where(and(inArray(s.task.projectId, [...projectIds]), isNull(s.task.deletedAt)))
-    .groupBy(s.task.projectId, s.status.category)
-    .all();
-  for (const row of tasks) {
-    const entry = counts.get(row.projectId);
+  for (const [projectId, tasks] of taskCountsByProject(db, projectIds)) {
+    const entry = counts.get(projectId);
     if (!entry) continue;
-    if (row.category === 'done') entry.doneTasks = row.n;
-    else entry.openTasks = row.n;
+    entry.tasks = tasks.tasks;
+    entry.assignedTasks = tasks.assigned;
+    entry.completedTasks = tasks.completed;
+    entry.openTasks = tasks.tasks - tasks.completed;
+    entry.doneTasks = tasks.completed;
   }
   const issues = db
     .select({ projectId: s.issue.projectId, resolved: s.issue.resolved, n: count() })
@@ -495,7 +496,13 @@ export function createProject(
       .get();
     DEFAULT_STATUSES.forEach((seed, position) => {
       tx.insert(s.status)
-        .values({ projectId: id, ...seed, position, createdAt: now, updatedAt: now })
+        .values({
+          projectId: id,
+          ...seedStatusColumns(seed),
+          position,
+          createdAt: now,
+          updatedAt: now,
+        })
         .run();
     });
     if (readme) {

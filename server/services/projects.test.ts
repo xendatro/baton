@@ -153,13 +153,46 @@ describe('creating projects', () => {
       createdBy: { username: 'owner-ai', kind: 'agent', agentOwner: { username: 'owner' } },
       keyAliases: [],
       labels: [],
-      counts: { openTasks: 0, doneTasks: 0, openIssues: 0, resolvedIssues: 0 },
+      counts: {
+        tasks: 0,
+        assignedTasks: 0,
+        completedTasks: 0,
+        openTasks: 0,
+        doneTasks: 0,
+        openIssues: 0,
+        resolvedIssues: 0,
+      },
     });
+    // Two ordinary stages: Open, and Done with the finishing rules.
     expect(
-      project.statuses.map((status) => [status.name, status.category, status.isDefault]),
+      project.statuses.map((status) => [
+        status.name,
+        status.icon,
+        status.isDefault,
+        status.rules?.handoff.mode,
+        status.rules?.onEnter,
+        status.rules?.blocksDependents,
+        status.rules?.claimable,
+      ]),
     ).toEqual([
-      ['Open', 'open', true],
-      ['Done', 'done', false],
+      [
+        'Open',
+        'circle',
+        true,
+        'keep',
+        { resolveIssues: false, releaseClaim: false, notifyAuthor: false },
+        true,
+        true,
+      ],
+      [
+        'Done',
+        'check-circle',
+        false,
+        'nobody',
+        { resolveIssues: true, releaseClaim: true, notifyAuthor: true },
+        false,
+        false,
+      ],
     ]);
 
     const [row] = activityOf(project.id);
@@ -266,7 +299,7 @@ describe('reading projects', () => {
       key: 'API',
     });
     createProjectRow(ctx.db, { teamId: team.team.id, name: 'Backlog', key: 'BL' });
-    const done = statuses.find((status) => status.category === 'done');
+    const done = statuses.find((status) => status.name === 'Done');
     createTask(ctx.db, { project });
     createTask(ctx.db, { project });
     createTask(ctx.db, { project, statusId: done?.id });
@@ -283,6 +316,9 @@ describe('reading projects', () => {
     );
     expect(list.items.map((item) => item.key)).toEqual(['API', 'BL']);
     expect(list.items[0]?.counts).toEqual({
+      tasks: 3,
+      assignedTasks: 0,
+      completedTasks: 1,
       openTasks: 2,
       doneTasks: 1,
       openIssues: 1,

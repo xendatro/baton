@@ -23,8 +23,9 @@ import { subscriberIds } from './subscriptions';
 
 /**
  * Task links (SPEC §1.8): "blocked by" dependencies between tasks of one project (cycles are
- * rejected; a task is blocked while any blocker is in an open-category status) and links to the
- * issues a task addresses (`fixes` resolves the issue when the task is done, `relates` doesn't).
+ * rejected; a task is blocked while any blocker is in a stage that blocks its dependents) and
+ * links to the issues a task addresses (`fixes` resolves the issue when the task enters a stage
+ * with `onEnter.resolveIssues`, `relates` doesn't).
  * The helpers here run inside the tasks service's transactions; link changes are audited on the
  * task (by the caller) and on every issue whose links changed (here).
  */
@@ -75,8 +76,8 @@ function projectPaths(db: DbExecutor, projectIds: readonly string[]): Map<string
 }
 
 /**
- * Refs of the open-category, live blockers of each task (a task is blocked while this is not
- * empty), in number order.
+ * Refs of the live blockers of each task that sit in a stage that blocks its dependents (a task
+ * is blocked while this is not empty), in number order.
  */
 export function openBlockerRefs(db: DbExecutor, taskIds: readonly string[]): Map<string, string[]> {
   const result = new Map<string, string[]>();
@@ -95,7 +96,7 @@ export function openBlockerRefs(db: DbExecutor, taskIds: readonly string[]): Map
       and(
         inArray(s.taskDependency.taskId, [...taskIds]),
         isNull(s.task.deletedAt),
-        eq(s.status.category, 'open'),
+        eq(s.status.blocksDependents, true),
       ),
     )
     .orderBy(asc(s.task.number))
@@ -139,8 +140,9 @@ function relatedTasks(db: DbExecutor, taskId: string, side: 'blockedBy' | 'block
           id: status.id,
           name: status.name,
           color: status.color,
-          category: status.category,
+          icon: status.icon,
         },
+        completedAt: task.completedAt?.toISOString() ?? null,
         path: appPaths.task(project.slug, project.key, task.number),
       },
     ];
@@ -501,7 +503,7 @@ export function applyIssueLinksChange(
 }
 
 /**
- * The task entered a done status: resolves the open issues it `fixes` (GitHub "fixes #51"), each
+ * The task entered a stage that resolves fixed issues: resolves the open issues it `fixes` (GitHub "fixes #51"), each
  * audited as `issue.resolved` (with the task in `meta.byTask`), announced with `issue.updated`
  * and notified to the issue's author. Returns the refs of the issues it resolved.
  */

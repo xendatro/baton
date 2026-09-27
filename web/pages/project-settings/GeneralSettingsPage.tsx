@@ -315,8 +315,7 @@ function DangerZone({ team, project }: { team: MeTeam; project: Project }) {
   const remove = useDeleteProject();
   const restore = useRestoreProject();
   const [confirming, setConfirming] = useState(false);
-  const { openTasks, doneTasks, openIssues, resolvedIssues } = project.counts;
-  const tasks = openTasks + doneTasks;
+  const { tasks, openIssues, resolvedIssues } = project.counts;
   const issues = openIssues + resolvedIssues;
 
   return (

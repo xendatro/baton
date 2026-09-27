@@ -5,7 +5,9 @@ import { describe, expect, it, vi } from 'vitest';
 import type { PrincipalRule } from '@shared/principals';
 import { DEFAULT_STAGE_RULES, type StageRules } from '@shared/schemas/pipelines';
 import type { Status } from '@shared/schemas/projects';
+import { StatusIcon } from '@web/components/common/StatusBadge';
 import { PrincipalRulePicker } from '@web/components/pickers/PrincipalRulePicker';
+import { StatusIconPicker, type StatusIconValue } from '@web/components/pickers/StatusIconPicker';
 import { describeRule, type PrincipalOptions } from '@web/components/pickers/principals';
 import { TooltipProvider } from '@web/components/ui/tooltip';
 import { StageRulesDialog } from './StageRulesDialog';
@@ -105,7 +107,7 @@ const statuses: Status[] = ['Open', 'In Review', 'Done'].map((name, position) =>
   projectId: 'p1',
   name,
   color: '#6b7280',
-  category: name === 'Done' ? 'done' : 'open',
+  icon: name === 'Done' ? 'check-circle' : 'circle',
   position,
   isDefault: position === 0,
   taskCount: 0,
@@ -128,6 +130,48 @@ function renderDialog(onSave: (rules: StageRules) => Promise<unknown>, canManage
     </TooltipProvider>,
   );
 }
+
+describe('StatusIconPicker', () => {
+  function IconHarness({ onChange }: { onChange: (change: Partial<StatusIconValue>) => void }) {
+    const [value, setValue] = useState<StatusIconValue>({ icon: 'circle', color: '#6b7280' });
+    return (
+      <StatusIconPicker
+        value={value}
+        label="Review icon"
+        onChange={(change) => {
+          setValue((current) => ({ ...current, ...change }));
+          onChange(change);
+        }}
+      />
+    );
+  }
+
+  it('mixes any shape with any color, and draws the status with both', async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(<IconHarness onChange={onChange} />);
+    await user.click(screen.getByRole('button', { name: 'Review icon: Circle, #6b7280' }));
+    const shapes = screen.getByRole('radiogroup', { name: 'Shape' });
+    expect(within(shapes).getAllByRole('radio')).toHaveLength(12);
+    expect(within(shapes).getByRole('radio', { name: 'Circle' })).toBeChecked();
+    await user.click(within(shapes).getByRole('radio', { name: 'Star' }));
+    expect(onChange).toHaveBeenLastCalledWith({ icon: 'star' });
+    // The popover stays open, so the color can be picked too.
+    await user.click(screen.getByRole('radio', { name: 'Green' }));
+    expect(onChange).toHaveBeenLastCalledWith({ color: '#22c55e' });
+    expect(within(shapes).getByRole('radio', { name: 'Star' })).toBeChecked();
+    const star = within(shapes).getByRole('radio', { name: 'Star' }).querySelector('svg');
+    expect(star).toHaveAttribute('data-icon', 'star');
+    expect(star).toHaveStyle({ color: '#22c55e' });
+  });
+
+  it('renders every status with its own shape and color', () => {
+    render(<StatusIcon status={{ name: 'Blocked', icon: 'x-circle', color: '#ef4444' }} />);
+    const icon = document.querySelector('svg');
+    expect(icon).toHaveAttribute('data-icon', 'x-circle');
+    expect(icon).toHaveStyle({ color: '#ef4444' });
+  });
+});
 
 describe('StageRulesDialog', () => {
   it('edits criteria, approvals, auto-advance and the next stage', async () => {
@@ -188,6 +232,37 @@ describe('StageRulesDialog', () => {
         }),
       ),
     );
+  });
+
+  it('edits the stage’s own behaviour: assign nobody, on-enter effects, blocking, claiming', async () => {
+    const user = userEvent.setup();
+    const onSave = vi.fn((_rules: StageRules) => Promise.resolve());
+    renderDialog(onSave);
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Hand-off' }), 'nobody');
+    await user.click(screen.getByRole('checkbox', { name: 'Resolve the issues it fixes' }));
+    await user.click(screen.getByRole('checkbox', { name: 'Release its claim' }));
+    await user.click(
+      screen.getByRole('checkbox', {
+        name: 'Tell the author (and whoever had it) that it got here',
+      }),
+    );
+    const blocks = screen.getByRole('checkbox', {
+      name: 'It still blocks the tasks waiting on it',
+    });
+    expect(blocks).toBeChecked();
+    await user.click(blocks);
+    await user.click(screen.getByRole('checkbox', { name: 'It can be claimed' }));
+    await user.click(screen.getByRole('button', { name: 'Save rules' }));
+
+    await waitFor(() => expect(onSave).toHaveBeenCalled());
+    const saved = onSave.mock.calls[0]?.[0];
+    expect(saved).toMatchObject({
+      handoff: { mode: 'nobody' },
+      onEnter: { resolveIssues: true, releaseClaim: true, notifyAuthor: true },
+      blocksDependents: false,
+      claimable: false,
+    });
+    expect(countRules(saved)).toBe(6);
   });
 
   it('is read-only without Manage statuses', () => {

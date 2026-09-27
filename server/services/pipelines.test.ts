@@ -88,11 +88,9 @@ beforeEach(() => {
   const o = web(owner);
   const inProgress = createStatus(ctx.deps, o, project.project.id, {
     name: 'In Progress',
-    category: 'open',
   });
   const inReview = createStatus(ctx.deps, o, project.project.id, {
     name: 'In Review',
-    category: 'open',
   });
   const ordered = reorderStatuses(ctx.deps, o, project.project.id, {
     statusIds: [open.id, inProgress.id, inReview.id, closed.id],
@@ -136,11 +134,15 @@ function failure(fn: () => unknown): { code: string; message: string; details: u
   throw new Error('expected a failure');
 }
 
+/** The task's current assignees (its rows for its current status), people only. */
 function assigneeIds(taskId: string): string[] {
   return ctx.db.orm
     .select({ id: s.taskAssigneeUser.userId })
     .from(s.taskAssigneeUser)
-    .where(eq(s.taskAssigneeUser.taskId, taskId))
+    .innerJoin(s.task, eq(s.task.id, s.taskAssigneeUser.taskId))
+    .where(
+      and(eq(s.taskAssigneeUser.taskId, taskId), eq(s.taskAssigneeUser.statusId, s.task.statusId)),
+    )
     .all()
     .map((row) => row.id)
     .sort();

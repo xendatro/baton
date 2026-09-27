@@ -16,7 +16,7 @@ import { cn } from '@web/lib/utils';
  * claim, due date, replies and assignees. The card wrapper (link, drag handle) is the board's.
  */
 export function TaskCardBody({ task }: { task: TaskCardData }) {
-  const done = task.status.category === 'done';
+  const done = task.completedAt !== null;
   const { users, roles } = task.assignees;
   const hasFooter =
     task.dueDate !== null || task.replyCount > 0 || users.length > 0 || roles.length > 0;

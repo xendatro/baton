@@ -56,10 +56,10 @@ export const mentionables: MentionablesResponse = {
 };
 
 export const statuses = [
-  { id: 's_open', name: 'Open', color: '#6b7280', category: 'open' as const },
-  { id: 's_progress', name: 'In progress', color: '#f59e0b', category: 'open' as const },
-  { id: 's_review', name: 'In review', color: '#8b5cf6', category: 'open' as const },
-  { id: 's_done', name: 'Done', color: '#22c55e', category: 'done' as const },
+  { id: 's_open', name: 'Open', color: '#6b7280', icon: 'circle' as const },
+  { id: 's_progress', name: 'In progress', color: '#f59e0b', icon: 'half-circle' as const },
+  { id: 's_review', name: 'In review', color: '#8b5cf6', icon: 'dot-circle' as const },
+  { id: 's_done', name: 'Done', color: '#22c55e', icon: 'check-circle' as const },
 ];
 
 export const labels = [

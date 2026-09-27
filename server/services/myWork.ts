@@ -39,9 +39,10 @@ import {
 import { assignedTo, claimValidAt, toTaskCards, toTaskSummary, utcToday } from './taskViews';
 
 /**
- * My tasks (SPEC §1.9): every open task assigned to the caller, directly or through a role they
- * have (`@everyone` included), across all their live teams and projects. The dashboard service
- * builds its lists from the same helpers.
+ * My tasks (SPEC §1.9): every task assigned to the caller in its current stage, directly or
+ * through a role they have (`@everyone` included), across all their live teams and projects —
+ * whatever the stage (a stage that assigns nobody takes the task out of everyone's work). The
+ * dashboard service builds its lists from the same helpers.
  */
 
 // ---------------------------------------------------------------------------------------------
@@ -122,13 +123,12 @@ function liveTaskCondition(scope: WorkScope): SQL | undefined {
   );
 }
 
-/** Open tasks assigned to the caller: the base of My tasks and of the dashboard's lists. */
-export function assignedOpenCondition(scope: WorkScope): SQL | undefined {
-  return and(
-    liveTaskCondition(scope),
-    eq(s.status.category, 'open'),
-    assignedTo(scope.userId, scope.roleIds),
-  );
+/**
+ * The caller's work: tasks assigned to them (or their roles) in their current stage. The base of
+ * My tasks and of the dashboard's lists and counts.
+ */
+export function assignedWorkCondition(scope: WorkScope): SQL | undefined {
+  return and(liveTaskCondition(scope), assignedTo(scope.userId, scope.roleIds));
 }
 
 /**
@@ -277,12 +277,10 @@ function textCondition(q: string): SQL | undefined {
 }
 
 /**
- * Every open task assigned to the caller (directly or through their roles) across their teams,
- * filtered and sorted. Filtering by a team or project the caller can't see is `not_found`.
- */
-/**
- * My tasks: open tasks assigned to the actor or their roles. Without `page` it lists the first
- * `MY_TASKS_MAX` (the web groups them); MCP `my_tasks` pages through every match with `page`.
+ * My tasks: tasks assigned to the actor or their roles in their current stage, across their
+ * teams, filtered and sorted (filtering by a team or project the caller can't see is
+ * `not_found`). Without `page` it lists the first `MY_TASKS_MAX` (the web groups them); MCP
+ * `my_tasks` pages through every match with `page`.
  */
 export function listMyTasks(
   deps: AppDeps,
@@ -308,7 +306,7 @@ export function listMyTasks(
 
   const priorities: PriorityValue[] | undefined = query.priority?.map(priorityByKey);
   const where = and(
-    assignedOpenCondition(scope),
+    assignedWorkCondition(scope),
     query.teamId ? eq(s.task.teamId, query.teamId) : undefined,
     query.projectId ? eq(s.task.projectId, query.projectId) : undefined,
     priorities && priorities.length > 0 ? inArray(s.task.priority, priorities) : undefined,

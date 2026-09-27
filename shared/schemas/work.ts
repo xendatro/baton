@@ -130,7 +130,7 @@ export const dashboardQuerySchema = z.object({
 export type DashboardQuery = z.infer<typeof dashboardQuerySchema>;
 
 export const dashboardCountsSchema = z.object({
-  /** Open tasks assigned to me, directly or through my roles. */
+  /** Tasks assigned to me in their current stage, directly or through my roles. */
   assigned: z.number().int().nonnegative(),
   /** …of which past their due date. */
   overdue: z.number().int().nonnegative(),
@@ -143,7 +143,9 @@ export type DashboardCounts = z.infer<typeof dashboardCountsSchema>;
 
 export const dashboardProjectSchema = workProjectRefSchema.extend({
   description: z.string(),
-  /** Tasks in an open-category status. */
+  /** Tasks someone (a member or a role) is assigned to in their current stage. */
+  assignedTasks: z.number().int().nonnegative(),
+  /** Deprecated (older clients): tasks not completed (in a stage that blocks its dependents). */
   openTasks: z.number().int().nonnegative(),
   /** Unresolved issues. */
   openIssues: z.number().int().nonnegative(),
@@ -164,7 +166,7 @@ export const dashboardResponseSchema = z.object({
   /** The date the due-date logic used (`YYYY-MM-DD`). */
   today: z.string(),
   counts: dashboardCountsSchema,
-  /** Most urgent open tasks assigned to me (priority, then due date). */
+  /** Most urgent tasks assigned to me (priority, then due date). */
   assigned: z.array(myTaskSchema),
   /** Overdue, earliest due first. */
   overdue: z.array(myTaskSchema),

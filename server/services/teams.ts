@@ -33,6 +33,7 @@ import { recordActivity } from './activity';
 import { addAgentMembership, agentOwnerOf } from './agents';
 import { emitAfterCommit } from './events';
 import { requireSignoff } from './signoff';
+import { taskCountsByProject } from './taskViews';
 import { getUserSummaries } from './users';
 
 /**
@@ -184,8 +185,10 @@ export function getTeam(deps: AppDeps, actor: Actor, teamId: string): TeamDetail
   return toTeamDetail(deps.db.orm, team);
 }
 
-/** Live projects of a team as cards, by name, with open task and unresolved issue counts. */
-/** Cards of the team's live projects, only those in `visible` when given (projects one can see). */
+/**
+ * Cards of the team's live projects by name, only those in `visible` when given (projects one can
+ * see), with assigned task and unresolved issue counts.
+ */
 export function listProjectCards(
   db: DbExecutor,
   teamId: string,
@@ -207,22 +210,7 @@ export function listProjectCards(
     .filter((project) => !visible || visible.has(project.id));
   if (projects.length === 0) return [];
   const ids = projects.map((project) => project.id);
-  const openTasks = new Map(
-    db
-      .select({ projectId: s.task.projectId, value: count() })
-      .from(s.task)
-      .innerJoin(s.status, eq(s.status.id, s.task.statusId))
-      .where(
-        and(
-          inArray(s.task.projectId, ids),
-          isNull(s.task.deletedAt),
-          eq(s.status.category, 'open'),
-        ),
-      )
-      .groupBy(s.task.projectId)
-      .all()
-      .map((row) => [row.projectId, row.value]),
-  );
+  const tasks = taskCountsByProject(db, ids);
   const openIssues = new Map(
     db
       .select({ projectId: s.issue.projectId, value: count() })
@@ -240,7 +228,8 @@ export function listProjectCards(
   );
   return projects.map((project) => ({
     ...project,
-    openTasks: openTasks.get(project.id) ?? 0,
+    assignedTasks: tasks.get(project.id)?.assigned ?? 0,
+    openTasks: (tasks.get(project.id)?.tasks ?? 0) - (tasks.get(project.id)?.completed ?? 0),
     openIssues: openIssues.get(project.id) ?? 0,
   }));
 }

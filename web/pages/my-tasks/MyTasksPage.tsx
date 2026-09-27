@@ -64,7 +64,10 @@ const EMPTY_FILTERS: FilterState = {
   sort: 'priority',
 };
 
-/** `/my-tasks`: every open task assigned to me or my roles, grouped by team and project. */
+/**
+ * `/my-tasks`: every task assigned to me or my roles in its current stage, grouped by team and
+ * project.
+ */
 export default function MyTasksPage() {
   const me = useMe();
   const [params, setParams] = useSearchParams();
@@ -75,7 +78,7 @@ export default function MyTasksPage() {
     <PageContainer>
       <PageHeader
         title="My tasks"
-        description="Open tasks assigned to you or to one of your roles, across all your teams."
+        description="Tasks assigned to you or to one of your roles in their current stage, across all your teams."
       />
       {me.isPending ? (
         <MyTasksSkeleton />
@@ -184,7 +187,7 @@ function MyTasks({ teams, filters, onChange }: MyTasksProps) {
           <EmptyState
             icon={ListChecksIcon}
             title="Nothing assigned to you"
-            description="Open tasks assigned to you, or to a role you have, show up here. Browse a project’s board to pick something up."
+            description="Tasks assigned to you, or to a role you have, in their current stage show up here. Browse a project’s board to pick something up."
             action={<FirstProjectLink teams={teams} />}
           />
         )
@@ -216,7 +219,7 @@ function TaskGroups({ data, stale }: { data: MyTasksResponse; stale: boolean }) 
   return (
     <div className={cn('space-y-8 transition-opacity', stale && 'opacity-60')} aria-busy={stale}>
       <p className="text-sm text-muted-foreground" aria-live="polite">
-        {pluralize(data.total, 'open task')}
+        {pluralize(data.total, 'assigned task')}
         {data.total > data.items.length ? ` · showing the first ${data.items.length}` : null}
       </p>
       {groups.map((group) => (

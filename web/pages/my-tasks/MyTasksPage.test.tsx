@@ -50,7 +50,7 @@ describe('MyTasksPage', () => {
     });
     renderWorkPage(<MyTasksPage />, '/my-tasks');
 
-    expect(await screen.findByText('2 open tasks')).toBeInTheDocument();
+    expect(await screen.findByText('2 assigned tasks')).toBeInTheDocument();
     const team = screen.getByRole('region', { name: 'Acme' });
     const projects = within(team).getAllByRole('heading', { level: 3 });
     expect(projects.map((heading) => heading.textContent)).toEqual(['API', 'Web app']);
@@ -87,7 +87,7 @@ describe('MyTasksPage', () => {
       '/my-tasks',
       '/my-tasks?project=acme/WEB&due=overdue&priority=urgent&sort=due',
     );
-    await screen.findByText('1 open task');
+    await screen.findByText('1 assigned task');
     const [url] = taskCalls(fetchMock);
     expect(url).toContain('teamId=t1');
     expect(url).toContain('projectId=p1');
@@ -111,7 +111,7 @@ describe('MyTasksPage', () => {
     });
     const user = userEvent.setup();
     const { router } = renderWorkPage(<MyTasksPage />, '/my-tasks');
-    await screen.findByText('2 open tasks');
+    await screen.findByText('2 assigned tasks');
 
     await user.type(screen.getByRole('searchbox', { name: 'Search my tasks' }), 'nothing');
     expect(await screen.findByText('No tasks match these filters')).toBeInTheDocument();
@@ -119,7 +119,7 @@ describe('MyTasksPage', () => {
     expect(taskCalls(fetchMock).some((url) => url.includes('q=nothing'))).toBe(true);
 
     await user.click(screen.getByRole('button', { name: 'Clear filters' }));
-    expect(await screen.findByText('2 open tasks')).toBeInTheDocument();
+    expect(await screen.findByText('2 assigned tasks')).toBeInTheDocument();
     await waitFor(() =>
       expect(screen.getByRole('searchbox', { name: 'Search my tasks' })).toHaveValue(''),
     );

@@ -42,7 +42,10 @@ function newTask(title: string, patch: Partial<typeof s.task.$inferInsert> = {})
 }
 
 function assignToAda(task: TaskRow) {
-  ctx.db.orm.insert(s.taskAssigneeUser).values({ taskId: task.id, userId: ada.id }).run();
+  ctx.db.orm
+    .insert(s.taskAssigneeUser)
+    .values({ taskId: task.id, statusId: task.statusId, userId: ada.id })
+    .run();
 }
 
 function log(
@@ -97,8 +100,11 @@ describe('getDashboard', () => {
     const lastSoonDay = newTask('In six days', { dueDate: '2026-03-16' });
     const later = newTask('Next week', { dueDate: '2026-03-17' });
     for (const task of [urgent, overdue, today, lastSoonDay, later]) assignToAda(task);
-    const done = web.statuses.find((status) => status.category === 'done');
-    assignToAda(newTask('Finished', { statusId: done?.id, dueDate: '2026-03-02' }));
+    // Held in an earlier stage only (history): not hers any more.
+    const done = web.statuses.find((status) => status.name === 'Done');
+    const finished = newTask('Finished', { dueDate: '2026-03-02' });
+    assignToAda(finished);
+    ctx.db.orm.update(s.task).set({ statusId: done?.id }).where(eq(s.task.id, finished.id)).run();
     newTask('Not mine', { dueDate: '2026-03-02' });
 
     const dashboard = getDashboard(ctx.deps, actor(ada), { today: TODAY });

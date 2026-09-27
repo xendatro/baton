@@ -26,14 +26,22 @@ export interface ClaimPanelProps {
   canClaim: boolean;
   /** Taking over someone else's claim needs `UPDATE_TASKS`. */
   canTakeOver: boolean;
+  /** The task's stage is claimable (its `claimable` rule; default true). */
+  claimable?: boolean;
 }
 
-export function ClaimPanel({ task, viewerId, canClaim, canTakeOver }: ClaimPanelProps) {
+export function ClaimPanel({
+  task,
+  viewerId,
+  canClaim,
+  canTakeOver,
+  claimable = true,
+}: ClaimPanelProps) {
   const now = useNow();
   const action = useClaimAction(task);
   const [confirmTakeover, setConfirmTakeover] = useState(false);
   const { claim } = task;
-  const done = task.status.category === 'done';
+
   const mineOnWeb = claim !== null && claim.user.id === viewerId && claim.via === null;
   // Through a key the holder is the viewer's agent member (agents A); older claims name the viewer.
   const mineViaKey =
@@ -86,12 +94,14 @@ export function ClaimPanel({ task, viewerId, canClaim, canTakeOver }: ClaimPanel
         </div>
       ) : (
         <p className="mt-2 text-sm text-muted-foreground">
-          {done ? 'Done — nobody is working on it.' : 'Nobody is working on this.'}
+          {claimable
+            ? 'Nobody is working on this.'
+            : `Tasks in ${task.status.name} aren’t claimed.`}
         </p>
       )}
       {canClaim ? (
         <div className="mt-3 flex flex-wrap gap-2">
-          {!claim && !done ? (
+          {!claim && claimable ? (
             <Button
               size="sm"
               variant="outline"

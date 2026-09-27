@@ -1,5 +1,5 @@
 import { QueryClientProvider } from '@tanstack/react-query';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ReactNode } from 'react';
 import { MemoryRouter } from 'react-router';
@@ -254,5 +254,37 @@ describe('desktop pages', () => {
     renderPage(<DesktopAgentsPage />);
     expect(await screen.findByText('Baton desktop 0.3.0')).toBeInTheDocument();
     expect(screen.getByText('· Up to date')).toBeInTheDocument();
+  });
+
+  it('lists stopped jobs on Running agents, with Run again and Trash', async () => {
+    const user = userEvent.setup();
+    const decisions: string[] = [];
+    mockApi({
+      '/api/me': testMe(),
+      '/api/me/agent/waiting': {
+        jobs: [
+          {
+            jobId: 'job-9',
+            kind: 'mention',
+            createdAt: new Date().toISOString(),
+            triggeredBy: 'ethan',
+            project: { id: 'p1', ref: 'baton/BAT', name: 'Baton' },
+            target: { ref: 'baton/BAT-35', title: 'Stage names', url: null },
+            trigger: { body: 'can you fill in the criteria' },
+          },
+        ],
+      },
+      'POST /api/me/agent/jobs/job-9/dismiss': ({ url }: { url: URL }) => {
+        decisions.push(url.pathname);
+        return jsonResponse({ ok: true });
+      },
+    });
+    mockBridge();
+    renderPage(<DesktopAgentsPage />);
+    const waiting = await screen.findByRole('region', { name: 'Waiting for your OK' });
+    expect(within(waiting).getByText(/BAT-35/)).toBeInTheDocument();
+    expect(within(waiting).getByRole('button', { name: 'Run again' })).toBeInTheDocument();
+    await user.click(within(waiting).getByRole('button', { name: 'Trash baton/BAT-35' }));
+    await waitFor(() => expect(decisions).toEqual(['/api/me/agent/jobs/job-9/dismiss']));
   });
 });

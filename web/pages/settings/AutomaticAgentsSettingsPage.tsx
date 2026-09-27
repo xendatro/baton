@@ -1,4 +1,4 @@
-import { CheckIcon, DownloadIcon, MonitorIcon, PauseIcon, XIcon } from 'lucide-react';
+import { DownloadIcon, MonitorIcon, PauseIcon } from 'lucide-react';
 import { useId, useState, type ReactNode } from 'react';
 import { Link } from 'react-router';
 import { toast } from 'sonner';
@@ -31,7 +31,6 @@ import { pluralize } from '@web/lib/format';
 import { useMembers, useRoles } from '../teams/api';
 import {
   useAgentStats,
-  useDecideWaitingJob,
   useJobSources,
   useModelMappings,
   useRunners,
@@ -40,6 +39,7 @@ import {
   useWaitingJobs,
 } from './automaticAgentsQueries';
 import { ChainEditor } from './ChainEditor';
+import { WaitingJobsList } from './WaitingJobs';
 import { chainSummary } from './chainSummary';
 import { useAgentSettings, useUpdateAgentSettings } from './queries';
 import { SettingsCard, SettingsCardSkeleton, SettingsPage } from './SettingsCard';
@@ -178,57 +178,13 @@ function DesktopCard() {
 
 function WaitingCard() {
   const waiting = useWaitingJobs();
-  const decide = useDecideWaitingJob();
-  const act = (jobId: string, decision: 'approve' | 'dismiss') =>
-    decide.mutate(
-      { jobId, decision },
-      {
-        onSuccess: () =>
-          toast.success(decision === 'approve' ? 'Your agent will run it' : 'Dismissed'),
-        onError: (cause) => toast.error(errorMessage(cause)),
-      },
-    );
   if (waiting.isPending || waiting.isError || waiting.data.length === 0) return null;
   return (
     <SettingsCard
       title={`Waiting for your OK (${waiting.data.length})`}
-      description="Jobs from people outside “Whose jobs run”. They only run when you say so."
+      description="Jobs you stopped, and jobs from people outside “Whose jobs run”. They only run when you say so."
     >
-      <ul className="divide-y" aria-label="Jobs waiting for your OK">
-        {waiting.data.map((job) => (
-          <li key={job.jobId} className="flex flex-wrap items-center gap-2 py-2">
-            <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-medium">
-                {job.target.url ? (
-                  <a href={job.target.url} className="hover:underline">
-                    {job.target.ref} {job.target.title}
-                  </a>
-                ) : (
-                  `${job.target.ref ?? ''} ${job.target.title ?? ''}`
-                )}
-              </p>
-              <p className="truncate text-xs text-muted-foreground">
-                {job.kind.replace('_', ' ')} by @{job.triggeredBy ?? 'someone'} ·{' '}
-                <RelativeTime value={job.createdAt} />
-                {job.trigger ? ` · “${job.trigger.body.slice(0, 80)}”` : ''}
-              </p>
-            </div>
-            <Button size="sm" onClick={() => act(job.jobId, 'approve')} disabled={decide.isPending}>
-              <CheckIcon aria-hidden="true" />
-              Run
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => act(job.jobId, 'dismiss')}
-              disabled={decide.isPending}
-            >
-              <XIcon aria-hidden="true" />
-              Dismiss
-            </Button>
-          </li>
-        ))}
-      </ul>
+      <WaitingJobsList jobs={waiting.data} />
     </SettingsCard>
   );
 }

@@ -57,7 +57,7 @@ test('models, whose jobs run and a job waiting for my OK', async ({ page, browse
   // The job waits for the owner's OK; Run clears it.
   const waiting = page.getByRole('list', { name: 'Jobs waiting for your OK' });
   await expect(waiting.getByText('Wire the runner')).toBeVisible();
-  await waiting.getByRole('button', { name: 'Run' }).click();
+  await waiting.getByRole('button', { name: 'Run again' }).click();
   await expect(page.getByText('Your agent will run it')).toBeVisible();
   await expect(waiting).toBeHidden();
 

@@ -17,7 +17,9 @@ import { Switch } from '@web/components/ui/switch';
 import { errorMessage } from '@web/lib/api';
 import { desktopBridge, elapsed, useDesktopState } from '@web/lib/desktop';
 import { useDocumentTitle } from '@web/lib/title';
+import { useDecideWaitingJob, useWaitingJobs } from '../settings/automaticAgentsQueries';
 import { useAgentSettings, useUpdateAgentSettings } from '../settings/queries';
+import { WaitingJobsList } from '../settings/WaitingJobs';
 import { DesktopOnly } from './common';
 
 /**
@@ -91,14 +93,7 @@ function Agents() {
       ) : (
         <div className="grid gap-4">
           <PauseSwitches state={state} />
-          {runner && runner.waitingCount > 0 ? (
-            <p className="rounded-md border bg-card px-4 py-3 text-sm">
-              {runner.waitingCount} job{runner.waitingCount === 1 ? '' : 's'} waiting for your OK.{' '}
-              <Link to="/settings/automatic-agents" className="font-medium underline">
-                Review them
-              </Link>
-            </p>
-          ) : null}
+          <WaitingHere />
           {runner?.jobs.length ? (
             <ul className="grid gap-4" aria-label="Running jobs">
               {runner.jobs.map((job) => (
@@ -217,12 +212,40 @@ const STATE_TEXT: Record<string, string> = {
   finishing: 'Finishing',
 };
 
+/** Stopped jobs (and others waiting for your OK), right here: Run again or Trash. */
+function WaitingHere() {
+  const waiting = useWaitingJobs();
+  if (!waiting.data?.length) return null;
+  return (
+    <section className="rounded-lg border bg-card px-4 py-2" aria-label="Waiting for your OK">
+      <h2 className="pt-1 text-sm font-medium">Waiting for your OK ({waiting.data.length})</h2>
+      <WaitingJobsList jobs={waiting.data} />
+    </section>
+  );
+}
+
 function JobCard({ job }: { job: DesktopJob }) {
   const now = useNow();
+  const decide = useDecideWaitingJob();
+  // After Kill the job waits for your OK; the toast offers to trash it straight away.
   const kill = () =>
     desktopBridge()
       ?.kill(job.jobId)
-      .then(() => toast.success('Stopped. It waits for your OK before running again.'))
+      .then(() =>
+        toast.success('Stopped. It waits for your OK before running again.', {
+          action: {
+            label: 'Trash it',
+            onClick: () =>
+              decide.mutate(
+                { jobId: job.jobId, decision: 'dismiss' },
+                {
+                  onSuccess: () => toast.success('Trashed'),
+                  onError: (cause) => toast.error(errorMessage(cause)),
+                },
+              ),
+          },
+        }),
+      )
       .catch((cause: unknown) => toast.error(errorMessage(cause)));
   return (
     <li

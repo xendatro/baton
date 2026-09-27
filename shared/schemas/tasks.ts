@@ -82,6 +82,8 @@ export const taskStatusSummarySchema = z.object({
   color: z.string(),
   /** Icon shape, drawn in `color`. */
   icon: z.enum(STATUS_ICONS),
+  /** Its pipeline (BAT-25): id and name, for projects with more than one. Optional for fixtures. */
+  pipeline: z.object({ id: z.string(), name: z.string(), isDefault: z.boolean() }).optional(),
 });
 export type TaskStatusSummary = z.infer<typeof taskStatusSummarySchema>;
 
@@ -290,6 +292,8 @@ export const taskFiltersSchema = z.object({
   /** Words in the title or description, a number (`12`) or a ref (`API-12`). */
   q: z.string().trim().max(LIMITS.searchQuery.max).optional(),
   status: commaList(idSchema).optional(),
+  /** Only tasks in stages of this pipeline (BAT-25). */
+  pipeline: idSchema.optional(),
   assignee: commaList(assigneeFilterSchema).optional(),
   label: commaList(idSchema).optional(),
   priority: commaList(priorityFilterSchema).optional(),
@@ -399,8 +403,10 @@ export const createTaskInputSchema = z.object({
   title: titleSchema,
   /** Markdown. */
   description: markdownSchema.optional(),
-  /** Default: the project's default status. */
+  /** Default: the default status of `pipelineId` (or of the project's default pipeline). */
   statusId: idSchema.optional(),
+  /** The pipeline it starts in (BAT-25), when `statusId` isn't given. */
+  pipelineId: idSchema.optional(),
   priority: priorityValueSchema.optional(),
   dueDate: dueDateSchema.nullable().optional(),
   /** Team members. */

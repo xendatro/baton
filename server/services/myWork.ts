@@ -9,6 +9,7 @@ import {
   isNull,
   lt,
   lte,
+  notInArray,
   or,
   sql,
   type SQL,
@@ -36,6 +37,7 @@ import {
   visibleProjectIds,
   type Membership,
 } from './access';
+import { hiddenStatusIds } from './projectPipelines';
 import { assignedTo, claimValidAt, toTaskCards, toTaskSummary, utcToday } from './taskViews';
 
 /**
@@ -88,6 +90,8 @@ export interface WorkScope {
   roleIds: string[];
   /** Whose claims are the caller's: theirs and their agent member's (or an agent's owner's). */
   claimantIds: readonly string[];
+  /** Stages of pipelines the caller can't see (BAT-25): their tasks are left out. */
+  hiddenStatusIds: string[];
 }
 
 export function workScope(db: DbExecutor, userId: string): WorkScope {
@@ -102,11 +106,13 @@ export function workScope(db: DbExecutor, userId: string): WorkScope {
           .where(and(inArray(s.role.teamId, teamIds), eq(s.role.isEveryone, true)))
           .all()
           .map((role) => role.id);
+  const projectIds = teamIds.length === 0 ? [] : visibleProjectIds(db, userId, teamIds);
   return {
     userId,
     memberships,
     teamIds,
-    projectIds: teamIds.length === 0 ? [] : visibleProjectIds(db, userId, teamIds),
+    projectIds,
+    hiddenStatusIds: [...hiddenStatusIds(db, userId, projectIds)],
     roleIds: [...memberships.flatMap((membership) => membership.roleIds), ...everyoneRoles],
     claimantIds: memberships[0]?.selfIds ?? [userId],
   };
@@ -117,6 +123,9 @@ function liveTaskCondition(scope: WorkScope): SQL | undefined {
   return and(
     inArray(s.task.teamId, scope.teamIds),
     inArray(s.task.projectId, scope.projectIds),
+    scope.hiddenStatusIds.length > 0
+      ? notInArray(s.task.statusId, scope.hiddenStatusIds)
+      : undefined,
     isNull(s.task.deletedAt),
     isNull(s.project.deletedAt),
     isNull(s.team.deletedAt),

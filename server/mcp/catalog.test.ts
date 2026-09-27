@@ -73,6 +73,11 @@ const DOCUMENTED_ADDITIONS = [
   'get_action_request',
   // tasks (DECISIONS 2026-09-27 pipelines D)
   'approve_task',
+  // projects (DECISIONS 2026-09-27 BAT-25 pipelines)
+  'list_pipelines',
+  'create_pipeline',
+  'update_pipeline',
+  'delete_pipeline',
 ].sort();
 
 let ctx: TestContext;

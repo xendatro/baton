@@ -19,6 +19,7 @@ import {
 import { Label } from '@web/components/ui/label';
 import { Skeleton } from '@web/components/ui/skeleton';
 import { errorMessage } from '@web/lib/api';
+import { usePipelines } from '../projects/queries';
 import { useCopyPipeline, useCopyPipelinePreview } from './pipelineQueries';
 
 /**
@@ -34,12 +35,15 @@ export function CopyPipelineDialog({
   open,
   onOpenChange,
   projectId,
+  pipelineId,
   teams,
   options,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   projectId: string;
+  /** The pipeline copied into (BAT-25). */
+  pipelineId?: string | undefined;
   teams: readonly MeTeam[];
   options: PrincipalOptions;
 }) {
@@ -49,6 +53,7 @@ export function CopyPipelineDialog({
         {open ? (
           <CopyForm
             projectId={projectId}
+            pipelineId={pipelineId}
             teams={teams}
             options={options}
             onClose={() => onOpenChange(false)}
@@ -59,15 +64,16 @@ export function CopyPipelineDialog({
   );
 }
 
-/** Projects of the viewer's teams whose statuses they may manage, other than this one. */
-function sourceProjects(teams: readonly MeTeam[], projectId: string) {
+/**
+ * Projects of the viewer's teams whose statuses they may manage (this one too: another of its
+ * pipelines can be the source, BAT-25).
+ */
+function sourceProjects(teams: readonly MeTeam[]) {
   return teams
     .map((team) => ({
       team,
-      projects: team.projects.filter(
-        (project) =>
-          project.id !== projectId &&
-          (project.permissions ?? team.permissions).includes('MANAGE_STATUSES'),
+      projects: team.projects.filter((project) =>
+        (project.permissions ?? team.permissions).includes('MANAGE_STATUSES'),
       ),
     }))
     .filter((group) => group.projects.length > 0);
@@ -75,21 +81,34 @@ function sourceProjects(teams: readonly MeTeam[], projectId: string) {
 
 function CopyForm({
   projectId,
+  pipelineId,
   teams,
   options,
   onClose,
 }: {
   projectId: string;
+  pipelineId?: string | undefined;
   teams: readonly MeTeam[];
   options: PrincipalOptions;
   onClose: () => void;
 }) {
   const selectId = useId();
-  const groups = sourceProjects(teams, projectId);
+  const pipelineSelectId = useId();
+  const groups = sourceProjects(teams);
   const [from, setFrom] = useState<string | null>(null);
+  const [fromPipeline, setFromPipeline] = useState<string | undefined>(undefined);
+  const sourcePipelines = usePipelines(from ?? undefined);
+  // The pipelines to copy from: in this project, only the others.
+  const choices = (sourcePipelines.data ?? []).filter((pipeline) => pipeline.id !== pipelineId);
+  const fromPipelineId =
+    fromPipeline ?? (from === projectId ? choices[0]?.id : undefined) ?? undefined;
   const [answers, setAnswers] = useState<Record<string, Principal | null>>({});
   const [error, setError] = useState<string | null>(null);
-  const preview = useCopyPipelinePreview(projectId, from);
+  const ready = Boolean(from) && (from !== projectId || fromPipelineId !== undefined);
+  const preview = useCopyPipelinePreview(projectId, ready ? from : null, {
+    fromPipelineId,
+    pipelineId,
+  });
   const copy = useCopyPipeline(projectId);
   const unresolved = preview.data?.unresolved ?? [];
   const unanswered = unresolved.filter((entry) => !(entry.key in answers));
@@ -98,7 +117,12 @@ function CopyForm({
     if (!from) return;
     setError(null);
     copy.mutate(
-      { fromProjectId: from, replacements: answers },
+      {
+        fromProjectId: from,
+        replacements: answers,
+        ...(fromPipelineId ? { fromPipelineId } : {}),
+        ...(pipelineId ? { pipelineId } : {}),
+      },
       {
         onSuccess: () => {
           toast.success(`Copied the pipeline of ${preview.data?.source.key ?? 'the project'}`);
@@ -131,6 +155,7 @@ function CopyForm({
             value={from ?? ''}
             onChange={(event) => {
               setFrom(event.target.value || null);
+              setFromPipeline(undefined);
               setAnswers({});
             }}
           >
@@ -147,14 +172,39 @@ function CopyForm({
           </select>
         </div>
       )}
+      {from && (choices.length > 1 || from === projectId) ? (
+        <div className="grid gap-1.5">
+          <Label htmlFor={pipelineSelectId}>Pipeline</Label>
+          {choices.length === 0 ? (
+            <p className="text-sm text-muted-foreground">This project has no other pipeline.</p>
+          ) : (
+            <select
+              id={pipelineSelectId}
+              className={selectClass}
+              value={fromPipelineId ?? ''}
+              onChange={(event) => {
+                setFromPipeline(event.target.value || undefined);
+                setAnswers({});
+              }}
+            >
+              {from === projectId ? null : <option value="">Its default pipeline</option>}
+              {choices.map((pipeline) => (
+                <option key={pipeline.id} value={pipeline.id}>
+                  {pipeline.name}
+                </option>
+              ))}
+            </select>
+          )}
+        </div>
+      ) : null}
 
-      {from && preview.isPending ? (
+      {ready && preview.isPending ? (
         <div role="status" aria-label="Loading the pipeline" className="grid gap-2">
           <Skeleton className="h-5 w-40" />
           <Skeleton className="h-5 w-56" />
         </div>
       ) : null}
-      {from && preview.isError ? (
+      {ready && preview.isError ? (
         <ErrorState
           title="Couldn’t read that pipeline"
           error={preview.error}

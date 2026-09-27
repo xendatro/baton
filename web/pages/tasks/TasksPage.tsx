@@ -8,9 +8,10 @@ import {
   TagsIcon,
   UserIcon,
 } from 'lucide-react';
-import { useNavigate } from 'react-router';
+import { useNavigate, useSearchParams } from 'react-router';
 import { toast } from 'sonner';
 import type { MeProject, MeTeam } from '@shared/schemas/core';
+import type { Pipeline } from '@shared/schemas/projects';
 import { EmptyState } from '@web/components/common/EmptyState';
 import { ErrorState } from '@web/components/common/ErrorState';
 import { Kbd } from '@web/components/common/Kbd';
@@ -34,7 +35,7 @@ import { useRouteContext } from '@web/lib/routeContext';
 import { runShellAction, useShellActionAvailable } from '@web/lib/shellActions';
 import { useDocumentTitle } from '@web/lib/title';
 import { cn } from '@web/lib/utils';
-import { useLabels, useStatuses } from '../projects/queries';
+import { useLabels, usePipelines, useStatuses } from '../projects/queries';
 import { Board, BoardSkeleton } from './Board';
 import { CustomizeMenu } from './CustomizeMenu';
 import { FILTER_SEARCH_ID, FilterBar } from './FilterBar';
@@ -84,9 +85,38 @@ function Tasks({ team, project }: { team: MeTeam; project: MeProject }) {
   const [view, setView] = useTaskView(project.id);
   const { filters, listOptions, setFilters, setListOptions } = useTaskFilters();
   useRememberTasksSearch(project.id);
-  const query = filtersToQuery(filters);
+  // BAT-25: with several pipelines, tabs pick one (`?pipeline=`) or show them all.
+  const [params, setParams] = useSearchParams();
+  const pipelines = usePipelines(project.id);
+  const pipelineList = pipelines.data ?? [];
+  const pipeline = pipelineList.find((candidate) => candidate.id === params.get('pipeline'));
+  const selectPipeline = (pipelineId: string | null) =>
+    setParams(
+      (current) => {
+        const next = new URLSearchParams(current);
+        if (pipelineId) next.set('pipeline', pipelineId);
+        else next.delete('pipeline');
+        next.delete('status');
+        return next;
+      },
+      { replace: true },
+    );
+  const query = {
+    ...filtersToQuery(filters),
+    ...(pipeline ? { pipeline: pipeline.id } : {}),
+  };
   const filterCount = activeFilterCount(filters);
-  const statuses = useStatuses(project.id);
+  const allStatuses = useStatuses(project.id);
+  const statuses = {
+    ...allStatuses,
+    data: allStatuses.data?.filter(
+      (status) => !pipeline || !status.pipelineId || status.pipelineId === pipeline.id,
+    ),
+  };
+  const pipelineNameOf =
+    pipelineList.length > 1 && !pipeline
+      ? (id: string | undefined) => pipelineList.find((candidate) => candidate.id === id)?.name
+      : undefined;
   const labels = useLabels(project.id);
   const people = useAssignables(team.id);
   const board = useBoard(project.id, query, view === 'board');
@@ -100,7 +130,11 @@ function Tasks({ team, project }: { team: MeTeam; project: MeProject }) {
 
   const toggleView = () => setView(view === 'board' ? 'list' : 'board');
   const newTask = (statusId?: string) =>
-    runShellAction('task.create', { projectId: project.id, statusId });
+    runShellAction('task.create', {
+      projectId: project.id,
+      statusId,
+      ...(pipeline ? { pipelineId: pipeline.id } : {}),
+    });
   useHotkey('b', toggleView, { description: 'Toggle board / list', group: 'Project' });
   useHotkey('/', () => document.getElementById(FILTER_SEARCH_ID)?.focus(), {
     description: 'Filter tasks',
@@ -267,6 +301,7 @@ function Tasks({ team, project }: { team: MeTeam; project: MeProject }) {
             : undefined
         }
         onQuickAdd={(statusId) => newTask(statusId)}
+        pipelineNameOf={pipelineNameOf}
         onMove={(variables) =>
           move.mutate(variables, {
             onError: (error) => toast.error(errorMessage(error, 'Couldn’t move the task.')),
@@ -322,6 +357,13 @@ function Tasks({ team, project }: { team: MeTeam; project: MeProject }) {
   return (
     <div className="flex min-w-0 flex-1 flex-col">
       <div className="px-4 pt-4 pb-3 sm:px-6">
+        {pipelineList.length > 1 ? (
+          <PipelineTabs
+            pipelines={pipelineList}
+            selectedId={pipeline?.id ?? null}
+            onSelect={selectPipeline}
+          />
+        ) : null}
         <FilterBar
           filters={filters}
           onChange={setFilters}
@@ -340,6 +382,44 @@ function Tasks({ team, project }: { team: MeTeam; project: MeProject }) {
         ) : null}
       </div>
       {content}
+    </div>
+  );
+}
+
+/** The board's pipelines (BAT-25): All, then each one the viewer can see. */
+function PipelineTabs({
+  pipelines,
+  selectedId,
+  onSelect,
+}: {
+  pipelines: readonly Pipeline[];
+  selectedId: string | null;
+  onSelect: (pipelineId: string | null) => void;
+}) {
+  const tabs = [
+    { id: null, name: 'All', count: pipelines.reduce((sum, item) => sum + item.taskCount, 0) },
+    ...pipelines.map((item) => ({ id: item.id, name: item.name, count: item.taskCount })),
+  ];
+  return (
+    <div role="tablist" aria-label="Pipelines" className="mb-3 flex flex-wrap gap-1 border-b">
+      {tabs.map((tab) => (
+        <button
+          key={tab.id ?? 'all'}
+          type="button"
+          role="tab"
+          aria-selected={tab.id === selectedId}
+          onClick={() => onSelect(tab.id)}
+          className={cn(
+            '-mb-px border-b-2 px-3 py-1.5 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring',
+            tab.id === selectedId
+              ? 'border-primary font-medium text-foreground'
+              : 'border-transparent text-muted-foreground hover:text-foreground',
+          )}
+        >
+          {tab.name}
+          <span className="ml-1.5 text-xs text-muted-foreground tabular-nums">{tab.count}</span>
+        </button>
+      ))}
     </div>
   );
 }

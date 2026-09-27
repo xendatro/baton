@@ -37,7 +37,7 @@ import { Switch } from '@web/components/ui/switch';
 import { errorMessage, isApiError } from '@web/lib/api';
 import { useMe } from '@web/lib/auth';
 import { useDifficulties } from '../projects/difficultyQueries';
-import { useCreateLabel, useLabels, useStatuses } from '../projects/queries';
+import { useCreateLabel, useLabels, usePipelines, useStatuses } from '../projects/queries';
 import { useAssignables, useCreateTask } from './queries';
 
 /**
@@ -55,6 +55,8 @@ export interface NewTaskFormProps {
   choices: ProjectChoice[];
   initialProjectId: string | undefined;
   initialStatusId: string | undefined;
+  /** The pipeline to start in (BAT-25: the board's selected pipeline). */
+  initialPipelineId?: string | undefined;
   onDone: () => void;
 }
 
@@ -62,6 +64,7 @@ export default function NewTaskForm({
   choices,
   initialProjectId,
   initialStatusId,
+  initialPipelineId,
   onDone,
 }: NewTaskFormProps) {
   const requested = choices.find((choice) => choice.project.id === initialProjectId);
@@ -122,6 +125,7 @@ export default function NewTaskForm({
           team={choice.team}
           project={choice.project}
           initialStatusId={choice.project.id === initialProjectId ? initialStatusId : undefined}
+          initialPipelineId={choice.project.id === initialProjectId ? initialPipelineId : undefined}
           onDone={onDone}
         />
       ) : (
@@ -140,16 +144,19 @@ function TaskFields({
   team,
   project,
   initialStatusId,
+  initialPipelineId,
   onDone,
 }: {
   team: MeTeam;
   project: MeProject;
   initialStatusId: string | undefined;
+  initialPipelineId: string | undefined;
   onDone: () => void;
 }) {
   const navigate = useNavigate();
   const me = useMe().data;
   const statuses = useStatuses(project.id);
+  const pipelines = usePipelines(project.id);
   const labels = useLabels(project.id);
   const difficulties = useDifficulties(project.id);
   const createLabel = useCreateLabel(project.id);
@@ -171,9 +178,28 @@ function TaskFields({
   const [titleError, setTitleError] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
 
-  const statusList = statuses.data ?? [];
+  // The pipeline it starts in (BAT-25): only those the viewer may add tasks to.
+  const creatable = (pipelines.data ?? []).filter((pipeline) => pipeline.canCreateTasks);
+  const allStatuses = statuses.data ?? [];
+  const [pipelineId, setPipelineId] = useState<string | null>(null);
+  const chosenPipeline =
+    creatable.find((pipeline) => pipeline.id === pipelineId) ??
+    creatable.find(
+      (pipeline) =>
+        pipeline.id ===
+        (allStatuses.find((status) => status.id === initialStatusId)?.pipelineId ??
+          initialPipelineId),
+    ) ??
+    creatable.find((pipeline) => pipeline.isDefault) ??
+    creatable[0];
+  const statusList = allStatuses.filter(
+    (status) => !chosenPipeline || !status.pipelineId || status.pipelineId === chosenPipeline.id,
+  );
   const effectiveStatus =
-    statusId ?? statusList.find((status) => status.isDefault)?.id ?? statusList[0]?.id ?? null;
+    (statusList.some((status) => status.id === statusId) ? statusId : null) ??
+    statusList.find((status) => status.isDefault)?.id ??
+    statusList[0]?.id ??
+    null;
   const canManageLabels = (project.permissions ?? team.permissions).includes('MANAGE_LABELS');
 
   const submit = (event?: FormEvent) => {
@@ -287,6 +313,27 @@ function TaskFields({
         }
       />
       <div className="flex flex-wrap items-center gap-2">
+        {creatable.length > 1 && chosenPipeline ? (
+          <Select
+            value={chosenPipeline.id}
+            onValueChange={(id) => {
+              setPipelineId(id);
+              setStatusId(null);
+            }}
+          >
+            <SelectTrigger size="sm" className="w-auto" aria-label="Pipeline">
+              <span className="text-muted-foreground">Pipeline:</span>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {creatable.map((pipeline) => (
+                <SelectItem key={pipeline.id} value={pipeline.id}>
+                  {pipeline.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        ) : null}
         <StatusPicker statuses={statusList} value={effectiveStatus} onChange={setStatusId} />
         <PriorityPicker value={priority} onChange={setPriority} />
         <DifficultyPicker

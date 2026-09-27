@@ -524,18 +524,65 @@ function projectLabel(db: DbExecutor, projectId: string): string {
   return row ? formatProjectRef(row.key, row.slug) : 'this project';
 }
 
-/** A status of the project by id or name (case-insensitive). */
-export function resolveStatus(db: DbExecutor, projectId: string, ref: string): StatusRow {
+/**
+ * A status of the project by id or name (case-insensitive). With several pipelines (BAT-25) the
+ * same name can be a stage of more than one: `Pipeline/Stage` picks one, and `pipelineId` (the
+ * task's current pipeline) is preferred when the name is a stage of it.
+ */
+export function resolveStatus(
+  db: DbExecutor,
+  projectId: string,
+  ref: string,
+  options: { pipelineId?: string | undefined } = {},
+): StatusRow {
   const rows = db
-    .select()
+    .select({ status: s.status, pipeline: s.pipeline })
     .from(s.status)
+    .innerJoin(s.pipeline, eq(s.pipeline.id, s.status.pipelineId))
     .where(eq(s.status.projectId, projectId))
-    .orderBy(asc(s.status.position))
+    .orderBy(asc(s.pipeline.position), asc(s.status.position))
     .all();
-  return pickByIdOrName(rows, ref, 'Status', () => ({
-    context: ` in ${projectLabel(db, projectId)}`,
-    label: 'Statuses',
-  }));
+  const several = new Set(rows.map((row) => row.pipeline.id)).size > 1;
+  const labelOf = (row: (typeof rows)[number]) =>
+    several ? `${row.pipeline.name}/${row.status.name}` : row.status.name;
+  let value = ref.trim();
+  const byId = rows.find((row) => row.status.id === value);
+  if (byId) return byId.status;
+
+  let pool = rows;
+  const slash = value.indexOf('/');
+  if (slash > 0) {
+    const prefix = value.slice(0, slash).trim().toLowerCase();
+    const inPipeline = rows.filter(
+      (row) => row.pipeline.slug === prefix || row.pipeline.name.toLowerCase() === prefix,
+    );
+    if (inPipeline.length > 0) {
+      pool = inPipeline;
+      value = value.slice(slash + 1).trim();
+    }
+  }
+  const lower = value.toLowerCase();
+  const named = (candidates: typeof rows) =>
+    candidates.filter((row) => row.status.name.toLowerCase() === lower);
+  let matches = named(pool);
+  if (matches.length > 1 && options.pipelineId) {
+    const own = matches.filter((row) => row.pipeline.id === options.pipelineId);
+    if (own.length > 0) matches = own;
+  }
+  if (matches.length > 1) {
+    const exact = matches.filter((row) => row.status.name === value);
+    if (exact.length === 1) matches = exact;
+  }
+  if (matches.length > 1) throw ambiguous('Status', ref, matches.map(labelOf));
+  const [only] = matches;
+  if (!only) {
+    throw notFound('Status', ref, {
+      context: ` in ${projectLabel(db, projectId)}`,
+      label: 'Statuses',
+      candidates: rows.map(labelOf),
+    });
+  }
+  return only.status;
 }
 
 /** A label of the project by id or name (case-insensitive). */

@@ -18,7 +18,8 @@ import { newId } from '../lib/ids';
 import { requirePermission } from './access';
 import { recordActivity } from './activity';
 import { emitAfterCommit } from './events';
-import { mergeRules, projectStatuses, ruleColumns, rulesOf, type StatusRow } from './pipelines';
+import { mergeRules, ruleColumns, rulesOf, type StatusRow } from './pipelines';
+import { defaultPipeline, pipelineStatuses, resolvePipeline } from './projectPipelines';
 import { requireProject } from './projects';
 import { statusesOf, syncCompletion } from './statuses';
 
@@ -37,9 +38,19 @@ interface Scope {
   projectId: string;
 }
 
-function access(deps: AppDeps, actor: Actor, targetId: string, sourceId: string) {
+interface PipelineChoice {
+  fromPipelineId?: string | undefined;
+  pipelineId?: string | undefined;
+}
+
+function access(
+  deps: AppDeps,
+  actor: Actor,
+  targetId: string,
+  sourceId: string,
+  choice: PipelineChoice = {},
+) {
   const { orm } = deps.db;
-  if (targetId === sourceId) throw errors.validation('Pick another project to copy from');
   const target = requireProject(orm, actor, targetId);
   requirePermission(
     target.membership,
@@ -52,7 +63,15 @@ function access(deps: AppDeps, actor: Actor, targetId: string, sourceId: string)
     'MANAGE_STATUSES',
     'You can only copy the pipeline of a project whose statuses you can manage',
   );
-  return { target, source };
+  // BAT-25: pipeline to pipeline, the default ones unless chosen (another of the same project too).
+  const pick = (projectId: string, ref: string | undefined) =>
+    ref ? resolvePipeline(orm, projectId, ref) : defaultPipeline(orm, projectId);
+  const sourcePipeline = pick(sourceId, choice.fromPipelineId);
+  const targetPipeline = pick(targetId, choice.pipelineId);
+  if (sourcePipeline.id === targetPipeline.id) {
+    throw errors.validation('Pick another pipeline to copy from');
+  }
+  return { target, source, sourcePipeline, targetPipeline };
 }
 
 function principalKey(principal: Principal): string {
@@ -204,12 +223,19 @@ export function copyPipelinePreview(
   actor: Actor,
   targetProjectId: string,
   fromProjectId: string,
+  choice: PipelineChoice = {},
 ): CopyPipelinePreview {
   const { orm } = deps.db;
-  const { target, source } = access(deps, actor, targetProjectId, fromProjectId);
-  const sourceStatuses = projectStatuses(orm, source.project.id);
+  const { target, source, sourcePipeline, targetPipeline } = access(
+    deps,
+    actor,
+    targetProjectId,
+    fromProjectId,
+    choice,
+  );
+  const sourceStatuses = pipelineStatuses(orm, sourcePipeline.id);
   const targetNames = new Set(
-    projectStatuses(orm, target.project.id).map((row) => row.name.toLowerCase()),
+    pipelineStatuses(orm, targetPipeline.id).map((row) => row.name.toLowerCase()),
   );
   return {
     source: {
@@ -240,14 +266,20 @@ export function copyPipeline(
   input: CopyPipelineInput,
 ): StatusListResponse {
   const { orm } = deps.db;
-  const { target, source } = access(deps, actor, targetProjectId, input.fromProjectId);
+  const { target, source, sourcePipeline, targetPipeline } = access(
+    deps,
+    actor,
+    targetProjectId,
+    input.fromProjectId,
+    { fromPipelineId: input.fromPipelineId, pipelineId: input.pipelineId },
+  );
   const replacements = input.replacements ?? {};
   const sourceScope = { teamId: source.project.teamId, projectId: source.project.id };
   const targetScope = { teamId: target.project.teamId, projectId: target.project.id };
 
   deps.db.write((tx) => {
     const now = new Date();
-    const sourceStatuses = projectStatuses(tx, source.project.id);
+    const sourceStatuses = pipelineStatuses(tx, sourcePipeline.id);
     const unresolved = unresolvedOf(tx, sourceScope, targetScope, sourceStatuses);
     const unanswered = unresolved.filter((entry) => !(entry.key in replacements));
     if (unanswered.length > 0) {
@@ -275,10 +307,15 @@ export function copyPipeline(
       return { allow, deny };
     };
 
-    const existing = projectStatuses(tx, target.project.id);
+    const existing = pipelineStatuses(tx, targetPipeline.id);
     const byName = new Map(existing.map((row) => [row.name.toLowerCase(), row]));
     const toCreate = sourceStatuses.filter((row) => !byName.has(row.name.toLowerCase()));
-    if (existing.length + toCreate.length > PROJECT_LIMITS.statuses) {
+    const projectTotal = tx
+      .select({ id: s.status.id })
+      .from(s.status)
+      .where(eq(s.status.projectId, target.project.id))
+      .all().length;
+    if (projectTotal + toCreate.length > PROJECT_LIMITS.statuses) {
       throw errors.validation(`A project can have at most ${PROJECT_LIMITS.statuses} statuses`);
     }
     const idMap = new Map<string, string>();
@@ -296,6 +333,7 @@ export function copyPipeline(
         .values({
           id,
           projectId: target.project.id,
+          pipelineId: targetPipeline.id,
           name: row.name,
           color: row.color,
           icon: row.icon,
@@ -376,6 +414,8 @@ export function copyPipeline(
         name: target.project.name,
         key: target.project.key,
         from: `${source.team.slug}/${source.project.key}`,
+        ...(sourcePipeline.isDefault ? {} : { fromPipeline: sourcePipeline.name }),
+        ...(targetPipeline.isDefault ? {} : { pipeline: targetPipeline.name }),
         created,
         updated,
       },

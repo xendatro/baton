@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { principalRuleSchema } from '../principals';
 import { readmeSourceSchema } from './github';
 import { LIMITS, STATUS_CATEGORIES, STATUS_ICONS } from '../constants';
 import { PROJECT_KEY_PATTERN } from '../refs';
@@ -13,7 +14,12 @@ import { stageRulesPatchSchema, stageRulesSchema } from './pipelines';
  */
 
 /** Per-project caps that keep boards and pickers usable. */
-export const PROJECT_LIMITS = { statuses: 50, labels: 200, difficulties: 20 } as const;
+export const PROJECT_LIMITS = {
+  statuses: 50,
+  labels: 200,
+  difficulties: 20,
+  pipelines: 20,
+} as const;
 
 // ---------------------------------------------------------------------------------------------
 // Project keys
@@ -116,13 +122,15 @@ export const statusIconSchema = z.enum(STATUS_ICONS);
 export const statusSchema = z.object({
   id: z.string(),
   projectId: z.string(),
+  /** The pipeline it's a stage of (BAT-25). Optional for older fixtures. */
+  pipelineId: z.string().optional(),
   name: z.string(),
   color: z.string(),
   /** Icon shape, drawn in `color`. */
   icon: statusIconSchema,
-  /** Column order, ascending from 0. */
+  /** Column order within its pipeline, ascending from 0. */
   position: z.number().int().nonnegative(),
-  /** New tasks start here. Exactly one status per project is the default. */
+  /** New tasks of its pipeline start here. Exactly one status per pipeline is the default. */
   isDefault: z.boolean(),
   /** Tasks currently in this status (not counting deleted ones). */
   taskCount: z.number().int().nonnegative(),
@@ -133,6 +141,76 @@ export const statusSchema = z.object({
   rules: stageRulesSchema.optional(),
 });
 export type Status = z.infer<typeof statusSchema>;
+
+// ---------------------------------------------------------------------------------------------
+// Pipelines (BAT-25): a project's sets of stages
+// ---------------------------------------------------------------------------------------------
+
+export const pipelineNameSchema = z
+  .string()
+  .trim()
+  .min(1, 'Required')
+  .max(40, 'At most 40 characters');
+
+export const pipelineSchema = z.object({
+  id: z.string(),
+  projectId: z.string(),
+  name: z.string(),
+  /** URL- and ref-friendly name (`modeling`). */
+  slug: z.string(),
+  color: z.string().nullable(),
+  icon: z.string().nullable(),
+  position: z.number().int().nonnegative(),
+  /** The reserved pipeline every project has: can be renamed, never deleted. */
+  isDefault: z.boolean(),
+  /** Who sees it, creates tasks in it, edits its stages (null: everyone in the project). */
+  viewRule: principalRuleSchema.nullable(),
+  createRule: principalRuleSchema.nullable(),
+  manageRule: principalRuleSchema.nullable(),
+  statusCount: z.number().int().nonnegative(),
+  taskCount: z.number().int().nonnegative(),
+  /** What the viewer may do. */
+  canCreateTasks: z.boolean(),
+  canManage: z.boolean(),
+});
+export type Pipeline = z.infer<typeof pipelineSchema>;
+
+export const pipelineListResponseSchema = z.object({ items: z.array(pipelineSchema) });
+export type PipelineListResponse = z.infer<typeof pipelineListResponseSchema>;
+
+export const createPipelineInputSchema = z.object({
+  name: pipelineNameSchema,
+  color: hexColorSchema.nullable().optional(),
+  icon: z.string().max(16).nullable().optional(),
+  viewRule: principalRuleSchema.nullable().optional(),
+  createRule: principalRuleSchema.nullable().optional(),
+  manageRule: principalRuleSchema.nullable().optional(),
+});
+export type CreatePipelineInput = z.infer<typeof createPipelineInputSchema>;
+
+export const updatePipelineInputSchema = createPipelineInputSchema
+  .partial()
+  .refine((value) => Object.values(value).some((field) => field !== undefined), {
+    message: 'Nothing to update',
+  });
+export type UpdatePipelineInput = z.infer<typeof updatePipelineInputSchema>;
+
+export const reorderPipelinesInputSchema = z.object({
+  pipelineIds: z.array(idSchema).min(1).max(PROJECT_LIMITS.pipelines),
+});
+export type ReorderPipelinesInput = z.infer<typeof reorderPipelinesInputSchema>;
+
+export const deletePipelineQuerySchema = z.object({
+  /** A stage of another pipeline that receives the pipeline's tasks. */
+  moveTo: idSchema,
+});
+export type DeletePipelineQuery = z.infer<typeof deletePipelineQuerySchema>;
+
+export const deletePipelineResponseSchema = z.object({
+  ok: z.literal(true),
+  movedTasks: z.number().int().nonnegative(),
+});
+export type DeletePipelineResponse = z.infer<typeof deletePipelineResponseSchema>;
 
 export const labelSchema = z.object({
   id: z.string(),
@@ -216,6 +294,8 @@ export const projectSchema = projectSummarySchema.extend({
   keyAliases: z.array(z.string()),
   /** In column order. */
   statuses: z.array(statusSchema),
+  /** Its pipelines, in order (BAT-25): only those the viewer can see. Optional for fixtures. */
+  pipelines: z.array(pipelineSchema).optional(),
   /** Alphabetical. */
   labels: z.array(labelSchema),
   /** Difficulty levels, easiest first (optional for older fixtures). */
@@ -327,10 +407,12 @@ export const createStatusInputSchema = z.object({
   icon: statusIconSchema.optional(),
   /** Deprecated: accepted and ignored (statuses have no category any more). */
   category: statusCategorySchema.optional(),
-  /** Make it the default status for new tasks. */
+  /** Make it the default status for new tasks of its pipeline. */
   isDefault: z.boolean().optional(),
   /** Pipeline rules (design §5). */
   rules: stageRulesPatchSchema.optional(),
+  /** The pipeline it joins, at the end (BAT-25; default: the project's default pipeline). */
+  pipelineId: idSchema.optional(),
 });
 export type CreateStatusInput = z.infer<typeof createStatusInputSchema>;
 
@@ -352,7 +434,7 @@ export const updateStatusInputSchema = z
 export type UpdateStatusInput = z.infer<typeof updateStatusInputSchema>;
 
 export const reorderStatusesInputSchema = z.object({
-  /** Every status id of the project, in the new order. */
+  /** Every status id of one pipeline (or of the project, when it has one pipeline), in order. */
   statusIds: z.array(idSchema).min(1).max(PROJECT_LIMITS.statuses),
 });
 export type ReorderStatusesInput = z.infer<typeof reorderStatusesInputSchema>;

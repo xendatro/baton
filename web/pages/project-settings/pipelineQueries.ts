@@ -30,12 +30,24 @@ export function usePrincipalOptions(teamId: string, projectId: string) {
   return { options, isPending: members.isPending || roles.isPending };
 }
 
-export function useCopyPipelinePreview(projectId: string, fromProjectId: string | null) {
+export function useCopyPipelinePreview(
+  projectId: string,
+  fromProjectId: string | null,
+  pipelines: { fromPipelineId?: string | undefined; pipelineId?: string | undefined } = {},
+) {
   return useQuery({
-    queryKey: queryKeys.projects.pipelineCopy(projectId, fromProjectId ?? ''),
+    queryKey: [
+      ...queryKeys.projects.pipelineCopy(projectId, fromProjectId ?? ''),
+      pipelines.fromPipelineId ?? null,
+      pipelines.pipelineId ?? null,
+    ],
     queryFn: ({ signal }) =>
       api.get(`/api/projects/${enc(projectId)}/pipeline/copy-preview`, {
-        query: { from: fromProjectId ?? '' },
+        query: {
+          from: fromProjectId ?? '',
+          ...(pipelines.fromPipelineId ? { fromPipeline: pipelines.fromPipelineId } : {}),
+          ...(pipelines.pipelineId ? { pipeline: pipelines.pipelineId } : {}),
+        },
         schema: copyPipelinePreviewSchema,
         signal,
       }),
@@ -53,6 +65,7 @@ export function useCopyPipeline(projectId: string) {
     onSettled: () =>
       Promise.all([
         queryClient.invalidateQueries({ queryKey: queryKeys.projects.statuses(projectId) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.projects.pipelines(projectId) }),
         queryClient.invalidateQueries({ queryKey: queryKeys.tasks.all(projectId) }),
       ]),
     meta: { suppressErrorToast: true },

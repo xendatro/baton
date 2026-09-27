@@ -74,11 +74,16 @@ function seedTeam(owner: TestUser, words = 'checkout'): Seed {
       `insert into project (id, team_id, name, key, color, issue_seq, task_seq, created_by_id, created_at, updated_at)
        values (?, ?, 'Storefront', ?, '#0ea5e9', 1, 1, ?, ?, ?)`,
     ).run(seed.projectId, seed.teamId, seed.key, ownerId, now, now);
+    const pipelineId = id('pl');
+    db.prepare(
+      `insert into pipeline (id, project_id, name, slug, position, is_default, created_at, updated_at)
+       values (?, ?, 'Default', 'default', 0, 1, ?, ?)`,
+    ).run(pipelineId, seed.projectId, now, now);
     const statusId = id('st');
     db.prepare(
-      `insert into status (id, project_id, name, color, category, position, is_default, created_at, updated_at)
-       values (?, ?, 'Open', '#6b7280', 'open', 0, 1, ?, ?)`,
-    ).run(statusId, seed.projectId, now, now);
+      `insert into status (id, project_id, pipeline_id, name, color, category, position, is_default, created_at, updated_at)
+       values (?, ?, ?, 'Open', '#6b7280', 'open', 0, 1, ?, ?)`,
+    ).run(statusId, seed.projectId, pipelineId, now, now);
     db.prepare(
       `insert into issue (id, project_id, team_id, number, title, body, author_id, last_activity_at, created_at, updated_at)
        values (?, ?, ?, 1, ?, ?, ?, ?, ?, ?)`,

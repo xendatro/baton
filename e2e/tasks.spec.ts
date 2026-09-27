@@ -204,6 +204,8 @@ test('moves cards with the keyboard, within and between columns', async ({ page 
   // So the next move starts from where the last one ended, without tabbing back.
   await page.keyboard.press('Space');
   await announcement(page, /Picked up RKT-3 in Done/);
+  // As in keyboardMove: dnd-kit listens for keys on a timer after the pick-up.
+  await page.evaluate(() => new Promise((resolve) => setTimeout(resolve, 0)));
   await page.keyboard.press('Escape');
   await announcement(page, /Cancelled moving RKT-3/);
   await expect(charlie).toBeFocused();

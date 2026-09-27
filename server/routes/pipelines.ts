@@ -60,6 +60,10 @@ pipelineRoutes.get(
         requireActor(c),
         c.req.valid('param').projectId,
         c.req.valid('query').from,
+        {
+          fromPipelineId: c.req.valid('query').fromPipeline,
+          pipelineId: c.req.valid('query').pipeline,
+        },
       ),
     ),
 );

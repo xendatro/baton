@@ -35,6 +35,7 @@ import {
   resolveUser,
 } from '../../services/refs';
 import { decideApproval } from '../../services/pipelines';
+import { pipelineIdOfStatus, resolvePipeline } from '../../services/projectPipelines';
 import { listReplyPage } from '../../services/replies';
 import { listStatuses } from '../../services/statuses';
 import {
@@ -67,7 +68,16 @@ const projectRef = z
   .min(1)
   .describe('Project: KEY (if unambiguous across your teams), team-slug/KEY, or project id');
 const taskRef = z.string().min(1).describe('Task: KEY-12, team-slug/KEY-12, or task id');
-const statusRef = z.string().min(1).describe('Status name (case-insensitive) or id');
+const statusRef = z
+  .string()
+  .min(1)
+  .describe(
+    'Status name (case-insensitive; the task’s own pipeline first), Pipeline/Status, or id',
+  );
+const pipelineRef = z
+  .string()
+  .min(1)
+  .describe('Pipeline name (case-insensitive), slug or id (list_pipelines)');
 const priorityField = z
   .union([z.enum(PRIORITY_KEYS), z.number().int().min(0).max(4)], {
     error: PRIORITY_INPUT_MESSAGE,
@@ -191,8 +201,25 @@ function taskIds(ctx: ToolContext, refs: readonly string[] | undefined) {
   return refs?.map((ref) => taskOf(ctx, ref).task.id);
 }
 
-function statusId(ctx: ToolContext, projectId: string, ref: string | undefined) {
-  return ref === undefined ? undefined : resolveStatus(ctx.deps.db.orm, projectId, ref).id;
+/** A status id by ref; names prefer stages of `pipelineId` (the task's pipeline, BAT-25). */
+function statusId(
+  ctx: ToolContext,
+  projectId: string,
+  ref: string | undefined,
+  pipelineId?: string,
+) {
+  return ref === undefined
+    ? undefined
+    : resolveStatus(ctx.deps.db.orm, projectId, ref, { pipelineId }).id;
+}
+
+/** The pipeline a task's status belongs to. */
+function pipelineOfTask(ctx: ToolContext, task: { statusId: string }): string | undefined {
+  return pipelineIdOfStatus(ctx.deps.db.orm, task.statusId);
+}
+
+function pipelineId(ctx: ToolContext, projectId: string, ref: string | undefined) {
+  return ref === undefined ? undefined : resolvePipeline(ctx.deps.db.orm, projectId, ref).id;
 }
 
 function priorityOf(value: z.infer<typeof priorityField> | undefined) {
@@ -337,6 +364,7 @@ const listTasksTool = defineTool({
       .max(TASK_LIMITS.filterValues)
       .optional()
       .describe('Only these statuses (names or ids)'),
+    pipeline: pipelineRef.optional().describe('Only tasks of this pipeline'),
     assignee: z
       .array(z.string().min(1))
       .max(TASK_LIMITS.filterValues)
@@ -366,11 +394,13 @@ const listTasksTool = defineTool({
   handler: (ctx, input) => {
     const { project, team } = projectOf(ctx, input.project);
     const assignee = input.assignee?.map((value) => assigneeFilter(ctx, team.id, value));
+    const pipeline = pipelineId(ctx, project.id, input.pipeline);
     const query = parseToolInput(
       listTasksQuerySchema,
       {
         q: input.query,
-        status: input.status?.map((ref) => statusId(ctx, project.id, ref)).join(','),
+        pipeline,
+        status: input.status?.map((ref) => statusId(ctx, project.id, ref, pipeline)).join(','),
         assignee: assignee?.join(','),
         label: labelIds(ctx, project.id, input.label)?.join(','),
         priority: input.priority?.map((value) => String(priorityOf(value))).join(','),
@@ -449,7 +479,12 @@ const createTaskTool = defineTool({
       .max(LIMITS.body.max)
       .optional()
       .describe('Markdown; mention people with @username and roles with @&role-slug'),
-    status: statusRef.optional().describe('Initial status (default: the project default)'),
+    pipeline: pipelineRef
+      .optional()
+      .describe('Pipeline it starts in (default: the project’s default pipeline)'),
+    status: statusRef
+      .optional()
+      .describe('Initial status (default: the default status of its pipeline)'),
     priority: priorityField.optional(),
     dueDate: dueDateField.optional(),
     assignees: usernames.optional(),
@@ -482,7 +517,13 @@ const createTaskTool = defineTool({
       {
         title: input.title,
         description: input.description,
-        statusId: statusId(ctx, project.id, input.status),
+        pipelineId: pipelineId(ctx, project.id, input.pipeline),
+        statusId: statusId(
+          ctx,
+          project.id,
+          input.status,
+          pipelineId(ctx, project.id, input.pipeline),
+        ),
         priority: priorityOf(input.priority),
         dueDate: input.dueDate,
         assigneeUserIds: userIds(ctx, team.id, input.assignees),
@@ -564,7 +605,7 @@ const updateTaskTool = defineTool({
       {
         title: input.title,
         description: input.description,
-        statusId: statusId(ctx, project.id, input.status),
+        statusId: statusId(ctx, project.id, input.status, pipelineOfTask(ctx, task)),
         priority: priorityOf(input.priority),
         dueDate: input.dueDate,
         assigneeUsers: mapChange(input.assignees, (refs) => userIds(ctx, team.id, refs)),
@@ -605,7 +646,7 @@ const moveTaskTool = defineTool({
   name: 'move_task',
   title: 'Move task',
   description:
-    "Moves a task to another status and/or position on the board: right after `after`, right before `before`, or (neither) to the end of the column. Entering a stage applies its rules: the hand-off decides who is assigned there (a finishing stage usually assigns nobody), and onEnter may resolve the issues it fixes, notify the author and release your claim — moving to such a stage (see list_statuses) is the usual last step of your work. In a project with a pipeline, leaving a stage forward needs its exit criteria met (pass `evidence`), its approvals and the right mover; a refused move says exactly what is missing. Stages can't be skipped, and moving back only goes to the previous stage. Passing only `evidence` saves it without moving.",
+    "Moves a task to another status and/or position on the board: right after `after`, right before `before`, or (neither) to the end of the column. Entering a stage applies its rules: the hand-off decides who is assigned there (a finishing stage usually assigns nobody), and onEnter may resolve the issues it fixes, notify the author and release your claim — moving to such a stage (see list_statuses) is the usual last step of your work. In a project with a pipeline, leaving a stage forward needs its exit criteria met (pass `evidence`), its approvals and the right mover; a refused move says exactly what is missing. Stages can't be skipped, and moving back only goes to the previous stage. Passing only `evidence` saves it without moving. A status of another pipeline (Pipeline/Status) moves the task to that pipeline: you need to be allowed to move it on from its stage and to create tasks there; its exit criteria and approvals don't apply.",
   input: toolInput({
     task: taskRef,
     status: statusRef.optional().describe('Target status (default: the current one)'),
@@ -627,7 +668,7 @@ const moveTaskTool = defineTool({
     const data = parseToolInput(
       moveTaskInputSchema,
       {
-        statusId: statusId(ctx, project.id, input.status),
+        statusId: statusId(ctx, project.id, input.status, pipelineOfTask(ctx, task)),
         afterId: input.after ? taskOf(ctx, input.after).task.id : undefined,
         beforeId: input.before ? taskOf(ctx, input.before).task.id : undefined,
         evidence: evidenceOf(input.evidence),
@@ -799,7 +840,7 @@ const claimTaskTool = defineTool({
       ctx,
       claimTask(ctx.deps, ctx.actor, task.id, {
         force: input.force,
-        moveToStatusId: statusId(ctx, project.id, input.moveToStatus),
+        moveToStatusId: statusId(ctx, project.id, input.moveToStatus, pipelineOfTask(ctx, task)),
         leaseMinutes: input.leaseMinutes,
       }),
     );

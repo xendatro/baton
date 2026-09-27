@@ -75,7 +75,7 @@ import { cn } from '@web/lib/utils';
 import { useMarkItemRead } from '../inbox/useMarkItemRead';
 import { copyText } from '../teams/clipboard';
 import { useDifficulties } from '../projects/difficultyQueries';
-import { useCreateLabel, useLabels, useStatuses } from '../projects/queries';
+import { useCreateLabel, useLabels, usePipelines, useStatuses } from '../projects/queries';
 import { ClaimPanel } from './ClaimPanel';
 import { ForceMoveDialog } from './ForceMoveDialog';
 import { StagePanel } from './StagePanel';
@@ -146,6 +146,7 @@ function TaskView({ task, team, project }: { task: Task; team: MeTeam; project: 
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const statuses = useStatuses(project.id);
+  const pipelines = usePipelines(project.id);
   // Whether tasks in the task's stage can be claimed (its `claimable` rule).
   const stageClaimable =
     statuses.data?.find((status) => status.id === task.status.id)?.rules?.claimable ?? true;
@@ -372,7 +373,14 @@ function TaskView({ task, team, project }: { task: Task; team: MeTeam; project: 
   ];
   usePaletteCommands(commands);
 
-  const statusList = statuses.data ?? [];
+  // BAT-25: its own pipeline's stages first, then the other pipelines' (picking one moves it there).
+  const ownPipeline = task.status.pipeline?.id;
+  const statusList = [...(statuses.data ?? [])].sort(
+    (a, b) => Number(b.pipelineId === ownPipeline) - Number(a.pipelineId === ownPipeline),
+  );
+  const pipelineList = pipelines.data ?? [];
+  const pipelineNameOf = (status: { pipelineId?: string }) =>
+    pipelineList.find((pipeline) => pipeline.id === status.pipelineId)?.name;
   const labelList = labels.data ?? [];
   const blockedMoves = task.stage?.blockedMoves ?? {};
 
@@ -472,12 +480,23 @@ function TaskView({ task, team, project }: { task: Task; team: MeTeam; project: 
                 align="end"
                 reasons={blockedMoves}
                 onChange={changeStatus}
+                groupOf={pipelineList.length > 1 ? pipelineNameOf : undefined}
               >
                 <PropertyButton disabled={!canUpdate} label={`Status: ${task.status.name}`}>
                   <StatusBadge status={task.status} />
                 </PropertyButton>
               </StatusPicker>
             </Property>
+            {pipelineList.length > 1 && task.status.pipeline ? (
+              <Property label="Pipeline">
+                <p
+                  className="flex h-8 items-center px-2 text-sm"
+                  title="Pick a status of another pipeline to move it there"
+                >
+                  {task.status.pipeline.name}
+                </p>
+              </Property>
+            ) : null}
             <Property label="Priority" hotkey="p">
               <PriorityPicker
                 value={task.priority}

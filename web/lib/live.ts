@@ -109,7 +109,13 @@ export const LIVE_INVALIDATIONS: Readonly<Record<LiveEventType, Invalidation>> =
   // Work lists show statuses and labels, and a stage's rules decide what is completed or blocked.
   // Issues list the statuses of the tasks addressing them.
   'status.changed': (e) => [
-    ...projectKeys(e, queryKeys.projects.statuses, queryKeys.tasks.all, queryKeys.issues.all),
+    ...projectKeys(
+      e,
+      queryKeys.projects.statuses,
+      queryKeys.projects.pipelines,
+      queryKeys.tasks.all,
+      queryKeys.issues.all,
+    ),
     queryKeys.work.all(),
   ],
   'label.changed': (e) => [

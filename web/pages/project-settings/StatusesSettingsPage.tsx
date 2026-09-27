@@ -69,10 +69,12 @@ import {
   useDeleteStatus,
   useReorderStatuses,
   useStatuses,
+  usePipelines,
   useUpdateStatus,
 } from '../projects/queries';
 import { BoardBackLink, ReadOnlyNotice, SettingsCard, SettingsHeader } from './common';
 import { CopyPipelineDialog } from './CopyPipelineDialog';
+import { PipelinesBar } from './PipelinesBar';
 import { usePrincipalOptions } from './pipelineQueries';
 import { StatusDialog, type StatusDialogState } from './StatusDialog';
 import { countRules } from './stageRules';
@@ -100,8 +102,33 @@ export default function StatusesSettingsPage() {
 
 function Statuses({ teamId, projectId }: { teamId: string; projectId: string }) {
   const access = useProjectAccess(teamId, projectId);
-  const canManage = access.has('MANAGE_STATUSES');
+  const canManageAll = access.has('MANAGE_STATUSES');
   const statuses = useStatuses(projectId);
+  const pipelines = usePipelines(projectId);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const targetId = searchParams.get('status');
+  // The pipeline whose stages are shown (BAT-25): `?pipeline=`, the targeted status's, or the default.
+  const allStatuses = statuses.data ?? [];
+  const pipelineList = pipelines.data ?? [];
+  const selected =
+    pipelineList.find((pipeline) => pipeline.id === searchParams.get('pipeline')) ??
+    pipelineList.find(
+      (pipeline) =>
+        pipeline.id === allStatuses.find((status) => status.id === targetId)?.pipelineId,
+    ) ??
+    pipelineList.find((pipeline) => pipeline.isDefault) ??
+    pipelineList[0];
+  const canManage = selected ? selected.canManage : canManageAll;
+  const selectPipeline = (pipelineId: string) =>
+    setSearchParams(
+      (current) => {
+        const next = new URLSearchParams(current);
+        next.set('pipeline', pipelineId);
+        next.delete('status');
+        return next;
+      },
+      { replace: true },
+    );
   const reorder = useReorderStatuses(projectId);
   const update = useUpdateStatus(projectId);
   const [deleting, setDeleting] = useState<Status | null>(null);
@@ -110,8 +137,6 @@ function Statuses({ teamId, projectId }: { teamId: string; projectId: string }) 
   const [copying, setCopying] = useState(false);
   const principals = usePrincipalOptions(teamId, projectId);
   const me = useMe();
-  const [searchParams] = useSearchParams();
-  const targetId = searchParams.get('status');
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
@@ -131,7 +156,12 @@ function Statuses({ teamId, projectId }: { teamId: string; projectId: string }) 
       actions={
         canManage ? (
           <>
-            <Button variant="outline" size="sm" onClick={() => setCopying(true)}>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setCopying(true)}
+              disabled={!canManageAll}
+            >
               <CopyIcon aria-hidden="true" />
               Copy pipeline from…
             </Button>
@@ -158,7 +188,9 @@ function Statuses({ teamId, projectId }: { teamId: string; projectId: string }) 
     );
   }
 
-  const items = statuses.data ?? [];
+  const items = allStatuses.filter(
+    (status) => !selected || !status.pipelineId || status.pipelineId === selected.id,
+  );
   const defaultId = items.find((status) => status.isDefault)?.id ?? '';
 
   const onDragEnd = ({ active, over }: DragEndEvent) => {
@@ -172,6 +204,17 @@ function Statuses({ teamId, projectId }: { teamId: string; projectId: string }) 
   return (
     <div>
       {header}
+      {pipelineList.length > 0 ? (
+        <PipelinesBar
+          projectId={projectId}
+          pipelines={pipelineList}
+          selectedId={selected?.id}
+          onSelect={selectPipeline}
+          canAdd={canManageAll}
+          statuses={allStatuses}
+          options={principals.options}
+        />
+      ) : null}
       {canManage ? null : <ReadOnlyNotice permission="Manage statuses" />}
       <SettingsCard>
         <div className="hidden grid-cols-[2rem_2rem_minmax(0,1fr)_4.5rem_5rem_4.5rem] items-center gap-2 border-b px-3 py-2 text-xs font-medium text-muted-foreground sm:grid">
@@ -246,7 +289,12 @@ function Statuses({ teamId, projectId }: { teamId: string; projectId: string }) 
       <DeleteStatusDialog
         projectId={projectId}
         status={deleting}
-        statuses={items}
+        statuses={allStatuses}
+        pipelineName={(id) =>
+          pipelineList.length > 1
+            ? pipelineList.find((pipeline) => pipeline.id === id)?.name
+            : undefined
+        }
         onClose={() => setDeleting(null)}
       />
       <StatusDialog
@@ -256,13 +304,16 @@ function Statuses({ teamId, projectId }: { teamId: string; projectId: string }) 
         teamId={teamId}
         canManage={canManage}
         onClose={() => setDialog(null)}
-        onCreate={(input) => create.mutateAsync(input)}
+        onCreate={(input) =>
+          create.mutateAsync({ ...input, ...(selected ? { pipelineId: selected.id } : {}) })
+        }
         onUpdate={(id, input) => update.mutateAsync({ id, input })}
       />
       <CopyPipelineDialog
         open={copying}
         onOpenChange={setCopying}
         projectId={projectId}
+        pipelineId={selected?.id}
         teams={me.data?.teams ?? []}
         options={principals.options}
       />
@@ -429,7 +480,7 @@ function StatusRow({
             </span>
           </TooltipTrigger>
           {isOnly && canManage ? (
-            <TooltipContent>A project needs at least one status</TooltipContent>
+            <TooltipContent>A pipeline needs at least one status</TooltipContent>
           ) : null}
         </Tooltip>
       </div>
@@ -457,11 +508,14 @@ function DeleteStatusDialog({
   projectId,
   status,
   statuses,
+  pipelineName,
   onClose,
 }: {
   projectId: string;
   status: Status | null;
   statuses: Status[];
+  /** A status's pipeline name, when the project has several (BAT-25). */
+  pipelineName: (pipelineId: string | undefined) => string | undefined;
   onClose: () => void;
 }) {
   return (
@@ -472,6 +526,7 @@ function DeleteStatusDialog({
             projectId={projectId}
             status={status}
             others={statuses.filter((candidate) => candidate.id !== status.id)}
+            pipelineName={pipelineName}
             onClose={onClose}
           />
         ) : null}
@@ -484,21 +539,32 @@ function DeleteStatusForm({
   projectId,
   status,
   others,
+  pipelineName,
   onClose,
 }: {
   projectId: string;
   status: Status;
   others: Status[];
+  pipelineName: (pipelineId: string | undefined) => string | undefined;
   onClose: () => void;
 }) {
   const remove = useDeleteStatus(projectId);
   const selectId = useId();
-  // The column before it (tasks step back one stage), else the one after.
-  const [moveTo, setMoveTo] = useState(
-    () =>
-      ([...others].reverse().find((other) => other.position < status.position) ?? others[0])?.id ??
-      '',
-  );
+  // The column before it in its pipeline (tasks step back one stage), else the one after.
+  const [moveTo, setMoveTo] = useState(() => {
+    const same = others.filter((other) => other.pipelineId === status.pipelineId);
+    return (
+      (
+        [...same].reverse().find((other) => other.position < status.position) ??
+        same[0] ??
+        others[0]
+      )?.id ?? ''
+    );
+  });
+  const labelOf = (other: Status) => {
+    const pipeline = pipelineName(other.pipelineId);
+    return pipeline ? `${pipeline} / ${other.name}` : other.name;
+  };
   const [error, setError] = useState<string | null>(null);
   const target = others.find((other) => other.id === moveTo);
 
@@ -542,7 +608,7 @@ function DeleteStatusForm({
             {others.map((other) => (
               <SelectItem key={other.id} value={other.id}>
                 <StatusIcon status={other} />
-                {other.name}
+                {labelOf(other)}
               </SelectItem>
             ))}
           </SelectContent>

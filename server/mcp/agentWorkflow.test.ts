@@ -42,7 +42,7 @@ beforeEach(async () => {
     agentSignoff: false,
   });
   addMember(ctx.db, { teamId: team.id, userId: maya.id });
-  const { project } = createProject(ctx.db, {
+  const { project, pipeline } = createProject(ctx.db, {
     teamId: team.id,
     key: 'WEB',
     name: 'Web App',
@@ -52,6 +52,7 @@ beforeEach(async () => {
     .insert(s.status)
     .values({
       projectId: project.id,
+      pipelineId: pipeline.id,
       name: 'In Progress',
       color: '#f59e0b',
       position: 1,

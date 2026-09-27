@@ -81,6 +81,8 @@ export const queryKeys = {
   projects: {
     detail: (projectId: string) => ['projects', projectId] as const,
     statuses: (projectId: string) => ['projects', projectId, 'statuses'] as const,
+    /** The project's pipelines the viewer can see (BAT-25). */
+    pipelines: (projectId: string) => ['projects', projectId, 'pipelines'] as const,
     labels: (projectId: string) => ['projects', projectId, 'labels'] as const,
     /** Difficulty levels, easiest first (BAT-24). */
     difficulties: (projectId: string) => ['projects', projectId, 'difficulties'] as const,

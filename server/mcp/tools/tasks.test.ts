@@ -39,6 +39,7 @@ beforeEach(() => {
     .insert(s.status)
     .values({
       projectId: project.project.id,
+      pipelineId: project.pipeline.id,
       name: 'In Progress',
       color: '#f59e0b',
       position: 2,

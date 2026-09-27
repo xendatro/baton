@@ -1,5 +1,18 @@
 import { addDays, format } from 'date-fns';
-import { and, asc, count, desc, eq, inArray, isNull, not, or, sql, type SQL } from 'drizzle-orm';
+import {
+  and,
+  asc,
+  count,
+  desc,
+  eq,
+  inArray,
+  isNull,
+  not,
+  notInArray,
+  or,
+  sql,
+  type SQL,
+} from 'drizzle-orm';
 import { formatTaskRef, parseTaskRef } from '@shared/refs';
 import type { RoleSummary, UserSummary } from '@shared/schemas/core';
 import type {
@@ -27,6 +40,7 @@ import { attachmentsByParent } from './attachments';
 import { isClaimValid } from './claimLease';
 import { unreadCountsByItem } from './notifications';
 import { pipelineSummaries, stageOf } from './pipelines';
+import { hiddenStatusIds } from './projectPipelines';
 import { reactionsOf } from './reactions';
 import { statusesOf } from './statuses';
 import { currentRoleRow, currentUserRow } from './taskAssignees';
@@ -88,11 +102,21 @@ export function toTaskCards(
         name: s.status.name,
         color: s.status.color,
         icon: s.status.icon,
+        pipelineId: s.pipeline.id,
+        pipelineName: s.pipeline.name,
+        pipelineIsDefault: s.pipeline.isDefault,
       })
       .from(s.status)
+      .innerJoin(s.pipeline, eq(s.pipeline.id, s.status.pipelineId))
       .where(inArray(s.status.id, [...new Set(rows.map((row) => row.statusId))]))
       .all()
-      .map((status) => [status.id, status]),
+      .map(({ pipelineId, pipelineName, pipelineIsDefault, ...status }) => [
+        status.id,
+        {
+          ...status,
+          pipeline: { id: pipelineId, name: pipelineName, isDefault: pipelineIsDefault },
+        },
+      ]),
   );
 
   const labels = groupBy(
@@ -432,10 +456,21 @@ export function filterConditions(
   return conditions.filter((condition): condition is SQL => condition !== undefined);
 }
 
-function projectTasks(projectId: string, filters: TaskFilters, viewer: Membership, now: Date) {
+function projectTasks(
+  db: DbExecutor,
+  projectId: string,
+  filters: TaskFilters,
+  viewer: Membership,
+  now: Date,
+) {
+  const hidden = hiddenStatusIds(db, viewer.userId, [projectId]);
   return and(
     eq(s.task.projectId, projectId),
     isNull(s.task.deletedAt),
+    hidden.size > 0 ? notInArray(s.task.statusId, [...hidden]) : undefined,
+    filters.pipeline
+      ? sql`${s.task.statusId} in (select ${s.status.id} from ${s.status} where ${s.status.pipelineId} = ${filters.pipeline})`
+      : undefined,
     ...filterConditions(filters, viewer, now),
   );
 }
@@ -462,11 +497,15 @@ export function boardOf(
   query: BoardQuery,
   now: Date = new Date(),
 ): BoardResponse {
-  const statuses = statusesOf(db, projectId);
+  // Columns of the pipelines the viewer can see (BAT-25), or of the one asked for.
+  const hidden = hiddenStatusIds(db, viewer.userId, [projectId]);
+  const statuses = statusesOf(db, projectId).filter(
+    (status) => !hidden.has(status.id) && (!query.pipeline || status.pipelineId === query.pipeline),
+  );
   const rows = db
     .select()
     .from(s.task)
-    .where(projectTasks(projectId, query, viewer, now))
+    .where(projectTasks(db, projectId, query, viewer, now))
     .orderBy(...boardOrder)
     .all();
   const byStatus = groupBy(
@@ -499,6 +538,9 @@ function listOrder(query: ListTasksQuery): SQL[] {
     case 'status':
       return [
         direction(
+          sql`(select ${s.pipeline.position} from ${s.status} join ${s.pipeline} on ${s.pipeline.id} = ${s.status.pipelineId} where ${s.status.id} = ${s.task.statusId})`,
+        ),
+        direction(
           sql`(select ${s.status.position} from ${s.status} where ${s.status.id} = ${s.task.statusId})`,
         ),
         ...boardOrder,
@@ -527,7 +569,7 @@ export function listOf(
   query: ListTasksQuery,
   now: Date = new Date(),
 ): TaskListResponse {
-  const where = projectTasks(projectId, query, viewer, now);
+  const where = projectTasks(db, projectId, query, viewer, now);
   const [offset = 0] = query.cursor ? decodeCursor(query.cursor, offsetCursorSchema) : [0];
   const total = db.select({ n: count() }).from(s.task).where(where).get()?.n ?? 0;
   const rows = db

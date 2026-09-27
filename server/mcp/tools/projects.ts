@@ -3,7 +3,9 @@ import { LIMITS, STATUS_CATEGORIES, STATUS_ICONS } from '@shared/constants';
 import {
   createLabelInputSchema,
   createProjectInputSchema,
+  createPipelineInputSchema,
   createStatusInputSchema,
+  updatePipelineInputSchema,
   PROJECT_LIMITS,
   restoreProjectInputSchema,
   updateLabelInputSchema,
@@ -24,6 +26,13 @@ import {
   restoreProject,
   updateProject,
 } from '../../services/projects';
+import {
+  createPipeline,
+  deletePipeline,
+  listPipelines,
+  resolvePipeline,
+  updatePipeline,
+} from '../../services/projectPipelines';
 import { resolveLabel, resolveProject, resolveStatus, resolveTeam } from '../../services/refs';
 import {
   createStatus,
@@ -45,7 +54,16 @@ const projectRef = z
   .min(1)
   .describe('Project: KEY (if unambiguous across your teams), team-slug/KEY, or project id');
 
-const statusRef = z.string().min(1).describe('Status name (case-insensitive) or id');
+const statusRef = z
+  .string()
+  .min(1)
+  .describe(
+    'Status name (case-insensitive), Pipeline/Status when several pipelines share it, or id',
+  );
+const pipelineRef = z
+  .string()
+  .min(1)
+  .describe('Pipeline name (case-insensitive), slug or id (list_pipelines)');
 const labelRef = z.string().min(1).describe('Label name (case-insensitive) or id');
 
 const colorField = z.string().describe('Hex color like #22c55e');
@@ -267,12 +285,92 @@ const listStatusesTool = defineTool({
   name: 'list_statuses',
   title: 'List statuses',
   description:
-    'Task statuses (stages) of a project in board order: name, color, icon, whether it is the default for new tasks, how many tasks it holds, and its rules (hand-off, onEnter effects such as resolving fixed issues or releasing the claim, blocksDependents, claimable, exit criteria, approvals).',
+    'Task statuses (stages) of a project in board order, pipeline by pipeline (pipelineId; see list_pipelines): name, color, icon, whether it is the default for new tasks of its pipeline, how many tasks it holds, and its rules (hand-off, onEnter effects such as resolving fixed issues or releasing the claim, blocksDependents, claimable, exit criteria, approvals).',
+  input: toolInput({
+    project: projectRef,
+    pipeline: pipelineRef.optional().describe('Only the stages of this pipeline'),
+  }),
+  annotations: { readOnlyHint: true },
+  handler: (ctx, input) => {
+    const { items } = listStatuses(
+      ctx.deps,
+      ctx.actor,
+      projectContext(ctx, input.project).id,
+      input.pipeline,
+    );
+    return { statuses: items };
+  },
+});
+
+const listPipelinesTool = defineTool({
+  name: 'list_pipelines',
+  title: 'List pipelines',
+  description:
+    'Pipelines of a project (BAT-25): its separate sets of stages, each with its own board (e.g. Modeling and Scripting). Every project has a default one. For each: name, slug, whether it is the default, how many stages and tasks it has, who may see it, create tasks in it and edit its stages (null: everyone), and whether you can create tasks in it or manage it. Pass `pipeline` to create_task, list_tasks and list_statuses.',
   input: toolInput({ project: projectRef }),
   annotations: { readOnlyHint: true },
   handler: (ctx, input) => {
-    const { items } = listStatuses(ctx.deps, ctx.actor, projectContext(ctx, input.project).id);
-    return { statuses: items };
+    const { items } = listPipelines(ctx.deps, ctx.actor, projectContext(ctx, input.project).id);
+    return { pipelines: items };
+  },
+});
+
+const createPipelineTool = defineTool({
+  name: 'create_pipeline',
+  title: 'Create pipeline',
+  description:
+    'Adds a pipeline to a project (needs MANAGE_STATUSES), starting with an Open and a Done stage: add its own stages with create_status { pipeline }.',
+  input: toolInput({
+    project: projectRef,
+    name: z.string().min(1).max(40).describe('Pipeline name, e.g. Modeling'),
+    color: colorField.optional(),
+  }),
+  annotations: { destructiveHint: false },
+  handler: (ctx, input) => {
+    const parsed = parseInput(createPipelineInputSchema, { name: input.name, color: input.color });
+    return createPipeline(ctx.deps, ctx.actor, projectContext(ctx, input.project).id, parsed);
+  },
+});
+
+const updatePipelineTool = defineTool({
+  name: 'update_pipeline',
+  title: 'Update pipeline',
+  description: 'Renames a pipeline or changes its color (needs to be able to edit its stages).',
+  input: toolInput({
+    project: projectRef,
+    pipeline: pipelineRef,
+    name: z.string().min(1).max(40).optional().describe('New name'),
+    color: colorField.optional(),
+  }),
+  annotations: { destructiveHint: false },
+  handler: (ctx, input) => {
+    const projectId = projectContext(ctx, input.project).id;
+    const pipeline = resolvePipeline(ctx.deps.db.orm, projectId, input.pipeline);
+    const parsed = parseInput(updatePipelineInputSchema, { name: input.name, color: input.color });
+    return updatePipeline(ctx.deps, ctx.actor, pipeline.id, parsed);
+  },
+});
+
+const deletePipelineTool = defineTool({
+  name: 'delete_pipeline',
+  title: 'Delete pipeline',
+  description:
+    'Deletes a pipeline that is not the default (needs MANAGE_STATUSES): its tasks move to `moveTo`, a stage of another pipeline, and its stages go.',
+  input: toolInput({
+    project: projectRef,
+    pipeline: pipelineRef,
+    moveTo: statusRef.describe(
+      'Stage of another pipeline that receives its tasks (Pipeline/Status)',
+    ),
+  }),
+  annotations: { destructiveHint: true },
+  handler: (ctx, input) => {
+    const projectId = projectContext(ctx, input.project).id;
+    const { orm } = ctx.deps.db;
+    const pipeline = resolvePipeline(orm, projectId, input.pipeline);
+    const moveTo = resolveStatus(orm, projectId, input.moveTo);
+    const result = deletePipeline(ctx.deps, ctx.actor, pipeline.id, { moveTo: moveTo.id });
+    return { ...result, deleted: pipeline.name, movedTo: moveTo.name };
   },
 });
 
@@ -286,14 +384,20 @@ const createStatusTool = defineTool({
     name: z.string().min(1).max(LIMITS.statusName.max).describe('Status name, e.g. In review'),
     color: colorField.optional(),
     isDefault: z.boolean().optional().describe('Make it the default status for new tasks'),
+    pipeline: pipelineRef.optional().describe('The pipeline it joins (default: the default one)'),
     ...stageFields,
   }),
   annotations: { destructiveHint: false },
   handler: (ctx, input) => {
-    const { project, handoff, onEnter, blocksDependents, claimable, ...fields } = input;
+    const { project, pipeline, handoff, onEnter, blocksDependents, claimable, ...fields } = input;
+    const projectId = projectContext(ctx, project).id;
     const rules = stageRulesPatch({ handoff, onEnter, blocksDependents, claimable });
-    const parsed = parseInput(createStatusInputSchema, { ...fields, ...(rules ? { rules } : {}) });
-    return createStatus(ctx.deps, ctx.actor, projectContext(ctx, project).id, parsed);
+    const parsed = parseInput(createStatusInputSchema, {
+      ...fields,
+      ...(rules ? { rules } : {}),
+      ...(pipeline ? { pipelineId: resolvePipeline(ctx.deps.db.orm, projectId, pipeline).id } : {}),
+    });
+    return createStatus(ctx.deps, ctx.actor, projectId, parsed);
   },
 });
 
@@ -328,7 +432,7 @@ const reorderStatusesTool = defineTool({
   name: 'reorder_statuses',
   title: 'Reorder statuses',
   description:
-    'Sets the board order of a project’s statuses (needs MANAGE_STATUSES). List every status exactly once, first column first.',
+    'Sets the board order of one pipeline’s statuses (needs MANAGE_STATUSES). List every status of that pipeline exactly once, first column first (Pipeline/Status names when pipelines share a name).',
   input: toolInput({
     project: projectRef,
     statuses: z
@@ -448,6 +552,10 @@ export const projectsTools: McpTool[] = [
   deleteProjectTool,
   restoreProjectTool,
   listStatusesTool,
+  listPipelinesTool,
+  createPipelineTool,
+  updatePipelineTool,
+  deletePipelineTool,
   createStatusTool,
   updateStatusTool,
   reorderStatusesTool,

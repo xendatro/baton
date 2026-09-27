@@ -522,23 +522,47 @@ function WorkflowCard({ project, base }: { project: Project; base: string }) {
         </Link>
       }
     >
-      <ul className="grid gap-1.5">
-        {project.statuses.map((status) => (
-          <li key={status.id} className="flex items-center gap-2 text-sm">
-            <StatusIcon status={status} />
-            <span className="min-w-0 flex-1 truncate">{status.name}</span>
-            {status.isDefault ? (
-              <span className="rounded border px-1 text-[0.65rem] text-muted-foreground uppercase">
-                Default
-              </span>
-            ) : null}
-            <span className="text-xs text-muted-foreground tabular-nums">
-              {pluralize(status.taskCount, 'task')}
-            </span>
-          </li>
-        ))}
-      </ul>
+      {/* BAT-25: one list per pipeline when there are several. */}
+      {groupsOf(project).map((group) => (
+        <div key={group.id ?? 'all'} className="grid gap-1.5 not-first:mt-3">
+          {group.name ? (
+            <p className="text-xs font-medium text-muted-foreground">{group.name}</p>
+          ) : null}
+          <StatusRows statuses={group.statuses} />
+        </div>
+      ))}
     </Card>
+  );
+}
+
+function groupsOf(project: Project) {
+  const pipelines = project.pipelines ?? [];
+  if (pipelines.length <= 1) return [{ id: null, name: null, statuses: project.statuses }];
+  return pipelines.map((pipeline) => ({
+    id: pipeline.id,
+    name: pipeline.name,
+    statuses: project.statuses.filter((status) => status.pipelineId === pipeline.id),
+  }));
+}
+
+function StatusRows({ statuses }: { statuses: Project['statuses'] }) {
+  return (
+    <ul className="grid gap-1.5">
+      {statuses.map((status) => (
+        <li key={status.id} className="flex items-center gap-2 text-sm">
+          <StatusIcon status={status} />
+          <span className="min-w-0 flex-1 truncate">{status.name}</span>
+          {status.isDefault ? (
+            <span className="rounded border px-1 text-[0.65rem] text-muted-foreground uppercase">
+              Default
+            </span>
+          ) : null}
+          <span className="text-xs text-muted-foreground tabular-nums">
+            {pluralize(status.taskCount, 'task')}
+          </span>
+        </li>
+      ))}
+    </ul>
   );
 }
 

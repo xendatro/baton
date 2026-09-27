@@ -1,5 +1,5 @@
 import { and, asc, count, desc, eq, inArray, isNotNull, isNull, ne } from 'drizzle-orm';
-import { DEFAULT_PROJECT_COLOR, DEFAULT_STATUSES } from '@shared/constants';
+import { DEFAULT_PROJECT_COLOR } from '@shared/constants';
 import { formatProjectRef, parseRef } from '@shared/refs';
 import { projectKeySchema } from '@shared/schemas/common';
 import {
@@ -24,6 +24,7 @@ import { newId } from '../lib/ids';
 import { excerpt } from '../lib/markdown';
 import { appPaths } from '../lib/urls';
 import {
+  getProjectAccess,
   hasPermission,
   memberTeamIds,
   requireMember,
@@ -39,7 +40,7 @@ import { labelsOf } from './labels';
 import { notifyMentions, refreshNotificationText } from './notifications';
 import { requireSignoff } from './signoff';
 import { difficultiesOf, seedDifficulties } from './difficulties';
-import { seedStatusColumns } from './pipelines';
+import { pipelinesFor, seedDefaultPipeline } from './projectPipelines';
 import { statusesOf } from './statuses';
 import { taskCountsByProject } from './taskViews';
 import { getUserSummaries } from './users';
@@ -163,12 +164,20 @@ function keyAliasesOf(db: DbExecutor, projectId: string): string[] {
 }
 
 /** The full project: summary plus README, creator, key aliases, statuses and labels. */
-export function toProject(db: DbExecutor, project: ProjectRow, teamSlug: string): Project {
+export function toProject(
+  db: DbExecutor,
+  project: ProjectRow,
+  teamSlug: string,
+  viewerId: string,
+): Project {
   const [summary] = toSummaries(db, [project], teamSlug);
   if (!summary) throw errors.internal();
   const creator = project.createdById
     ? (getUserSummaries(db, [project.createdById]).get(project.createdById) ?? null)
     : null;
+  const access = getProjectAccess(db, viewerId, project.id);
+  const pipelines = access ? pipelinesFor(db, access, project.id) : [];
+  const shown = new Set(pipelines.map((pipeline) => pipeline.id));
   return {
     ...summary,
     readme: project.readme,
@@ -176,7 +185,11 @@ export function toProject(db: DbExecutor, project: ProjectRow, teamSlug: string)
     repoUrl: project.repoUrl ?? null,
     createdBy: creator,
     keyAliases: keyAliasesOf(db, project.id),
-    statuses: statusesOf(db, project.id),
+    // Only the pipelines the viewer can see, and their stages (BAT-25).
+    statuses: statusesOf(db, project.id).filter(
+      (status) => !status.pipelineId || shown.has(status.pipelineId),
+    ),
+    pipelines,
     labels: labelsOf(db, project.id),
     difficulties: difficultiesOf(db, project.id),
     agentsPausedAt: project.agentsPausedAt?.toISOString() ?? null,
@@ -191,7 +204,7 @@ export function toProject(db: DbExecutor, project: ProjectRow, teamSlug: string)
 export function getProject(deps: AppDeps, actor: Actor, projectId: string): Project {
   const { orm } = deps.db;
   const { project, team } = requireProject(orm, actor, projectId);
-  return toProject(orm, project, team.slug);
+  return toProject(orm, project, team.slug, actor.userId);
 }
 
 /** Live projects of a team the actor can see (`VIEW_PROJECT`), alphabetical. */
@@ -498,17 +511,7 @@ export function createProject(
       })
       .returning()
       .get();
-    DEFAULT_STATUSES.forEach((seed, position) => {
-      tx.insert(s.status)
-        .values({
-          projectId: id,
-          ...seedStatusColumns(seed),
-          position,
-          createdAt: now,
-          updatedAt: now,
-        })
-        .run();
-    });
+    seedDefaultPipeline(tx, id, now);
     seedDifficulties(tx, id);
     if (readme) {
       attachToParent(tx, actor, referencedPendingUploads(tx, actor, teamId, readme), {
@@ -530,7 +533,7 @@ export function createProject(
     emitAfterCommit(tx, projectEvent('project.created', row, actor));
     return row;
   });
-  return toProject(orm, project, team.slug);
+  return toProject(orm, project, team.slug, actor.userId);
 }
 
 /**
@@ -563,7 +566,8 @@ export function updateProject(
       excerpt(readme, README_EXCERPT_LENGTH),
     );
   }
-  if (!hasChanges(changes) && !attachmentIds?.length) return toProject(orm, project, team.slug);
+  if (!hasChanges(changes) && !attachmentIds?.length)
+    return toProject(orm, project, team.slug, actor.userId);
 
   const updated = deps.db.write((tx) => {
     const keyChanged = fields.key !== undefined && fields.key !== project.key;
@@ -626,7 +630,7 @@ export function updateProject(
     }
     return row;
   });
-  return toProject(orm, updated, team.slug);
+  return toProject(orm, updated, team.slug, actor.userId);
 }
 
 /**
@@ -771,5 +775,5 @@ export function restoreProject(
     emitAfterCommit(tx, projectEvent('project.restored', row, actor));
     return row;
   });
-  return toProject(orm, restored, team.slug);
+  return toProject(orm, restored, team.slug, actor.userId);
 }

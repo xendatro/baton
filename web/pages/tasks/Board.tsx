@@ -101,6 +101,8 @@ export interface BoardProps {
   hint?: ReactNode;
   /** Where a column's "Edit statuses" goes; no column menu without it. */
   editStatusHref?: (statusId: string) => string;
+  /** BAT-25, the "All" view of several pipelines: each column's pipeline, above its name. */
+  pipelineNameOf?: (pipelineId: string | undefined) => string | undefined;
 }
 
 export function Board({
@@ -112,6 +114,7 @@ export function Board({
   filtered,
   hint,
   editStatusHref,
+  pipelineNameOf,
 }: BoardProps) {
   const [dragLayout, setDragLayout] = useState<Layout | null>(null);
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -298,6 +301,7 @@ export function Board({
             filtered={filtered}
             hint={index === 0 ? hint : undefined}
             editStatusHref={editStatusHref}
+            pipelineName={pipelineNameOf?.(column.status.pipelineId)}
           />
         ))}
       </div>
@@ -351,6 +355,7 @@ interface ColumnProps {
   filtered: boolean;
   hint?: ReactNode;
   editStatusHref?: (statusId: string) => string;
+  pipelineName?: string | undefined;
 }
 
 function Column({
@@ -363,6 +368,7 @@ function Column({
   filtered,
   hint,
   editStatusHref,
+  pipelineName,
 }: ColumnProps) {
   const { status } = column;
   const { setNodeRef, isOver } = useDroppable({ id: `${COLUMN_PREFIX}${status.id}` });
@@ -376,6 +382,9 @@ function Column({
       <header className="flex items-center gap-2 px-3 pt-3 pb-2">
         <StatusIcon status={status} />
         <h2 id={headingId} className="min-w-0 truncate text-sm font-semibold">
+          {pipelineName ? (
+            <span className="font-normal text-muted-foreground">{pipelineName} / </span>
+          ) : null}
           {status.name}
         </h2>
         <FinishedMark status={status} />

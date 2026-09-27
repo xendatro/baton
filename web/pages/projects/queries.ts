@@ -8,7 +8,10 @@ import {
 } from '@shared/schemas/pipelines';
 import {
   deleteLabelResponseSchema,
+  deletePipelineResponseSchema,
   deleteStatusResponseSchema,
+  pipelineListResponseSchema,
+  pipelineSchema,
   labelListResponseSchema,
   labelSchema,
   projectKeyCheckResponseSchema,
@@ -18,7 +21,9 @@ import {
   statusSchema,
   type CreateLabelInput,
   type CreateProjectInput,
+  type CreatePipelineInput,
   type CreateStatusInput,
+  type UpdatePipelineInput,
   type Label,
   type LabelListResponse,
   type Project,
@@ -233,6 +238,7 @@ export function useStatuses(projectId: string) {
 function refreshStatuses(queryClient: QueryClient, projectId: string) {
   return Promise.all([
     queryClient.invalidateQueries({ queryKey: queryKeys.projects.statuses(projectId) }),
+    queryClient.invalidateQueries({ queryKey: queryKeys.projects.pipelines(projectId) }),
     queryClient.invalidateQueries({
       queryKey: queryKeys.projects.detail(projectId),
       exact: true,
@@ -298,7 +304,11 @@ export function useUpdateStatus(projectId: string) {
                 ...(input.rules ? { rules: mergeRules(status.rules, input.rules) } : {}),
               };
             }
-            return input.isDefault ? { ...status, isDefault: false } : status;
+            // The default is per pipeline (BAT-25).
+            const target = items.find((item) => item.id === id);
+            return input.isDefault && status.pipelineId === target?.pipelineId
+              ? { ...status, isDefault: false }
+              : status;
           }),
         ),
       };
@@ -320,14 +330,23 @@ export function useReorderStatuses(projectId: string) {
     onMutate: async (statusIds) => {
       await queryClient.cancelQueries({ queryKey: queryKeys.projects.statuses(projectId) });
       return {
-        rollback: optimisticStatuses(queryClient, projectId, (items) =>
-          statusIds
+        rollback: optimisticStatuses(queryClient, projectId, (items) => {
+          // One pipeline's stages in their new order, in place of the old (BAT-25).
+          const moved = statusIds
             .map((id, position) => {
               const status = items.find((item) => item.id === id);
               return status ? { ...status, position } : null;
             })
-            .filter((status): status is Status => status !== null),
-        ),
+            .filter((status): status is Status => status !== null);
+          const ids = new Set(statusIds);
+          const first = items.findIndex((item) => ids.has(item.id));
+          const rest = items.filter((item) => !ids.has(item.id));
+          return [
+            ...rest.slice(0, Math.max(first, 0)),
+            ...moved,
+            ...rest.slice(Math.max(first, 0)),
+          ];
+        }),
       };
     },
     onError: (_error, _variables, context) => context?.rollback(),
@@ -432,6 +451,69 @@ export function useDeleteLabel(projectId: string) {
       );
       await refreshLabels(queryClient, projectId);
     },
+    meta: { suppressErrorToast: true },
+  });
+}
+
+// ---------------------------------------------------------------------------------------------
+// Pipelines (BAT-25)
+// ---------------------------------------------------------------------------------------------
+
+export function usePipelines(projectId: string | undefined) {
+  return useQuery({
+    queryKey: queryKeys.projects.pipelines(projectId ?? ''),
+    queryFn: ({ signal }) =>
+      api.get(`/api/projects/${enc(projectId ?? '')}/pipelines`, {
+        schema: pipelineListResponseSchema,
+        signal,
+      }),
+    select: (data) => data.items,
+    enabled: Boolean(projectId),
+  });
+}
+
+export function useCreatePipeline(projectId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: CreatePipelineInput) =>
+      api.post(`/api/projects/${enc(projectId)}/pipelines`, input, { schema: pipelineSchema }),
+    onSuccess: () => refreshStatuses(queryClient, projectId),
+    meta: { suppressErrorToast: true },
+  });
+}
+
+export function useUpdatePipeline(projectId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, input }: { id: string; input: UpdatePipelineInput }) =>
+      api.patch(`/api/pipelines/${enc(id)}`, input, { schema: pipelineSchema }),
+    onSuccess: () => refreshStatuses(queryClient, projectId),
+    meta: { suppressErrorToast: true },
+  });
+}
+
+export function useReorderPipelines(projectId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (pipelineIds: string[]) =>
+      api.put(
+        `/api/projects/${enc(projectId)}/pipelines/order`,
+        { pipelineIds },
+        { schema: pipelineListResponseSchema },
+      ),
+    onSuccess: () => refreshStatuses(queryClient, projectId),
+  });
+}
+
+export function useDeletePipeline(projectId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, moveTo }: { id: string; moveTo: string }) =>
+      api.delete(`/api/pipelines/${enc(id)}`, {
+        query: { moveTo },
+        schema: deletePipelineResponseSchema,
+      }),
+    onSuccess: () => refreshStatuses(queryClient, projectId),
     meta: { suppressErrorToast: true },
   });
 }

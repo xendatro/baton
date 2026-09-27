@@ -103,3 +103,64 @@ describe('TasksPage without tasks', () => {
     expect(screen.queryByRole('button', { name: /New task/ })).not.toBeInTheDocument();
   });
 });
+
+describe('TasksPage with several pipelines (BAT-25)', () => {
+  function pipeline(id: string, name: string, position: number) {
+    return {
+      id,
+      projectId: 'p1',
+      name,
+      slug: name.toLowerCase(),
+      color: null,
+      icon: null,
+      position,
+      isDefault: position === 0,
+      viewRule: null,
+      createRule: null,
+      manageRule: null,
+      statusCount: 2,
+      taskCount: position + 1,
+      canCreateTasks: true,
+      canManage: true,
+    };
+  }
+
+  it('shows All and one tab per pipeline, and asks the board for the chosen one', async () => {
+    const create = vi.fn();
+    unregister = registerShellAction('task.create', create);
+    const boardUrls: string[] = [];
+    mockApi({
+      '/api/me': meWith(['VIEW_PROJECT', 'CREATE_TASKS']),
+      '/api/projects/p1/board': ({ url }: { url: URL }) => {
+        boardUrls.push(url.search);
+        return new Response(JSON.stringify(emptyBoard), {
+          headers: { 'content-type': 'application/json' },
+        });
+      },
+      '/api/projects/p1/statuses': { items: statuses },
+      '/api/projects/p1/labels': { items: [] },
+      '/api/projects/p1/pipelines': {
+        items: [pipeline('pl-a', 'Scripting', 0), pipeline('pl-b', 'Modeling', 1)],
+      },
+    });
+    renderWorkPage(<TasksPage />, '/t/:team/p/:key/tasks', '/t/acme/p/WEB/tasks');
+    const tabs = await screen.findByRole('tablist', { name: 'Pipelines' });
+    expect(
+      within(tabs)
+        .getAllByRole('tab')
+        .map((tab) => tab.textContent),
+    ).toEqual(['All3', 'Scripting1', 'Modeling2']);
+    expect(within(tabs).getByRole('tab', { name: /All/ })).toHaveAttribute('aria-selected', 'true');
+
+    await userEvent.click(within(tabs).getByRole('tab', { name: /Modeling/ }));
+    await vi.waitFor(() =>
+      expect(boardUrls.some((search) => search.includes('pipeline=pl-b'))).toBe(true),
+    );
+    await userEvent.click(await screen.findByRole('button', { name: /Create a task/ }));
+    expect(create).toHaveBeenCalledWith({
+      projectId: 'p1',
+      statusId: undefined,
+      pipelineId: 'pl-b',
+    });
+  });
+});

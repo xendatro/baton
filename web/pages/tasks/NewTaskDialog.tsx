@@ -26,7 +26,7 @@ const NewTaskForm = lazy(() => import('./NewTaskForm'));
 declare module '@web/lib/shellActions' {
   interface ShellActionPayloads {
     /** Open the "New task" dialog, in a project (and a status column) or with a project picker. */
-    'task.create': { projectId?: string; statusId?: string };
+    'task.create': { projectId?: string; statusId?: string; pipelineId?: string };
   }
 }
 
@@ -43,9 +43,13 @@ function canCreateIn(team: MeTeam, project: MeProject): boolean {
 
 export default function NewTaskDialog() {
   const me = useMe().data;
-  const { pathname } = useLocation();
+  const { pathname, search } = useLocation();
   const [open, setOpen] = useState(false);
-  const [preset, setPreset] = useState<{ projectId?: string; statusId?: string }>({});
+  const [preset, setPreset] = useState<{
+    projectId?: string;
+    statusId?: string;
+    pipelineId?: string;
+  }>({});
 
   const choices: ProjectChoice[] = (me?.teams ?? []).flatMap((team) =>
     team.projects
@@ -57,8 +61,15 @@ export default function NewTaskDialog() {
   const routeProject = findProject(routeTeam, match?.params.key);
   const routeChoice = choices.find((choice) => choice.project.id === routeProject?.id);
 
-  const show = (next: { projectId?: string; statusId?: string } = {}) => {
-    setPreset({ projectId: next.projectId ?? routeChoice?.project.id, statusId: next.statusId });
+  const show = (next: { projectId?: string; statusId?: string; pipelineId?: string } = {}) => {
+    setPreset({
+      projectId: next.projectId ?? routeChoice?.project.id,
+      statusId: next.statusId,
+      // The board's pipeline (BAT-25), when `c` is pressed on it.
+      pipelineId:
+        next.pipelineId ??
+        (next.projectId ? undefined : (new URLSearchParams(search).get('pipeline') ?? undefined)),
+    });
     setOpen(true);
   };
   useShellActionHandler('task.create', (payload) => show(payload));
@@ -92,6 +103,7 @@ export default function NewTaskDialog() {
               choices={choices}
               initialProjectId={preset.projectId}
               initialStatusId={preset.statusId}
+              initialPipelineId={preset.pipelineId}
               onDone={() => setOpen(false)}
             />
           </Suspense>

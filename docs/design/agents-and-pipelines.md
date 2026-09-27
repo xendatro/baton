@@ -109,6 +109,10 @@ status pending|claimed|done|cancelled, session)`. Kinds: `mention` (agent's
 
 ## 5. Pipelines (per-project stage rules)
 
+> **BAT-25:** a project can now have several pipelines, each its own ordered set of stages and
+> board (see docs/API.md "Pipelines (BAT-25)" and DECISIONS 2026-09-27). Everything below applies
+> per pipeline: the next stage, send-back and skipped stages are those of the task's pipeline.
+
 Statuses are stages with **no hidden open/done category** (2026-09-27 "stages"): each has a name,
 color, a user-chosen **icon shape** and optional rules. A new project's Open and Done are ordinary
 stages (Done carries the finishing rules below); nothing depends on a stage being "done".

@@ -1,6 +1,6 @@
 import { hashPassword } from 'better-auth/crypto';
 import { and, eq, sql } from 'drizzle-orm';
-import { DEFAULT_PROJECT_COLOR, DEFAULT_STATUSES, DEFAULT_TEAM_COLOR } from '@shared/constants';
+import { DEFAULT_PROJECT_COLOR, DEFAULT_TEAM_COLOR } from '@shared/constants';
 import { ADMIN_ROLE_SEED, TEAM_ROLE_SEEDS, type Permission } from '@shared/permissions';
 import type { Actor, ActorKey } from '../context';
 import type { Database } from '../db';
@@ -9,7 +9,7 @@ import { newId } from '../lib/ids';
 import { generateApiKey } from '../lib/security';
 import { ensureAgent, findAgentId } from '../services/agents';
 import { seedDifficulties } from '../services/difficulties';
-import { seedStatusColumns } from '../services/pipelines';
+import { seedDefaultPipeline } from '../services/projectPipelines';
 
 /**
  * Test data factories. They insert rows directly (bypassing services) using the same seeds the
@@ -207,6 +207,8 @@ export interface CreatedProject {
   project: ProjectRow;
   /** In position order: Open (default), Done. */
   statuses: StatusRow[];
+  /** The project's default pipeline (BAT-25), which holds `statuses`. */
+  pipeline: typeof s.pipeline.$inferSelect;
 }
 
 export interface CreateProjectOptions {
@@ -233,15 +235,9 @@ export function createProject(db: Database, options: CreateProjectOptions): Crea
       })
       .returning()
       .get();
-    const statuses = DEFAULT_STATUSES.map((seed, position) =>
-      tx
-        .insert(s.status)
-        .values({ projectId: project.id, ...seedStatusColumns(seed), position })
-        .returning()
-        .get(),
-    );
+    const { pipeline, statuses } = seedDefaultPipeline(tx, project.id);
     seedDifficulties(tx, project.id);
-    return { project, statuses };
+    return { project, statuses, pipeline };
   });
 }
 

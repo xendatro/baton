@@ -175,12 +175,13 @@ describe('constraints', () => {
         .values({ teamId: team.id, name: 'x', slug: 'x', position: 0, isEveryone: true })
         .run(),
     ).toThrow(/UNIQUE/);
-    const { project } = createProject(ctx.db, { teamId: team.id });
+    const { project, pipeline } = createProject(ctx.db, { teamId: team.id });
     expect(() =>
       ctx.db.orm
         .insert(s.status)
         .values({
           projectId: project.id,
+          pipelineId: pipeline.id,
           name: 'Other',
           color: '#000000',
           position: 9,

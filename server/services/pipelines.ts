@@ -32,6 +32,7 @@ import { emitAfterCommit } from './events';
 import { queueLinkedIssueEvents } from './linkEvents';
 import { notifyAssigned, notifyUsers, type NotifiedSet } from './notifications';
 import { onStageApprovalsReset, onTaskEnteredStage } from './pipelineHooks';
+import { pipelinePermissions } from './projectPipelines';
 import { matchesRule, expandRule } from './principals';
 import { autoSubscribe } from './subscriptions';
 import { currentUserRow, setStageAssignees, stageRoleIds, stageUserIds } from './taskAssignees';
@@ -160,6 +161,16 @@ export function projectStatuses(db: DbExecutor, projectId: string): StatusRow[] 
     .select()
     .from(s.status)
     .where(eq(s.status.projectId, projectId))
+    .orderBy(asc(s.status.position), asc(s.status.createdAt))
+    .all();
+}
+
+/** The stages of `status`'s pipeline in column order (BAT-25: stage order is per pipeline). */
+export function stagesOf(db: DbExecutor, status: Pick<StatusRow, 'pipelineId'>): StatusRow[] {
+  return db
+    .select()
+    .from(s.status)
+    .where(eq(s.status.pipelineId, status.pipelineId))
     .orderBy(asc(s.status.position), asc(s.status.createdAt))
     .all();
 }
@@ -385,12 +396,21 @@ export function ruleChanges(db: DbExecutor, before: StageRules, after: StageRule
 
 /** Throws `validation_failed` naming principals the project's team doesn't have. */
 function validatePrincipals(db: DbExecutor, scope: Scope, rules: StageRules): void {
-  const principals = [
+  validateRulePrincipals(db, scope, [
     rules.handoff.rule,
     rules.notify,
     rules.moveRule,
     rules.approvals?.rule,
-  ].flatMap((rule) => (rule ? [...rule.allow, ...rule.deny] : []));
+  ]);
+}
+
+/** Throws `validation_failed` naming principals of `rules` the project's team doesn't have. */
+export function validateRulePrincipals(
+  db: DbExecutor,
+  scope: Scope,
+  rules: ReadonlyArray<PrincipalRule | null | undefined>,
+): void {
+  const principals = rules.flatMap((rule) => (rule ? [...rule.allow, ...rule.deny] : []));
   const bad: string[] = [];
   for (const principal of principals) {
     if (principal.type === 'user') {
@@ -459,8 +479,19 @@ export function mergeRules(
     if (merged.nextStatusId === statusId) {
       throw errors.validation('A stage can’t be its own next stage');
     }
-    if (!statusIds.has(merged.nextStatusId)) {
-      throw errors.validation('The next stage must be a status of this project');
+    // The next stage is one of the same pipeline (BAT-25).
+    const own = db
+      .select({ pipelineId: s.status.pipelineId })
+      .from(s.status)
+      .where(eq(s.status.id, statusId))
+      .get();
+    const next = db
+      .select({ pipelineId: s.status.pipelineId })
+      .from(s.status)
+      .where(eq(s.status.id, merged.nextStatusId))
+      .get();
+    if (!statusIds.has(merged.nextStatusId) || (own && next?.pipelineId !== own.pipelineId)) {
+      throw errors.validation('The next stage must be a stage of the same pipeline');
     }
   }
   if (merged.handoff.mode === 'stage_holder' && !statusIds.has(merged.handoff.statusId ?? '')) {
@@ -754,7 +785,9 @@ export function guardStageMove(
   options: ForceOptions = {},
 ): GuardResult {
   if (from.id === to.id) return { bypassed: [] };
-  const statuses = projectStatuses(tx, access.project.id);
+  if (from.pipelineId !== to.pipelineId)
+    return guardPipelineMove(tx, actor, access, from, to, options);
+  const statuses = stagesOf(tx, from);
   if (!statuses.some((row) => isGatedStage(rulesOf(row)) || !row.allowSendBack)) {
     return { bypassed: [] };
   }
@@ -790,6 +823,62 @@ export function guardStageMove(
     }`,
     details,
   );
+}
+
+function forceOrThrow(
+  access: { membership: Membership },
+  options: ForceOptions,
+  problems: string[],
+  fail: () => never,
+): GuardResult {
+  if (problems.length === 0) return { bypassed: [] };
+  if (!options.force) fail();
+  if (!canForceMove(access.membership)) {
+    throw errors.forbidden(
+      'Only the team owner or an administrator can force a move past the stage rules',
+    );
+  }
+  if (!options.reason?.trim()) throw errors.validation('Give a reason for forcing the move');
+  return { bypassed: problems };
+}
+
+/**
+ * A move to a stage of another pipeline (BAT-25): the mover must be someone who may move the task
+ * on from its stage (its move rule) and may create tasks in the other pipeline. The stage's
+ * criteria and approvals don't apply: the task leaves this pipeline rather than finishing it.
+ * Owners and administrators can force it like any move.
+ */
+function guardPipelineMove(
+  tx: Tx,
+  actor: Actor,
+  access: { task: TaskRow; project: ProjectRow; membership: Membership },
+  from: StatusRow,
+  to: StatusRow,
+  options: ForceOptions,
+): GuardResult {
+  const problems: string[] = [];
+  const rules = rulesOf(from);
+  const subject = {
+    task: access.task,
+    scope: { teamId: access.project.teamId, projectId: access.project.id },
+    userId: actor.userId,
+  };
+  if (!mayMoveOn(tx, subject, rules)) {
+    problems.push(
+      `Only ${whoMovesOn(rules, (rule) => describeRule(tx, rule))} can move tasks out of ${from.name}`,
+    );
+  }
+  const target = tx.select().from(s.pipeline).where(eq(s.pipeline.id, to.pipelineId)).get();
+  if (target && !pipelinePermissions(tx, access.membership, target).create) {
+    problems.push(`You can’t add tasks to the ${target.name} pipeline`);
+  }
+  return forceOrThrow(access, options, problems, () => {
+    throw errors.forbidden(`${problems.join('. ')}.`, {
+      from: from.name,
+      to: to.name,
+      missing: problems,
+    });
+  });
 }
 
 /** Audits a forced move (`task.forced`) after the move itself. */
@@ -1259,8 +1348,7 @@ export function maybeAutoAdvance(tx: Tx, actor: Actor, taskId: string, now: Date
   const context = taskContext(tx, taskId);
   const current = statusRow(tx, context.task.statusId);
   if (!current.autoAdvance) return false;
-  const statuses = projectStatuses(tx, context.task.projectId);
-  const next = nextStage(statuses, current);
+  const next = nextStage(stagesOf(tx, current), current);
   if (!next) return false;
   if (missingToLeave(tx, context.task, current).length > 0) return false;
   changeStatus(tx, actor, context, current, next, now, { autoAdvance: true });
@@ -1497,9 +1585,7 @@ export function decideApproval(
     });
     emitAfterCommit(tx, taskEvent('task.updated', task, actor));
     if (input.decision === 'request_changes') {
-      const previous = rules.allowSendBack
-        ? previousStage(projectStatuses(tx, task.projectId), status)
-        : null;
+      const previous = rules.allowSendBack ? previousStage(stagesOf(tx, status), status) : null;
       if (previous) {
         changeStatus(tx, actor, context, status, previous, now, { reason: 'changes_requested' });
       }
@@ -1590,7 +1676,8 @@ function criteriaWithEvidence(
  * pipeline rules.
  */
 export function stageOf(db: DbExecutor, viewer: Actor, task: TaskRow): TaskStage | null {
-  const statuses = projectStatuses(db, task.projectId);
+  const own = db.select().from(s.status).where(eq(s.status.id, task.statusId)).get();
+  const statuses = own ? stagesOf(db, own) : [];
   if (!hasPipeline(statuses) && !task.poolRule) return null;
   const current = statuses.find((row) => row.id === task.statusId);
   if (!current) return null;

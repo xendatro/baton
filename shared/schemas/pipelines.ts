@@ -375,7 +375,13 @@ export type ApprovalInput = z.infer<typeof approvalInputSchema>;
 // ---------------------------------------------------------------------------------------------
 
 /** `GET /api/projects/:projectId/pipeline/copy-preview?from=<projectId>`. */
-export const copyPipelinePreviewQuerySchema = z.object({ from: idSchema });
+export const copyPipelinePreviewQuerySchema = z.object({
+  from: idSchema,
+  /** BAT-25: the source project's pipeline (default: its default pipeline). */
+  fromPipeline: idSchema.optional(),
+  /** BAT-25: the pipeline copied into (default: the target's default pipeline). */
+  pipeline: idSchema.optional(),
+});
 
 export const unresolvedPrincipalSchema = z.object({
   /** Stable key to answer in `replacements`. */
@@ -401,6 +407,10 @@ export type CopyPipelinePreview = z.infer<typeof copyPipelinePreviewSchema>;
 /** `POST /api/projects/:projectId/pipeline/copy`. */
 export const copyPipelineInputSchema = z.object({
   fromProjectId: idSchema,
+  /** BAT-25: the source project's pipeline (default: its default pipeline). */
+  fromPipelineId: idSchema.optional(),
+  /** BAT-25: the pipeline copied into (default: the target's default pipeline). */
+  pipelineId: idSchema.optional(),
   /** Unresolved principal key → its replacement in the target team, or null to drop it. */
   replacements: z.record(z.string().max(200), principalSchema.nullable()).default({}),
 });

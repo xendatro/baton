@@ -486,6 +486,43 @@ export const PERMISSION_OVERRIDE_SUBJECTS = ['team_role', 'project_role', 'user'
 export type PermissionOverrideSubject = (typeof PERMISSION_OVERRIDE_SUBJECTS)[number];
 
 /**
+ * A pipeline of a project (BAT-25): an ordered set of stages (statuses) with their rules. Every
+ * project has one default pipeline (its statuses before BAT-25); more can be added, each with
+ * optional who-rules for who sees it, who creates tasks in it and who edits it (null: everyone in
+ * the project).
+ */
+export const pipeline = sqliteTable(
+  'pipeline',
+  {
+    id: idColumn(),
+    projectId: text('project_id')
+      .notNull()
+      .references(() => project.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    slug: text('slug').notNull(),
+    color: text('color'),
+    icon: text('icon'),
+    position: integer('position').notNull(),
+    isDefault: bool('is_default').notNull().default(false),
+    viewRule: text('view_rule', { mode: 'json' }).$type<PrincipalRule>(),
+    createRule: text('create_rule', { mode: 'json' }).$type<PrincipalRule>(),
+    manageRule: text('manage_rule', { mode: 'json' }).$type<PrincipalRule>(),
+    createdAt: createdAtColumn(),
+    updatedAt: updatedAtColumn(),
+    ...softDeleteColumns(),
+  },
+  (t) => [
+    uniqueIndex('pipeline_project_slug_active_unique')
+      .on(t.projectId, t.slug)
+      .where(sql`${t.deletedAt} is null`),
+    uniqueIndex('pipeline_project_default_unique')
+      .on(t.projectId)
+      .where(sql`${t.isDefault} = 1`),
+    index('pipeline_project_idx').on(t.projectId),
+  ],
+);
+
+/**
  * Per-project permission overrides of a team role, a project role or a member (project-level
  * permissions only). The subject has no foreign key (three tables); services delete the rows of
  * deleted roles and departed members.
@@ -527,6 +564,13 @@ export const status = sqliteTable(
     projectId: text('project_id')
       .notNull()
       .references(() => project.id, { onDelete: 'cascade' }),
+    /**
+     * The pipeline it's a stage of (BAT-25). Required: the column is added without a table rebuild
+     * (see migration 0017), and triggers refuse nulls.
+     */
+    pipelineId: text('pipeline_id')
+      .notNull()
+      .references(() => pipeline.id),
     name: text('name').notNull(),
     color: text('color').notNull(),
     /**
@@ -575,10 +619,12 @@ export const status = sqliteTable(
     updatedAt: updatedAtColumn(),
   },
   (t) => [
-    uniqueIndex('status_project_name_unique').on(t.projectId, t.name),
-    uniqueIndex('status_project_default_unique')
-      .on(t.projectId)
+    // Names and the default stage are per pipeline (BAT-25).
+    uniqueIndex('status_pipeline_name_unique').on(t.pipelineId, t.name),
+    uniqueIndex('status_pipeline_default_unique')
+      .on(t.pipelineId)
       .where(sql`${t.isDefault} = 1`),
+    index('status_project_idx').on(t.projectId),
   ],
 );
 

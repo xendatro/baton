@@ -38,6 +38,7 @@ import {
 import { agentPauseReason, findAgentId, updateAgentSettings } from './agents';
 import { emitEvent } from './events';
 import { stageOf } from './pipelines';
+import { pipelineIdOfStatus, pipelineRow } from './projectPipelines';
 import { isSessionListening, refreshPresence } from './presence';
 import { getUserSummaries } from './users';
 
@@ -647,8 +648,11 @@ export function jobBrief(
     `## The job\n\n${context.instructions}\n\nJob id: \`${job.id}\`.`,
   ];
   if (item) {
+    // BAT-25: which pipeline the task is in, when the project has more than the default one.
+    const pipeline = task ? pipelineRow(orm, pipelineIdOfStatus(orm, task.statusId) ?? '') : null;
     const facts = [
       `- URL: ${context.target.url ?? ''}`,
+      ...(pipeline && !pipeline.isDefault ? [`- Pipeline: ${pipeline.name}`] : []),
       ...(context.target.status ? [`- Status: ${context.target.status}`] : []),
       ...(task ? [`- Priority: ${PRIORITIES[task.priority]?.label ?? 'None'}`] : []),
       ...(task ? [`- Difficulty: ${level?.name ?? 'none'}`] : []),

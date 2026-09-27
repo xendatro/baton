@@ -58,6 +58,7 @@ import {
   saveEvidence,
   type GuardResult,
 } from './pipelines';
+import { canSeeStatus, defaultPipeline, pipelineRow, requireCreateIn } from './projectPipelines';
 import { requireProject } from './projects';
 import { indexSearch } from './search';
 import { requireSignoff } from './signoff';
@@ -116,7 +117,10 @@ export function requireTask(db: DbExecutor, actor: Actor, taskId: string): TaskA
     )
     .get();
   if (!row) throw errors.notFound('Task');
-  return { ...row, membership: requireProjectAccess(db, actor, row.project.id, 'Task') };
+  const membership = requireProjectAccess(db, actor, row.project.id, 'Task');
+  // A task of a pipeline the actor can't see doesn't exist for them (BAT-25).
+  if (!canSeeStatus(db, membership, row.task.statusId)) throw errors.notFound('Task');
+  return { ...row, membership };
 }
 
 /** May the member change the task's workflow fields (status, assignees, …) and claim it? */
@@ -224,7 +228,7 @@ export function getTaskByNumber(
   number: number,
 ): Task {
   const { orm } = deps.db;
-  requireProject(orm, actor, projectId, 'Task');
+  const { membership } = requireProject(orm, actor, projectId, 'Task');
   const row = orm
     .select()
     .from(s.task)
@@ -232,7 +236,7 @@ export function getTaskByNumber(
       and(eq(s.task.projectId, projectId), eq(s.task.number, number), isNull(s.task.deletedAt)),
     )
     .get();
-  if (!row) throw errors.notFound('Task');
+  if (!row || !canSeeStatus(orm, membership, row.statusId)) throw errors.notFound('Task');
   return toTask(orm, actor, row);
 }
 
@@ -338,20 +342,21 @@ export function statusOfProject(db: DbExecutor, projectId: string, statusId: str
   return status;
 }
 
-function defaultStatus(db: DbExecutor, projectId: string): StatusRow {
+/** The default status of a pipeline (its first when none is marked). */
+function defaultStatus(db: DbExecutor, pipelineId: string): StatusRow {
   const status =
     db
       .select()
       .from(s.status)
-      .where(and(eq(s.status.projectId, projectId), eq(s.status.isDefault, true)))
+      .where(and(eq(s.status.pipelineId, pipelineId), eq(s.status.isDefault, true)))
       .get() ??
     db
       .select()
       .from(s.status)
-      .where(eq(s.status.projectId, projectId))
+      .where(eq(s.status.pipelineId, pipelineId))
       .orderBy(asc(s.status.position))
       .get();
-  if (!status) throw errors.conflict('This project has no statuses');
+  if (!status) throw errors.conflict('This pipeline has no statuses');
   return status;
 }
 
@@ -549,9 +554,19 @@ export function createTask(
 
   const taskId = deps.db.write((tx) => {
     const now = new Date();
+    // The pipeline it starts in (BAT-25): whoever creates it must be allowed to add tasks there.
+    const pipeline = input.statusId
+      ? pipelineRow(tx, statusOfProject(tx, projectId, input.statusId).pipelineId)
+      : input.pipelineId
+        ? pipelineRow(tx, input.pipelineId)
+        : defaultPipeline(tx, projectId);
+    if (!pipeline || pipeline.projectId !== projectId || pipeline.deletedAt) {
+      throw errors.notFound('Pipeline');
+    }
+    requireCreateIn(tx, membership, pipeline);
     const status = input.statusId
       ? statusOfProject(tx, projectId, input.statusId)
-      : defaultStatus(tx, projectId);
+      : defaultStatus(tx, pipeline.id);
     const users = memberRefs(tx, team.id, [...new Set(input.assigneeUserIds ?? [])]);
     const roles = roleRefs(tx, team.id, [...new Set(input.assigneeRoleIds ?? [])]);
     const labels = labelRefs(tx, projectId, [...new Set(input.labelIds ?? [])]);

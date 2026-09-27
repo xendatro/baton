@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, isNotNull, isNull, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNotNull, isNull, notInArray, sql } from 'drizzle-orm';
 import { formatTaskRef } from '@shared/refs';
 import type {
   ClaimNextResponse,
@@ -27,6 +27,7 @@ import {
   recordForced,
   takeFromPool,
 } from './pipelines';
+import { hiddenStatusIds } from './projectPipelines';
 import { requireProject } from './projects';
 import { insertReply, prepareReply } from './replies';
 import {
@@ -210,6 +211,9 @@ export function claimNextTask(
   }
   const mine = assignedTo(actor.userId, membership.roleIds);
 
+  // Tasks of pipelines the actor can't see are never handed out (BAT-25).
+  const hidden = [...hiddenStatusIds(orm, actor.userId, [projectId])];
+
   const claimedId = deps.db.write((tx) => {
     const now = new Date();
     if (input.moveToStatusId) requireClaimableStatus(tx, projectId, input.moveToStatusId);
@@ -221,6 +225,7 @@ export function claimNextTask(
         and(
           eq(s.task.projectId, projectId),
           isNull(s.task.deletedAt),
+          hidden.length > 0 ? notInArray(s.task.statusId, hidden) : undefined,
           eq(s.status.claimable, true),
           isNull(s.task.claimedById),
           sql`not ${isBlocked}`,

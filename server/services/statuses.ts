@@ -18,11 +18,19 @@ import { change, diffFields } from '../lib/diff';
 import { errors } from '../lib/errors';
 import { newId } from '../lib/ids';
 import { appPaths } from '../lib/urls';
-import { requirePermission, requireProjectAccess, type Membership } from './access';
+import { requireProjectAccess, type Membership } from './access';
 import { recordActivity } from './activity';
 import { emitAfterCommit } from './events';
 import { queueLinkedIssueEvents } from './linkEvents';
 import { enterStage, mergeRules, ruleChanges, ruleColumns, rulesOf } from './pipelines';
+import {
+  defaultPipeline,
+  hiddenStatusIds,
+  pipelinePermissions,
+  pipelineRow,
+  requireManageStages,
+  resolvePipeline,
+} from './projectPipelines';
 import { requireProject, type ProjectRow } from './projects';
 import { requireSignoff } from './signoff';
 import { setStageAssignees, stageRoleIds, stageUserIds } from './taskAssignees';
@@ -40,14 +48,24 @@ export type StatusRow = typeof s.status.$inferSelect;
 
 const DEFAULT_STATUS_COLOR = '#6b7280';
 
-/** Statuses of a project in column order, with their (non-deleted) task counts. */
+/**
+ * Statuses of a project with their (non-deleted) task counts: pipeline by pipeline (BAT-25), each
+ * in column order.
+ */
 export function statusesOf(db: DbExecutor, projectId: string): Status[] {
   const rows = db
-    .select()
+    .select({ status: s.status })
     .from(s.status)
+    .innerJoin(s.pipeline, eq(s.pipeline.id, s.status.pipelineId))
     .where(eq(s.status.projectId, projectId))
-    .orderBy(asc(s.status.position), asc(s.status.createdAt))
-    .all();
+    .orderBy(
+      asc(s.pipeline.position),
+      asc(s.pipeline.createdAt),
+      asc(s.status.position),
+      asc(s.status.createdAt),
+    )
+    .all()
+    .map((row) => row.status);
   const counts = new Map(
     db
       .select({ statusId: s.task.statusId, n: count() })
@@ -64,6 +82,7 @@ function toStatus(row: StatusRow, taskCount: number): Status {
   return {
     id: row.id,
     projectId: row.projectId,
+    pipelineId: row.pipelineId,
     name: row.name,
     color: row.color,
     icon: row.icon,
@@ -80,11 +99,28 @@ function statusById(db: DbExecutor, projectId: string, statusId: string): Status
   return status;
 }
 
-/** The statuses of a project, in column order (any member). */
-export function listStatuses(deps: AppDeps, actor: Actor, projectId: string): StatusListResponse {
+/**
+ * The statuses of a project the actor can see, pipeline by pipeline in column order, or those of
+ * one pipeline (id, slug or name).
+ */
+export function listStatuses(
+  deps: AppDeps,
+  actor: Actor,
+  projectId: string,
+  pipelineRef?: string,
+): StatusListResponse {
   const { orm } = deps.db;
-  requireProject(orm, actor, projectId);
-  return { items: statusesOf(orm, projectId) };
+  const { membership } = requireProject(orm, actor, projectId);
+  const pipeline = pipelineRef ? resolvePipeline(orm, projectId, pipelineRef) : null;
+  const hidden = hiddenStatusIds(orm, actor.userId, [projectId]);
+  if (pipeline && !pipelinePermissions(orm, membership, pipeline).view) {
+    throw errors.notFound('Pipeline');
+  }
+  return {
+    items: statusesOf(orm, projectId).filter(
+      (status) => !hidden.has(status.id) && (!pipeline || status.pipelineId === pipeline.id),
+    ),
+  };
 }
 
 interface StatusAccess {
@@ -94,7 +130,7 @@ interface StatusAccess {
   membership: Membership;
 }
 
-/** A status of a live project the actor may manage statuses in. */
+/** A status of a live project, when the actor may edit its pipeline's stages. */
 function requireManageableStatus(deps: AppDeps, actor: Actor, statusId: string): StatusAccess {
   const { orm } = deps.db;
   const row = orm
@@ -106,16 +142,16 @@ function requireManageableStatus(deps: AppDeps, actor: Actor, statusId: string):
     .get();
   if (!row) throw errors.notFound('Status');
   const membership = requireProjectAccess(orm, actor, row.project.id, 'Status');
-  requirePermission(membership, 'MANAGE_STATUSES', "You don't have permission to manage statuses");
+  requireManageStages(orm, membership, row.status.pipelineId);
   return { ...row, membership };
 }
 
-/** Throws `conflict` when another status of the project has this name (case-insensitive). */
-function requireUniqueName(db: DbExecutor, projectId: string, name: string, exceptId?: string) {
+/** Throws `conflict` when another stage of the pipeline has this name (case-insensitive). */
+function requireUniqueName(db: DbExecutor, pipelineId: string, name: string, exceptId?: string) {
   const clash = db
     .select({ id: s.status.id, name: s.status.name })
     .from(s.status)
-    .where(and(eq(s.status.projectId, projectId), sql`lower(${s.status.name}) = lower(${name})`))
+    .where(and(eq(s.status.pipelineId, pipelineId), sql`lower(${s.status.name}) = lower(${name})`))
     .all()
     .find((row) => row.id !== exceptId);
   if (clash) throw errors.conflict(`There is already a status named "${clash.name}"`);
@@ -132,11 +168,11 @@ function statusEvent(project: ProjectRow, actor: Actor, statusId: string) {
   };
 }
 
-/** Makes `statusId` the project's only default status (inside a write). */
-function setDefault(tx: Tx, projectId: string, statusId: string): void {
+/** Makes `statusId` its pipeline's only default status (inside a write). */
+function setDefault(tx: Tx, pipelineId: string, statusId: string): void {
   tx.update(s.status)
     .set({ isDefault: false })
-    .where(and(eq(s.status.projectId, projectId), eq(s.status.isDefault, true)))
+    .where(and(eq(s.status.pipelineId, pipelineId), eq(s.status.isDefault, true)))
     .run();
   tx.update(s.status).set({ isDefault: true }).where(eq(s.status.id, statusId)).run();
 }
@@ -163,7 +199,10 @@ export function syncCompletion(tx: Tx, statusId: string, blocksDependents: boole
   return live?.n ?? 0;
 }
 
-/** Adds a status at the end of the column order (`MANAGE_STATUSES`). */
+/**
+ * Adds a status at the end of a pipeline's columns (the default pipeline unless `pipelineId`
+ * says), for whoever may edit that pipeline's stages.
+ */
 export function createStatus(
   deps: AppDeps,
   actor: Actor,
@@ -172,25 +211,37 @@ export function createStatus(
 ): Status {
   const { orm } = deps.db;
   const { project, membership } = requireProject(orm, actor, projectId);
-  requirePermission(membership, 'MANAGE_STATUSES', "You don't have permission to manage statuses");
+  const pipeline = input.pipelineId
+    ? pipelineRow(orm, input.pipelineId)
+    : defaultPipeline(orm, projectId);
+  if (!pipeline || pipeline.projectId !== projectId || pipeline.deletedAt) {
+    throw errors.notFound('Pipeline');
+  }
+  requireManageStages(orm, membership, pipeline.id);
 
   const id = deps.db.write((tx) => {
+    const all = tx
+      .select({ n: count() })
+      .from(s.status)
+      .where(eq(s.status.projectId, projectId))
+      .get();
+    if ((all?.n ?? 0) >= PROJECT_LIMITS.statuses) {
+      throw errors.validation(`A project can have at most ${PROJECT_LIMITS.statuses} statuses`);
+    }
     const existing = tx
       .select({ position: s.status.position })
       .from(s.status)
-      .where(eq(s.status.projectId, projectId))
+      .where(eq(s.status.pipelineId, pipeline.id))
       .orderBy(desc(s.status.position))
       .all();
-    if (existing.length >= PROJECT_LIMITS.statuses) {
-      throw errors.validation(`A project can have at most ${PROJECT_LIMITS.statuses} statuses`);
-    }
-    requireUniqueName(tx, projectId, input.name);
+    requireUniqueName(tx, pipeline.id, input.name);
     const now = new Date();
     const row = tx
       .insert(s.status)
       .values({
         id: newId(),
         projectId,
+        pipelineId: pipeline.id,
         name: input.name,
         color: input.color ?? DEFAULT_STATUS_COLOR,
         icon: input.icon ?? DEFAULT_STATUS_ICON,
@@ -201,7 +252,7 @@ export function createStatus(
       })
       .returning()
       .get();
-    if (input.isDefault) setDefault(tx, projectId, row.id);
+    if (input.isDefault) setDefault(tx, pipeline.id, row.id);
     if (input.rules) {
       const rules = mergeRules(
         tx,
@@ -223,6 +274,7 @@ export function createStatus(
         color: row.color,
         icon: row.icon,
         ...(input.isDefault ? { isDefault: true } : {}),
+        ...(pipeline.isDefault ? {} : { pipeline: pipeline.name }),
       },
     });
     emitAfterCommit(tx, statusEvent(project, actor, row.id));
@@ -254,16 +306,16 @@ export function updateStatus(
 
   deps.db.write((tx) => {
     if (input.name !== undefined && changes.name) {
-      requireUniqueName(tx, project.id, input.name, statusId);
+      requireUniqueName(tx, status.pipelineId, input.name, statusId);
     }
     const previousDefault = changes.isDefault
       ? tx
           .select({ name: s.status.name })
           .from(s.status)
-          .where(and(eq(s.status.projectId, project.id), eq(s.status.isDefault, true)))
+          .where(and(eq(s.status.pipelineId, status.pipelineId), eq(s.status.isDefault, true)))
           .get()
       : undefined;
-    if (changes.isDefault) setDefault(tx, project.id, statusId);
+    if (changes.isDefault) setDefault(tx, status.pipelineId, statusId);
     tx.update(s.status)
       .set({
         ...(input.name !== undefined ? { name: input.name } : {}),
@@ -308,7 +360,10 @@ function liveTaskIds(tx: Tx, statusId: string): string[] {
     .map((row) => row.id);
 }
 
-/** Puts the project's statuses in the given order (`MANAGE_STATUSES`); every status once. */
+/**
+ * Puts a pipeline's stages in the given order (whoever may edit its stages): every stage of that
+ * pipeline once. The pipeline is the first status's.
+ */
 export function reorderStatuses(
   deps: AppDeps,
   actor: Actor,
@@ -317,13 +372,19 @@ export function reorderStatuses(
 ): StatusListResponse {
   const { orm } = deps.db;
   const { project, membership } = requireProject(orm, actor, projectId);
-  requirePermission(membership, 'MANAGE_STATUSES', "You don't have permission to manage statuses");
+  const first = orm
+    .select({ pipelineId: s.status.pipelineId })
+    .from(s.status)
+    .where(and(eq(s.status.id, input.statusIds[0] ?? ''), eq(s.status.projectId, projectId)))
+    .get();
+  if (!first) throw errors.validation("List every one of the pipeline's statuses exactly once");
+  requireManageStages(orm, membership, first.pipelineId);
 
   deps.db.write((tx) => {
     const current = tx
       .select({ id: s.status.id, name: s.status.name, position: s.status.position })
       .from(s.status)
-      .where(eq(s.status.projectId, projectId))
+      .where(eq(s.status.pipelineId, first.pipelineId))
       .orderBy(asc(s.status.position), asc(s.status.createdAt))
       .all();
     const byId = new Map(current.map((row) => [row.id, row]));
@@ -333,7 +394,7 @@ export function reorderStatuses(
       unique.size !== current.length ||
       input.statusIds.some((id) => !byId.has(id))
     ) {
-      throw errors.validation("List every one of the project's statuses exactly once");
+      throw errors.validation("List every one of the pipeline's statuses exactly once");
     }
     const before = current.map((row) => row.name);
     const after = input.statusIds.map((id) => byId.get(id)?.name ?? id);
@@ -397,100 +458,38 @@ export function deleteStatus(
     const statuses = tx
       .select()
       .from(s.status)
-      .where(eq(s.status.projectId, project.id))
+      .where(eq(s.status.pipelineId, status.pipelineId))
       .orderBy(asc(s.status.position), asc(s.status.createdAt))
       .all();
-    if (statuses.length <= 1) throw errors.conflict("A project's last status can't be deleted");
-    const target = statuses.find((row) => row.id === query.moveTo);
+    if (statuses.length <= 1) throw errors.conflict("A pipeline's last status can't be deleted");
+    // Its tasks may go to a stage of another pipeline too (BAT-25).
+    const target = tx
+      .select()
+      .from(s.status)
+      .where(and(eq(s.status.id, query.moveTo), eq(s.status.projectId, project.id)))
+      .get();
     if (!target) throw errors.notFound('Status to move the tasks to');
     // Re-read under the write lock: the rules may have changed since the access check.
     const source = statuses.find((row) => row.id === statusId) ?? status;
 
-    const tasks = tx
-      .select()
-      .from(s.task)
-      .where(eq(s.task.statusId, statusId))
-      .orderBy(asc(s.task.position), asc(s.task.number))
-      .all();
-    const last = tx
-      .select({ position: s.task.position })
-      .from(s.task)
-      .where(eq(s.task.statusId, target.id))
-      .orderBy(desc(s.task.position))
-      .get();
-    const positions = appendPositions(last?.position ?? null, tasks.length);
-    const now = new Date();
-    for (const [index, task] of tasks.entries()) {
-      const patch: Partial<TaskRow> = {
-        statusId: target.id,
-        ...(positions[index] ? { position: positions[index] } : {}),
-        completedAt: target.blocksDependents ? null : (task.completedAt ?? now),
-      };
-      if (task.deletedAt) {
-        tx.update(s.task).set(patch).where(eq(s.task.id, task.id)).run();
-        // Its assignees go with it (unless it already has some in `moveTo`).
-        if (
-          stageUserIds(tx, task.id, target.id).length === 0 &&
-          stageRoleIds(tx, task.id, target.id).length === 0
-        ) {
-          setStageAssignees(
-            tx,
-            task.id,
-            target.id,
-            stageUserIds(tx, task.id, source.id),
-            stageRoleIds(tx, task.id, source.id),
-          );
-        }
-        continue;
-      }
-      const transition = applyStatusTransition(
-        tx,
-        actor,
-        { task, projectKey: project.key, teamSlug },
-        source,
-        target,
-        now,
-        new Set<string>(),
-      );
-      tx.update(s.task)
-        .set({ ...patch, ...transition.patch, updatedAt: now })
-        .where(eq(s.task.id, task.id))
-        .run();
-      recordActivity(tx, actor, {
-        teamId: task.teamId,
-        projectId: task.projectId,
-        entityType: 'task',
-        entityId: task.id,
-        action: 'task.moved',
-        changes: { status: change(source.name, target.name) },
-        meta: { ...taskMeta(task, project.key), status: target.name, reason: 'status_deleted' },
-      });
-      transition.recordRelease();
-      // The tasks enter `target`: its hand-off and notify rules apply (no exit rules are checked).
-      const moved = tx.select().from(s.task).where(eq(s.task.id, task.id)).get();
-      if (moved) {
-        enterStage(
-          tx,
-          actor,
-          { task: moved, projectKey: project.key, teamSlug },
-          source,
-          target,
-          now,
-        );
-      }
-    }
+    const movedCount = moveTasksOfStatus(tx, actor, { project, teamSlug }, source, target, {
+      reason: 'status_deleted',
+    });
 
     tx.delete(s.status).where(eq(s.status.id, statusId)).run();
-    if (source.isDefault) setDefault(tx, project.id, target.id);
-    statuses
-      .filter((row) => row.id !== statusId)
-      .forEach((row, position) => {
-        if (row.position !== position) {
-          tx.update(s.status).set({ position }).where(eq(s.status.id, row.id)).run();
-        }
-      });
+    const remaining = statuses.filter((row) => row.id !== statusId);
+    const newDefault = source.isDefault
+      ? target.pipelineId === source.pipelineId
+        ? target
+        : remaining[0]
+      : undefined;
+    if (newDefault) setDefault(tx, source.pipelineId, newDefault.id);
+    remaining.forEach((row, position) => {
+      if (row.position !== position) {
+        tx.update(s.status).set({ position }).where(eq(s.status.id, row.id)).run();
+      }
+    });
 
-    const moved = tasks.filter((task) => task.deletedAt === null);
     recordActivity(tx, actor, {
       teamId: project.teamId,
       projectId: project.id,
@@ -500,21 +499,115 @@ export function deleteStatus(
       meta: {
         name: source.name,
         movedTo: target.name,
-        movedTasks: moved.length,
-        ...(source.isDefault ? { newDefault: target.name } : {}),
+        movedTasks: movedCount,
+        ...(newDefault ? { newDefault: newDefault.name } : {}),
       },
     });
-    // The project's boards and lists refresh on `status.changed`; linked issues of other
-    // projects show the moved tasks' statuses.
+    // The project's boards and lists refresh on `status.changed`.
     emitAfterCommit(tx, statusEvent(project, actor, statusId));
-    queueLinkedIssueEvents(
-      tx,
-      actor,
-      moved.map((task) => task.id),
-    );
-    return moved.length;
+    return movedCount;
   });
   return { ok: true, movedTasks };
+}
+
+/**
+ * Moves every task of `source` to the end of `target`'s column (inside a write) when `source` is
+ * about to go (its status or pipeline is deleted). Each live task enters `target` like any other
+ * move: a `task.moved` row (`meta.reason`), `target`'s on-enter effects and hand-off (no exit
+ * rules are checked). Tasks in Trash just follow, taking their assignees along. Returns how many
+ * live tasks moved; linked issues of other projects are told.
+ */
+export function moveTasksOfStatus(
+  tx: Tx,
+  actor: Actor,
+  context: { project: ProjectRow; teamSlug: string },
+  source: StatusRow,
+  target: StatusRow,
+  options: { reason: string },
+): number {
+  const { project, teamSlug } = context;
+  const statusId = source.id;
+  const tasks = tx
+    .select()
+    .from(s.task)
+    .where(eq(s.task.statusId, statusId))
+    .orderBy(asc(s.task.position), asc(s.task.number))
+    .all();
+  const last = tx
+    .select({ position: s.task.position })
+    .from(s.task)
+    .where(eq(s.task.statusId, target.id))
+    .orderBy(desc(s.task.position))
+    .get();
+  const positions = appendPositions(last?.position ?? null, tasks.length);
+  const now = new Date();
+  for (const [index, task] of tasks.entries()) {
+    const patch: Partial<TaskRow> = {
+      statusId: target.id,
+      ...(positions[index] ? { position: positions[index] } : {}),
+      completedAt: target.blocksDependents ? null : (task.completedAt ?? now),
+    };
+    if (task.deletedAt) {
+      tx.update(s.task).set(patch).where(eq(s.task.id, task.id)).run();
+      // Its assignees go with it (unless it already has some in `moveTo`).
+      if (
+        stageUserIds(tx, task.id, target.id).length === 0 &&
+        stageRoleIds(tx, task.id, target.id).length === 0
+      ) {
+        setStageAssignees(
+          tx,
+          task.id,
+          target.id,
+          stageUserIds(tx, task.id, source.id),
+          stageRoleIds(tx, task.id, source.id),
+        );
+      }
+      continue;
+    }
+    const transition = applyStatusTransition(
+      tx,
+      actor,
+      { task, projectKey: project.key, teamSlug },
+      source,
+      target,
+      now,
+      new Set<string>(),
+    );
+    tx.update(s.task)
+      .set({ ...patch, ...transition.patch, updatedAt: now })
+      .where(eq(s.task.id, task.id))
+      .run();
+    recordActivity(tx, actor, {
+      teamId: task.teamId,
+      projectId: task.projectId,
+      entityType: 'task',
+      entityId: task.id,
+      action: 'task.moved',
+      changes: { status: change(source.name, target.name) },
+      meta: { ...taskMeta(task, project.key), status: target.name, reason: options.reason },
+    });
+    transition.recordRelease();
+    // The tasks enter `target`: its hand-off and notify rules apply (no exit rules are checked).
+    const moved = tx.select().from(s.task).where(eq(s.task.id, task.id)).get();
+    if (moved) {
+      enterStage(
+        tx,
+        actor,
+        { task: moved, projectKey: project.key, teamSlug },
+        source,
+        target,
+        now,
+      );
+    }
+  }
+
+  const moved = tasks.filter((task) => task.deletedAt === null);
+  queueLinkedIssueEvents(
+    tx,
+    actor,
+    moved.map((task) => task.id),
+  );
+  return moved.length;
 }
 
 /**

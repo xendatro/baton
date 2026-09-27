@@ -7,6 +7,7 @@ import type { Tx } from '../db';
 import { excerpt } from '../lib/markdown';
 import { appPaths } from '../lib/urls';
 import { memberTeamIds, visibleProjectIds } from './access';
+import { hiddenStatusIds } from './projectPipelines';
 
 /**
  * Full-text search over tasks, issues and replies (SQLite FTS5, SPEC §1.9). The index is
@@ -140,6 +141,7 @@ function refMatches(
   ref: RefQuery,
   projectIds: readonly string[],
   query: SearchQuery,
+  hidden: readonly string[],
 ): SearchResult[] {
   const results: SearchResult[] = [];
   for (const kind of ref.kinds) {
@@ -160,6 +162,10 @@ function refMatches(
     if (query.projectId) {
       where += ' and item.project_id = ?';
       params.push(query.projectId);
+    }
+    if (kind === 'task' && hidden.length > 0) {
+      where += ` and item.status_id not in (${hidden.map(() => '?').join(', ')})`;
+      params.push(...hidden);
     }
     const rows = deps.db.sqlite
       .prepare<unknown[], RefRow>(
@@ -210,8 +216,11 @@ export function search(deps: AppDeps, actor: Actor, query: SearchQuery): SearchR
   const projectIds = visibleProjectIds(deps.db.orm, actor.userId, teamIds);
   if (projectIds.length === 0) return { results: [] };
 
+  // Tasks of pipelines the caller can't see (BAT-25), and their replies, are left out too.
+  const hidden = [...hiddenStatusIds(deps.db.orm, actor.userId, projectIds)];
+
   const refQuery = parseRefQuery(query.q);
-  const exact = refQuery ? refMatches(deps, refQuery, projectIds, query) : [];
+  const exact = refQuery ? refMatches(deps, refQuery, projectIds, query, hidden) : [];
   const found = new Set(exact.map((result) => `${result.entityType}:${result.entityId}`));
 
   const placeholders = (values: readonly unknown[]) => values.map(() => '?').join(', ');
@@ -244,6 +253,7 @@ export function search(deps: AppDeps, actor: Actor, query: SearchQuery): SearchR
       and search_index.entity_type in (${placeholders(query.types)})
       ${query.projectId ? 'and search_index.project_id = ?' : ''}
       and coalesce(tk.id, i.id, rt.id, ri.id) is not null
+      ${hidden.length > 0 ? `and coalesce(tk.status_id, rt.status_id, '') not in (${placeholders(hidden)})` : ''}
     order by bm25(search_index, 0, 0, 0, 0, 8.0, 1.0)
     limit ?
   `);
@@ -253,6 +263,7 @@ export function search(deps: AppDeps, actor: Actor, query: SearchQuery): SearchR
     ...projectIds,
     ...query.types,
     ...(query.projectId ? [query.projectId] : []),
+    ...hidden,
     query.limit,
   );
 

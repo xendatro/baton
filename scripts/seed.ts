@@ -435,8 +435,9 @@ function backdateSetup(deps: ReturnType<typeof createAppDeps>, since: Date, base
 }
 
 /**
- * Open (default) + Done → Backlog, Todo (default), In Progress, In Review, Done, Canceled: the
- * seeded Open status becomes Backlog, the rest are created, then the columns are put in order.
+ * The seeded stages (Backlog, To do, In progress, In review, Done) → Backlog, Todo (default), In
+ * Progress, In Review, Done, Canceled: seeded stages are matched by name (ignoring case and
+ * spaces) and restyled, the rest are created, then the columns are put in order.
  */
 function configureWorkflow(
   deps: ReturnType<typeof createAppDeps>,
@@ -444,16 +445,19 @@ function configureWorkflow(
   projectId: string,
   seeded: readonly Status[],
 ): void {
-  const open = seeded.find((status) => status.name === 'Open');
-  const done = seeded.find((status) => status.name === 'Done');
-  if (!open || !done) throw new Error('A new project should have Open and Done statuses');
-  const ids = new Map<string, string>([
-    ['Backlog', open.id],
-    ['Done', done.id],
-  ]);
-  updateStatus(deps, actor, open.id, { name: 'Backlog', color: '#6b7280', icon: 'dashed-circle' });
+  const norm = (name: string) => name.toLowerCase().replace(/\s+/g, '');
+  const ids = new Map<string, string>();
   for (const status of STATUSES) {
-    if (ids.has(status.name)) continue;
+    const match = seeded.find((candidate) => norm(candidate.name) === norm(status.name));
+    if (match) {
+      updateStatus(deps, actor, match.id, {
+        name: status.name,
+        color: status.color,
+        icon: status.icon,
+      });
+      ids.set(status.name, match.id);
+      continue;
+    }
     const created = createStatus(
       deps,
       actor,
@@ -468,9 +472,8 @@ function configureWorkflow(
     ids.set(status.name, created.id);
   }
   const defaultStatus = STATUSES.find((status) => status.isDefault);
-  if (defaultStatus) {
-    updateStatus(deps, actor, ids.get(defaultStatus.name) ?? open.id, { isDefault: true });
-  }
+  const defaultId = defaultStatus ? ids.get(defaultStatus.name) : undefined;
+  if (defaultId) updateStatus(deps, actor, defaultId, { isDefault: true });
   reorderStatuses(deps, actor, projectId, {
     statusIds: STATUSES.map((status) => ids.get(status.name) ?? ''),
   });

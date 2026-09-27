@@ -303,18 +303,34 @@ export const FINISHED_STAGE_RULES = {
   claimable: false,
 };
 
-/**
- * Statuses every new project starts with: ordinary stages that can be renamed, recolored,
- * reordered or deleted. Exactly one is the default.
- */
-export const DEFAULT_STATUSES: ReadonlyArray<{
+/** A seeded stage: its look and the rules that differ from the plain defaults. */
+export interface StatusSeed {
   name: string;
   color: string;
   icon: StatusIconShape;
   isDefault: boolean;
-  rules: typeof FINISHED_STAGE_RULES | null;
-}> = [
-  { name: 'Open', color: '#6b7280', icon: 'circle', isDefault: true, rules: null },
+  /** Rules besides the plain defaults (`allowCreate` defaults to `isDefault`). */
+  rules: (Partial<typeof FINISHED_STAGE_RULES> & { allowCreate?: boolean }) | null;
+}
+
+/**
+ * Stages every new pipeline (and so every new project) starts with, 2026-09-27: ordinary stages
+ * that can be renamed, recolored, reordered or deleted. They are deliberately plain so a team can
+ * use the board by hand at once: nobody is assigned automatically, nothing gates moving on, and
+ * each stage can send tasks back to every earlier one. New tasks can start in Backlog (the default)
+ * and To do; Done is the finishing stage. Existing projects keep their stages.
+ */
+export const DEFAULT_STATUSES: ReadonlyArray<StatusSeed> = [
+  { name: 'Backlog', color: '#6b7280', icon: 'dashed-circle', isDefault: true, rules: null },
+  {
+    name: 'To do',
+    color: '#3b82f6',
+    icon: 'circle',
+    isDefault: false,
+    rules: { allowCreate: true },
+  },
+  { name: 'In progress', color: '#f59e0b', icon: 'half-circle', isDefault: false, rules: null },
+  { name: 'In review', color: '#8b5cf6', icon: 'dot-circle', isDefault: false, rules: null },
   {
     name: 'Done',
     color: '#22c55e',
@@ -323,6 +339,15 @@ export const DEFAULT_STATUSES: ReadonlyArray<{
     rules: FINISHED_STAGE_RULES,
   },
 ];
+
+/** The name "Create" gives a new stage: "New stage", then "New stage 2", "New stage 3"… */
+export function nextNewStageName(existing: readonly string[]): string {
+  const taken = new Set(existing.map((name) => name.toLowerCase()));
+  if (!taken.has('new stage')) return 'New stage';
+  for (let n = 2; ; n += 1) {
+    if (!taken.has(`new stage ${n}`)) return `New stage ${n}`;
+  }
+}
 
 export const PRIORITY_VALUES = [0, 1, 2, 3, 4] as const;
 export type PriorityValue = (typeof PRIORITY_VALUES)[number];

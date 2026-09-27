@@ -4,6 +4,7 @@ import { DEFAULT_STATUS_ICON } from '@shared/constants';
 import {
   PROJECT_LIMITS,
   type CreateStatusInput,
+  type CreatedStatus,
   type DeleteStatusQuery,
   type DeleteStatusResponse,
   type ReorderStatusesInput,
@@ -34,6 +35,7 @@ import {
 } from './projectPipelines';
 import { requireProject, type ProjectRow } from './projects';
 import { requireSignoff } from './signoff';
+import { copyStageRules, type CopiedStage } from './stageCopy';
 import { setStageAssignees, stageRoleIds, stageUserIds } from './taskAssignees';
 import { applyStatusTransition, taskMeta, type TaskRow } from './tasks';
 
@@ -208,14 +210,15 @@ export function syncCompletion(tx: Tx, statusId: string, blocksDependents: boole
 
 /**
  * Adds a status at the end of a pipeline's columns (the default pipeline unless `pipelineId`
- * says), for whoever may edit that pipeline's stages.
+ * says), for whoever may edit that pipeline's stages. With `copyRulesFrom` it starts from the rules
+ * of a stage the actor can see (`copyStageRules`); `copied` then says what had no match here.
  */
 export function createStatus(
   deps: AppDeps,
   actor: Actor,
   projectId: string,
   input: CreateStatusInput,
-): Status {
+): CreatedStatus {
   const { orm } = deps.db;
   const { project, membership } = requireProject(orm, actor, projectId);
   const pipeline = input.pipelineId
@@ -225,9 +228,9 @@ export function createStatus(
     throw errors.notFound('Pipeline');
   }
   requireManageStages(orm, membership, pipeline.id);
-  const defaultDifficultyId = defaultLevel(orm, projectId, input.defaultDifficultyId ?? null);
+  const inputDifficultyId = defaultLevel(orm, projectId, input.defaultDifficultyId ?? null);
 
-  const id = deps.db.write((tx) => {
+  const { id, copied } = deps.db.write((tx) => {
     const all = tx
       .select({ n: count() })
       .from(s.status)
@@ -243,6 +246,18 @@ export function createStatus(
       .orderBy(desc(s.status.position), desc(s.status.createdAt))
       .all();
     requireUniqueName(tx, pipeline.id, input.name);
+    const copied: CopiedStage | null = input.copyRulesFrom
+      ? copyStageRules(
+          tx,
+          actor,
+          { teamId: project.teamId, projectId, pipelineId: pipeline.id },
+          input.copyRulesFrom,
+        )
+      : null;
+    const defaultDifficultyId =
+      input.defaultDifficultyId !== undefined
+        ? inputDifficultyId
+        : (copied?.defaultDifficultyId ?? null);
     const now = new Date();
     const row = tx
       .insert(s.status)
@@ -266,13 +281,13 @@ export function createStatus(
     if (input.isDefault) setDefault(tx, pipeline.id, row.id);
     // BAT-34: new tasks start in the default stage, so making one the default lets them.
     const rulesPatch = input.isDefault ? { ...input.rules, allowCreate: true } : input.rules;
-    if (rulesPatch) {
+    if (rulesPatch || copied) {
       const rules = mergeRules(
         tx,
         { teamId: project.teamId, projectId },
         row.id,
-        rulesOf(row),
-        rulesPatch,
+        copied?.rules ?? rulesOf(row),
+        rulesPatch ?? {},
       );
       tx.update(s.status).set(ruleColumns(rules)).where(eq(s.status.id, row.id)).run();
     }
@@ -288,12 +303,14 @@ export function createStatus(
         icon: row.icon,
         ...(input.isDefault ? { isDefault: true } : {}),
         ...(pipeline.isDefault ? {} : { pipeline: pipeline.name }),
+        ...(copied ? { copiedFrom: copied.from } : {}),
       },
     });
     emitAfterCommit(tx, statusEvent(project, actor, row.id));
-    return row.id;
+    return { id: row.id, copied };
   });
-  return statusById(orm, projectId, id);
+  const created = statusById(orm, projectId, id);
+  return copied ? { ...created, copied: { from: copied.from, dropped: copied.dropped } } : created;
 }
 
 /**

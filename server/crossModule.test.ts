@@ -461,7 +461,15 @@ describe('wave B: issues ↔ tasks ↔ work', () => {
       expect.objectContaining({ ref: task.body.ref, kind: 'fixes' }),
     ]);
 
-    // Moving it to a done status on the board resolves the issue.
+    // Walking it through the stages to Done on the board resolves the issue (strict moves: one
+    // stage at a time).
+    const doneIndex = statuses.body.items.findIndex((status) => status.id === done?.id);
+    for (const stage of statuses.body.items.slice(1, doneIndex)) {
+      const step = await call(ownerKey, 'POST', `/tasks/${task.body.id}/move`, {
+        statusId: stage.id,
+      });
+      expect(step.status).toBe(200);
+    }
     events.length = 0;
     const moved = await call(ownerKey, 'POST', `/tasks/${task.body.id}/move`, {
       statusId: done?.id,

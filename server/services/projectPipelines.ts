@@ -1,5 +1,5 @@
 import { and, asc, count, eq, inArray, isNotNull, isNull } from 'drizzle-orm';
-import { DEFAULT_STATUSES } from '@shared/constants';
+import { DEFAULT_STATUSES, type StatusSeed } from '@shared/constants';
 import type { PrincipalRule } from '@shared/principals';
 import {
   DEFAULT_PIPELINE_NAME,
@@ -365,15 +365,19 @@ export function insertPipeline(
     .get();
 }
 
-/** A pipeline with the seeded stages (Open, the default, and Done), inside the caller's write. */
+/**
+ * A pipeline with the seeded stages (Backlog, the default, To do, In progress, In review and Done;
+ * `seeds` overrides them), inside the caller's write.
+ */
 export function insertPipelineWithStages(
   tx: Tx,
   projectId: string,
   values: NewPipeline,
   now = new Date(),
+  seeds: ReadonlyArray<StatusSeed> = DEFAULT_STATUSES,
 ): { pipeline: PipelineRow; statuses: StatusRow[] } {
   const row = insertPipeline(tx, projectId, values, now);
-  const statuses = DEFAULT_STATUSES.map((seed, position) =>
+  const statuses = seeds.map((seed, position) =>
     tx
       .insert(s.status)
       .values({
@@ -381,7 +385,7 @@ export function insertPipelineWithStages(
         pipelineId: row.id,
         ...seedStatusColumns(seed),
         position,
-        // BAT-27: each seeded stage can send tasks back to the earlier ones (Done → Open).
+        // BAT-27: each seeded stage can send tasks back to every earlier one.
         sendBackTo: [],
         createdAt: now,
         updatedAt: now,
@@ -406,8 +410,15 @@ export function seedDefaultPipeline(
   projectId: string,
   now = new Date(),
   name: string = DEFAULT_PIPELINE_NAME,
+  seeds: ReadonlyArray<StatusSeed> = DEFAULT_STATUSES,
 ) {
-  return insertPipelineWithStages(tx, projectId, { name, isDefault: true, position: 0 }, now);
+  return insertPipelineWithStages(
+    tx,
+    projectId,
+    { name, isDefault: true, position: 0 },
+    now,
+    seeds,
+  );
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -457,7 +468,7 @@ function requireUniqueName(db: DbExecutor, projectId: string, name: string, exce
   if (clash) throw errors.conflict(`There is already a pipeline named "${clash.name}"`);
 }
 
-/** Adds a pipeline (`MANAGE_STATUSES`) at the end, with an Open and a Done stage to start from. */
+/** Adds a pipeline (`MANAGE_STATUSES`) at the end, with the default stages to start from. */
 export function createPipeline(
   deps: AppDeps,
   actor: Actor,

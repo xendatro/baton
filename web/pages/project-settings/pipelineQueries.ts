@@ -30,6 +30,23 @@ export function usePrincipalOptions(teamId: string, projectId: string) {
   return { options, isPending: members.isPending || roles.isPending };
 }
 
+/**
+ * The stages of any project the viewer can see ("Create from existing" browsing another project),
+ * sharing the project's statuses query; off while `projectId` is null.
+ */
+export function useSourceStages(projectId: string | null) {
+  return useQuery({
+    queryKey: queryKeys.projects.statuses(projectId ?? ''),
+    queryFn: ({ signal }) =>
+      api.get(`/api/projects/${enc(projectId ?? '')}/statuses`, {
+        schema: statusListResponseSchema,
+        signal,
+      }),
+    select: (data) => data.items,
+    enabled: Boolean(projectId),
+  });
+}
+
 export function useCopyPipelinePreview(
   projectId: string,
   fromProjectId: string | null,

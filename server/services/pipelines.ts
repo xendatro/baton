@@ -157,7 +157,7 @@ export function seedStatusColumns(seed: {
     color: seed.color,
     icon: seed.icon,
     isDefault: seed.isDefault,
-    // BAT-34: new tasks start in the seeded default stage (Open), not in the others (Done).
+    // BAT-34: new tasks start in the seeded default stage unless its seed says otherwise.
     ...ruleColumns({ ...DEFAULT_STAGE_RULES, allowCreate: seed.isDefault, ...seed.rules }),
   };
 }

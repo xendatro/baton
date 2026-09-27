@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import type { Page } from '@playwright/test';
-import { expect, ORIGIN, signedInUser, test } from './support/fixtures.ts';
+import { expect, ORIGIN, signedInUser, test, trimToOpenAndDone } from './support/fixtures.ts';
 
 /**
  * Strict moves (BAT-27): the task page's green "Move to <next>" and amber "Send back…" with its
@@ -34,6 +34,7 @@ async function setup(page: Page) {
     `/api/teams/${team.id}/projects`,
     { name: 'Strict', key: 'STR' },
   );
+  const [open, done] = await trimToOpenAndDone(page.request, project.id);
   const build = await api<{ id: string }>(page, 'post', `/api/projects/${project.id}/statuses`, {
     name: 'Build',
   });
@@ -42,9 +43,8 @@ async function setup(page: Page) {
     // BAT-34: the test starts a task straight in it.
     rules: { allowCreate: true },
   });
-  const [open, done] = project.statuses;
   await api(page, 'put', `/api/projects/${project.id}/statuses/order`, {
-    statusIds: [open?.id, build.id, review.id, done?.id],
+    statusIds: [open.id, build.id, review.id, done.id],
   });
   await api(page, 'patch', `/api/statuses/${review.id}`, {
     rules: { sendBackTo: [build.id], exitCriteria: [{ id: 'demo', text: 'Demo recorded' }] },

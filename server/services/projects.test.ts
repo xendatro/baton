@@ -163,7 +163,15 @@ describe('creating projects', () => {
         resolvedIssues: 0,
       },
     });
-    // Two ordinary stages: Open, and Done with the finishing rules.
+    // Five plain stages (2026-09-27): Backlog (default) … Done with the finishing rules; every
+    // stage can send tasks back to each earlier one, nothing is gated or assigned automatically.
+    const basic = {
+      resolveIssues: false,
+      releaseClaim: false,
+      notifyAuthor: false,
+      notifyAssignees: true,
+      notifyPreviousHolder: false,
+    };
     expect(
       project.statuses.map((status) => [
         status.name,
@@ -173,23 +181,13 @@ describe('creating projects', () => {
         status.rules?.onEnter,
         status.rules?.blocksDependents,
         status.rules?.claimable,
+        status.rules?.allowCreate,
       ]),
     ).toEqual([
-      [
-        'Open',
-        'circle',
-        true,
-        'keep',
-        {
-          resolveIssues: false,
-          releaseClaim: false,
-          notifyAuthor: false,
-          notifyAssignees: true,
-          notifyPreviousHolder: false,
-        },
-        true,
-        true,
-      ],
+      ['Backlog', 'dashed-circle', true, 'keep', basic, true, true, true],
+      ['To do', 'circle', false, 'keep', basic, true, true, true],
+      ['In progress', 'half-circle', false, 'keep', basic, true, true, false],
+      ['In review', 'dot-circle', false, 'keep', basic, true, true, false],
       [
         'Done',
         'check-circle',
@@ -204,8 +202,21 @@ describe('creating projects', () => {
         },
         false,
         false,
+        false,
       ],
     ]);
+    for (const [index, status] of project.statuses.entries()) {
+      expect(status.rules).toMatchObject({
+        instructions: '',
+        exitCriteria: [],
+        approvals: null,
+        moveRule: null,
+        notify: null,
+        moveBy: { assignees: false, claimer: false },
+        nextStatusId: null,
+        sendBackTo: project.statuses.slice(0, index).map((earlier) => earlier.id),
+      });
+    }
 
     const [row] = activityOf(project.id);
     expect(row).toMatchObject({
@@ -233,9 +244,12 @@ describe('creating projects', () => {
     expect(project.pipelines?.map((pipeline) => [pipeline.name, pipeline.isDefault])).toEqual([
       ['Development', true],
     ]);
-    // Its Open is where new tasks start (BAT-34).
+    // New tasks start in Backlog or To do (BAT-34).
     expect(project.statuses.map((status) => [status.name, status.rules?.allowCreate])).toEqual([
-      ['Open', true],
+      ['Backlog', true],
+      ['To do', true],
+      ['In progress', false],
+      ['In review', false],
       ['Done', false],
     ]);
     expect(

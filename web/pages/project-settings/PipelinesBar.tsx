@@ -30,9 +30,9 @@ import {
 
 /**
  * Pipelines (BAT-25): a project's separate sets of stages, each with its own board. The bar picks
- * the pipeline whose statuses the page below edits; "New pipeline" adds one (starting with Open
- * and Done) and the gear opens its settings: name, order, who may see it, create tasks in it and
- * edit its stages, and deleting it (its tasks move to a stage of another pipeline).
+ * the pipeline whose statuses the page below edits; "New pipeline" adds one (starting with the
+ * default stages) and the gear opens its settings: name, order, who may see it, create tasks in
+ * it and edit its stages, and deleting it (its tasks move to a stage of another pipeline).
  */
 export function PipelinesBar({
   projectId,
@@ -182,7 +182,7 @@ function CreatePipelineForm({
         <DialogTitle>New pipeline</DialogTitle>
         <DialogDescription>
           A separate set of stages with its own board, e.g. Modeling next to Scripting. It starts
-          with Open and Done; add its stages next.
+          with Backlog, To do, In progress, In review and Done; rename or add stages next.
         </DialogDescription>
       </DialogHeader>
       <div className="grid gap-1.5">

@@ -1,6 +1,13 @@
 import { randomBytes } from 'node:crypto';
 import type { APIRequestContext, Page } from '@playwright/test';
-import { createVerifiedUser, expect, ORIGIN, signedInUser, test } from './support/fixtures.ts';
+import {
+  createVerifiedUser,
+  expect,
+  ORIGIN,
+  signedInUser,
+  test,
+  trimToOpenAndDone,
+} from './support/fixtures.ts';
 
 /**
  * Work module flows: the dashboard (first run with an invite link, stats, lists, live activity,
@@ -50,9 +57,9 @@ async function createWorld(request: APIRequestContext, projectName = 'Web app'):
     name: string;
     statuses: Array<{ id: string; name: string }>;
   }>(request, `/api/teams/${team.id}/projects`, { name: projectName, key: 'WEB' });
-  // A new project's two stages: Open (default) and Done (assigns nobody, finishes the task).
-  const status = (name: 'Open' | 'Done') =>
-    project.statuses.find((candidate) => candidate.name === name)?.id ?? '';
+  // Trimmed to two stages: Open (default) and Done (assigns nobody, finishes the task).
+  const [open, done] = await trimToOpenAndDone(request, project.id);
+  const status = (name: 'Open' | 'Done') => (name === 'Open' ? open.id : done.id);
   const role = await post<{ id: string }>(request, `/api/teams/${team.id}/roles`, {
     name: 'Design',
   });

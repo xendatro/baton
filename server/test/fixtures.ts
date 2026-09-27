@@ -1,6 +1,12 @@
 import { hashPassword } from 'better-auth/crypto';
 import { and, eq, sql } from 'drizzle-orm';
-import { DEFAULT_PROJECT_COLOR, DEFAULT_TEAM_COLOR } from '@shared/constants';
+import {
+  DEFAULT_PROJECT_COLOR,
+  DEFAULT_STATUSES,
+  DEFAULT_TEAM_COLOR,
+  FINISHED_STAGE_RULES,
+  type StatusSeed,
+} from '@shared/constants';
 import { ADMIN_ROLE_SEED, TEAM_ROLE_SEEDS, type Permission } from '@shared/permissions';
 import type { Actor, ActorKey } from '../context';
 import type { Database } from '../db';
@@ -13,7 +19,7 @@ import { seedDefaultPipeline } from '../services/projectPipelines';
 
 /**
  * Test data factories. They insert rows directly (bypassing services) using the same seeds the
- * services use (TEAM_ROLE_SEEDS, DEFAULT_STATUSES), so tests can set up state in one line.
+ * services use (TEAM_ROLE_SEEDS, seedDefaultPipeline), so tests can set up state in one line.
  *
  * Agent members (agents A): `createUser` makes no agent; `createApiKey` (and `createAgent`)
  * create the owner's agent, which joins the owner's teams, and from then on `createTeam` and
@@ -217,9 +223,30 @@ export interface CreateProjectOptions {
   name?: string;
   key?: string;
   description?: string;
+  /**
+   * `'default'`: the stages a real new project gets (Backlog … Done, `DEFAULT_STATUSES`). By default
+   * a fixture project has just Open (default) and Done (`FIXTURE_STATUSES`).
+   */
+  stages?: 'fixture' | 'default';
 }
 
-/** A project with the default statuses (Open — default, Done). */
+/**
+ * The two stages of a fixture project: Open (the default, new tasks start there) and Done (the
+ * finishing rules). Since 2026-09-27 real projects start with five stages (`DEFAULT_STATUSES`);
+ * tests keep two so `statuses[0]`/`statuses[1]` stay "open"/"done" (docs/DECISIONS.md).
+ */
+export const FIXTURE_STATUSES: ReadonlyArray<StatusSeed> = [
+  { name: 'Open', color: '#6b7280', icon: 'circle', isDefault: true, rules: null },
+  {
+    name: 'Done',
+    color: '#22c55e',
+    icon: 'check-circle',
+    isDefault: false,
+    rules: FINISHED_STAGE_RULES,
+  },
+];
+
+/** A project with the fixture statuses (Open — default, Done), or the real defaults. */
 export function createProject(db: Database, options: CreateProjectOptions): CreatedProject {
   const n = nextSequence();
   return db.write((tx) => {
@@ -235,7 +262,13 @@ export function createProject(db: Database, options: CreateProjectOptions): Crea
       })
       .returning()
       .get();
-    const { pipeline, statuses } = seedDefaultPipeline(tx, project.id);
+    const { pipeline, statuses } = seedDefaultPipeline(
+      tx,
+      project.id,
+      new Date(),
+      undefined,
+      options.stages === 'default' ? DEFAULT_STATUSES : FIXTURE_STATUSES,
+    );
     seedDifficulties(tx, project.id);
     return { project, statuses, pipeline };
   });

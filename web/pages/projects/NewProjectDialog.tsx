@@ -289,7 +289,7 @@ function NewProjectForm({
       <FormField
         label="Name your first pipeline"
         error={errors.pipelineName}
-        hint="Every task sits in a stage of a pipeline. It starts with Open and Done; add stages and more pipelines later."
+        hint="Every task sits in a stage of a pipeline. It starts with Backlog, To do, In progress, In review and Done; change them and add pipelines later."
       >
         {(field) => (
           <Input

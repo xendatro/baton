@@ -51,6 +51,11 @@ const DOCUMENTED_ADDITIONS = [
   'get_security_log',
   // core (DECISIONS 2026-09-26 BAT-6)
   'wait_for_mentions',
+  // listener (DECISIONS 2026-09-27 listener C)
+  'start_listener',
+  'complete_job',
+  'release_job',
+  'list_jobs',
   // core (DECISIONS 2026-09-27 BAT-14)
   'add_reaction',
   'remove_reaction',

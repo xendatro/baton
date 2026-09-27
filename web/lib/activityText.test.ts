@@ -70,6 +70,23 @@ describe('activity wording on the entity’s own page', () => {
   });
 });
 
+describe('agent thread notes (design §4)', () => {
+  it('words the loop guard and the done handshake', () => {
+    const guard = entry({
+      action: 'task.agent_loop_guard',
+      actor: { user: null, via: null, source: 'system' },
+    });
+    expect(onPage(guard)).toMatch(/^stopped waking agents here/);
+    expect(inFeed(guard)).toBe('stopped waking agents on task API-12');
+    const agreed = entry({
+      action: 'task.agents_agreed_done',
+      meta: { ref: 'API-12', title: 'Fix login', with: 'caden-ai' },
+    });
+    expect(onPage(agreed)).toBe('and @caden-ai agreed nothing more is needed');
+    expect(inFeed(agreed)).toBe('and @caden-ai agreed nothing more is needed on API-12');
+  });
+});
+
 describe('activity wording in the audit log', () => {
   it('names the entity in the first phrase', () => {
     expect(

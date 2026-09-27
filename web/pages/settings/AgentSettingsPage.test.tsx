@@ -1,4 +1,4 @@
-import { screen, waitFor } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AgentSettings, UpdateAgentSettingsInput } from '@shared/schemas/account';
@@ -105,5 +105,84 @@ describe('Agent settings', () => {
     expect(
       await screen.findByText('Couldn’t load your agent', {}, { timeout: 10_000 }),
     ).toBeInTheDocument();
+  });
+});
+
+describe('Agent activity', () => {
+  it('shows listener sessions and recent jobs', async () => {
+    const now = new Date().toISOString();
+    mockApi({
+      'GET /api/me/agent': settings(),
+      'GET /api/me/agent/activity': {
+        online: true,
+        pendingCount: 1,
+        sessions: [
+          {
+            id: 's1',
+            keyName: 'MSI',
+            agentName: 'Claude',
+            projects: [{ id: 'p1', key: 'WEB', name: 'Web app', teamSlug: 'acme' }],
+            startedAt: now,
+            lastSeenAt: now,
+            online: true,
+          },
+        ],
+        jobs: [
+          {
+            id: 'j1',
+            kind: 'mention',
+            status: 'claimed',
+            closing: false,
+            project: { id: 'p1', key: 'WEB', name: 'Web app', teamSlug: 'acme' },
+            target: {
+              type: 'task',
+              id: 't1',
+              ref: 'WEB-12',
+              title: 'Fix login',
+              url: '/t/acme/p/WEB/tasks/12',
+            },
+            createdAt: now,
+            claimedAt: now,
+            completedAt: null,
+          },
+          {
+            id: 'j2',
+            kind: 'thread_reply',
+            status: 'pending',
+            closing: true,
+            project: null,
+            target: { type: 'task', id: 't2', ref: null, title: null, url: null },
+            createdAt: now,
+            claimedAt: null,
+            completedAt: null,
+          },
+        ],
+      },
+    });
+    renderSettingsPage(<AgentSettingsPage />);
+    const sessions = await screen.findByRole('list', { name: 'Listener sessions' }, LAZY);
+    expect(sessions).toHaveTextContent('Online');
+    expect(sessions).toHaveTextContent('Claude · MSI key');
+    expect(sessions).toHaveTextContent('WEB');
+    const jobs = screen.getByRole('list', { name: 'Recent jobs' });
+    expect(within(jobs).getByRole('link', { name: 'WEB-12 Fix login' })).toHaveAttribute(
+      'href',
+      '/t/acme/p/WEB/tasks/12',
+    );
+    expect(jobs).toHaveTextContent('Working');
+    expect(jobs).toHaveTextContent('Reply in thread');
+    expect(jobs).toHaveTextContent('(closing)');
+    expect(jobs).toHaveTextContent('Deleted item');
+    expect(screen.getByText(/1 waiting/)).toBeInTheDocument();
+  });
+
+  it('explains how to start when no listener has run', async () => {
+    mockApi({
+      'GET /api/me/agent': settings(),
+      'GET /api/me/agent/activity': { online: false, pendingCount: 0, sessions: [], jobs: [] },
+    });
+    renderSettingsPage(<AgentSettingsPage />);
+    expect(await screen.findByText(/No listener has run yet/, {}, LAZY)).toBeInTheDocument();
+    expect(screen.getByText('Offline')).toBeInTheDocument();
   });
 });

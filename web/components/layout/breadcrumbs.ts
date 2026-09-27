@@ -68,6 +68,11 @@ export function buildCrumbs(pathname: string, me: MeResponse | undefined): Crumb
     return lastIsCurrent(crumbs);
   }
 
+  if (matchPath('/t/:team/members', pathname)) {
+    crumbs.push({ label: 'Members' });
+    return lastIsCurrent(crumbs);
+  }
+
   const projectMatch = matchPath({ path: '/t/:team/p/:key', end: false }, pathname);
   if (!projectMatch) return lastIsCurrent(crumbs);
   const key = (projectMatch.params.key ?? '').toUpperCase();

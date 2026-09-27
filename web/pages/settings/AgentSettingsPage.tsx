@@ -11,6 +11,7 @@ import { UserAvatar } from '@web/components/common/UserAvatar';
 import { Label } from '@web/components/ui/label';
 import { RadioGroup, RadioGroupItem } from '@web/components/ui/radio-group';
 import { Switch } from '@web/components/ui/switch';
+import { AgentActivityCard } from './AgentActivityCard';
 import { useAgentSettings, useUpdateAgentSettings } from './queries';
 import { SettingsCard, SettingsCardSkeleton, SettingsPage } from './SettingsCard';
 
@@ -169,6 +170,8 @@ function AgentSettingsCards({ settings }: { settings: AgentSettings }) {
           })}
         </RadioGroup>
       </SettingsCard>
+
+      <AgentActivityCard />
     </>
   );
 }

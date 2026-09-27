@@ -46,6 +46,7 @@ const everyone: Role = {
   position: 0,
   permissions: [],
   mentionable: false,
+  hoist: false,
   isEveryone: true,
   memberCount: 3,
   createdAt: '2026-09-01T10:00:00.000Z',

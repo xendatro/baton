@@ -3,6 +3,7 @@ import {
   type ActivityEntityType,
   ACTIVITY_ENTITY_TYPES,
   ACTOR_SOURCES,
+  AGENT_LISTENER,
   LIMITS,
   SEARCH_ENTITY_TYPES,
 } from '@shared/constants';
@@ -24,7 +25,7 @@ import {
   listAttachments,
   uploadAttachmentContent,
 } from '../../services/attachments';
-import { MAX_MENTION_WAIT_SECONDS, waitForMentions } from '../../services/agentMentions';
+import { pendingJobCount, waitForMentions } from '../../services/agentJobs';
 import { findItem } from '../../services/items';
 import { listNotifications, markNotificationsRead } from '../../services/notifications';
 import { addReaction, isReplyId, removeReaction } from '../../services/reactions';
@@ -97,7 +98,7 @@ const whoami = defineTool({
         username: me.user.username,
         name: me.user.name,
         kind: owner ? 'agent' : 'human',
-        // `@ethan-ai` in a reply reaches you: see wait_for_mentions.
+        // `@ethan-ai` in a reply reaches you as a job: see start_listener.
         mentionHandle: me.user.username ? `@${me.user.username}` : null,
       },
       owner: owner ? { id: owner.id, username: owner.username, name: owner.name } : null,
@@ -123,7 +124,7 @@ const whoami = defineTool({
           url: toAbsolute(ctx.deps, appPaths.project(team.slug, project.key)),
         })),
       })),
-      // Agents have no inbox: mentions reach you through wait_for_mentions.
+      // Agents have no inbox: mentions and the like reach you as jobs (start_listener).
       unreadNotifications: owner ? 0 : me.unreadNotifications,
       limits: { maxUploadMb: ctx.deps.env.maxUploadMb },
     };
@@ -170,7 +171,7 @@ const listNotificationsTool = defineTool({
   name: 'list_notifications',
   title: 'List notifications',
   description:
-    "Your inbox, newest first: mentions, assignments, replies, resolutions. Agent members have no inbox (their owner's stays private), so through an API key this is empty: use wait_for_mentions to hear when someone @mentions you.",
+    "Your inbox, newest first: mentions, assignments, replies, resolutions. Agent members have no inbox (their owner's stays private), so through an API key this is empty: what would notify you becomes a job, collected with start_listener.",
   input: toolInput({
     unreadOnly: z.boolean().default(false).describe('Only unread notifications'),
     limit: z.number().int().min(1).max(LIMITS.page.maxSize).default(20).describe('Page size'),
@@ -188,7 +189,8 @@ const listNotificationsTool = defineTool({
       nextCursor: page.nextCursor,
       ...(ctx.actor.ownerId
         ? {
-            note: 'Agent members have no inbox. Use wait_for_mentions to hear when someone @mentions you.',
+            note: 'Agent members have no inbox: mentions, assignments and replies in your threads become jobs. Run start_listener to collect them.',
+            pendingJobs: pendingJobCount(ctx.deps.db.orm, ctx.actor.userId),
           }
         : {}),
     };
@@ -266,7 +268,7 @@ const addReply = defineTool({
   name: 'add_reply',
   title: 'Add reply',
   description:
-    'Replies to a task or issue (markdown; mention people with @username and roles with @&role-slug). Pass inReplyTo (a reply id) to answer a specific reply in its thread; its author is notified too. Subscribers and mentioned members are notified.',
+    'Replies to a task or issue (markdown; mention people with @username and roles with @&role-slug). Pass inReplyTo (a reply id) to answer a specific reply in its thread; its author is notified too. Subscribers and mentioned members are notified; agent members in the thread get jobs. Pass closing: true when no further discussion is needed at this time (the done handshake: another agent may agree without replying).',
   input: toolInput({
     item: itemRef,
     body: z
@@ -285,6 +287,10 @@ const addReply = defineTool({
       .describe(
         'Id of the reply to answer (from list_replies, get_task or get_issue), on the same item; omit for a top-level comment',
       ),
+    closing: z
+      .boolean()
+      .optional()
+      .describe('No further discussion needed at this time (ends an agent-to-agent exchange)'),
   }),
   annotations: { destructiveHint: false },
   handler: (ctx, input) => {
@@ -295,6 +301,7 @@ const addReply = defineTool({
       parentReplyId: input.inReplyTo,
       body: input.body,
       attachmentIds: input.attachmentIds,
+      closing: input.closing,
     });
     return replyForAgent(ctx, createReply(ctx.deps, ctx.actor, data));
   },
@@ -594,22 +601,23 @@ const waitForMentionsTool = defineTool({
   name: 'wait_for_mentions',
   title: 'Wait for mentions',
   description:
-    'Waits until someone @mentions you (your agent member, e.g. @ethan-ai; `whoami` shows your handle) in a reply on a task or issue, and returns those replies (each one once per API key). Returns at once when mentions are pending; otherwise waits up to timeoutSeconds. Call it again to keep listening.',
+    'Deprecated: use start_listener, which returns every kind of job (mentions, assignments, thread replies, …) for the projects you name. Waits until someone @mentions you (your agent member, e.g. @ethan-ai; `whoami` shows your handle) in a reply on a task or issue in any project you can see, and returns those replies (each once: they count as handled). Returns at once when mentions are pending; otherwise waits up to timeoutSeconds.',
   input: toolInput({
     timeoutSeconds: z
       .number()
       .int()
       .min(0)
-      .max(MAX_MENTION_WAIT_SECONDS)
+      .max(AGENT_LISTENER.maxWaitSeconds)
       .default(50)
       .describe(
-        `Longest wait in seconds (default 50, max ${MAX_MENTION_WAIT_SECONDS}); 0 only checks`,
+        `Longest wait in seconds (default 50, max ${AGENT_LISTENER.maxWaitSeconds}); 0 only checks`,
       ),
   }),
   annotations: { readOnlyHint: true },
   handler: async (ctx, input) => {
     const { mentions } = await waitForMentions(ctx.deps, ctx.actor, input, ctx.signal);
     return {
+      deprecated: 'wait_for_mentions is deprecated: use start_listener { projects: [...] }.',
       mentions: mentions.map(({ reply, parentType }) => ({
         item: { type: parentType, ref: reply.ref },
         reply: {

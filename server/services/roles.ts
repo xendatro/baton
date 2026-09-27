@@ -91,6 +91,7 @@ function toRoles(db: DbExecutor, teamId: string, rows: readonly RoleRow[]): Role
     position: row.position,
     permissions: normalizePermissions(row.permissions),
     mentionable: row.mentionable,
+    hoist: row.hoist,
     isEveryone: row.isEveryone,
     memberCount: row.isEveryone ? everyone : (counts.get(row.id) ?? 0),
     createdAt: row.createdAt.toISOString(),
@@ -209,6 +210,7 @@ export function createRole(
         position: 1,
         permissions,
         mentionable: input.mentionable ?? false,
+        hoist: input.hoist ?? false,
         isEveryone: false,
         createdAt: now,
         updatedAt: now,
@@ -225,6 +227,7 @@ export function createRole(
         slug: role.slug,
         color: role.color,
         mentionable: role.mentionable,
+        hoist: role.hoist,
         permissions: permissionLabels(permissions),
       },
     });
@@ -250,10 +253,13 @@ export function updateRole(
   const role = requireRole(orm, teamId, roleId);
   if (
     role.isEveryone &&
-    (input.name !== undefined || input.color !== undefined || input.mentionable !== undefined)
+    (input.name !== undefined ||
+      input.color !== undefined ||
+      input.mentionable !== undefined ||
+      input.hoist !== undefined)
   ) {
     throw errors.validation(
-      '@everyone can only have its permissions changed: it can’t be renamed, recolored or made mentionable',
+      '@everyone can only have its permissions changed: it can’t be renamed, recolored, made mentionable or shown separately',
     );
   }
   const before = normalizePermissions(role.permissions);
@@ -264,6 +270,7 @@ export function updateRole(
     name: input.name,
     color: input.color,
     mentionable: input.mentionable,
+    hoist: input.hoist,
   });
   const added = after.filter((permission) => !before.includes(permission));
   const removed = before.filter((permission) => !after.includes(permission));
@@ -283,6 +290,7 @@ export function updateRole(
         ...(input.name !== undefined ? { name: input.name, slug } : {}),
         ...(input.color !== undefined ? { color: input.color } : {}),
         ...(input.mentionable !== undefined ? { mentionable: input.mentionable } : {}),
+        ...(input.hoist !== undefined ? { hoist: input.hoist } : {}),
         permissions: after,
         updatedAt: new Date(),
       })

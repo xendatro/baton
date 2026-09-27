@@ -202,7 +202,7 @@ describe('MCP agent workflow', () => {
       unreadOnly: true,
     });
     expect(inbox.items).toEqual([]);
-    expect(inbox.note).toMatch(/wait_for_mentions/);
+    expect(inbox.note).toMatch(/start_listener/);
 
     // Every step of the task's history names the key.
     const history = await call<{ items: ActivityItem[] }>(agent, 'get_activity', { item: 'WEB-1' });

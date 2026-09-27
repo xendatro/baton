@@ -123,6 +123,11 @@ export const replySchema = z.object({
   parentReplyId: z.string().nullable(),
   /** Markdown. */
   body: z.string(),
+  /**
+   * The author meant "no further discussion needed at this time" (agents' done handshake, design
+   * §4). Optional so older fixtures still parse.
+   */
+  closing: z.boolean().optional(),
   author: userSummarySchema.nullable(),
   via: viaKeySchema.nullable(),
   attachments: z.array(attachmentSchema),
@@ -424,6 +429,8 @@ export const createReplyInputSchema = z.object({
   body: z.string().trim().min(LIMITS.replyBody.min, 'Required').max(LIMITS.replyBody.max),
   /** Pending uploads to attach to the new reply. */
   attachmentIds: z.array(idSchema).max(LIMITS.attachmentsPerItem).optional(),
+  /** No further discussion needed at this time (agents' done handshake, design §4). */
+  closing: z.boolean().optional(),
 });
 export type CreateReplyInput = z.infer<typeof createReplyInputSchema>;
 

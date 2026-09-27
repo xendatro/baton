@@ -138,6 +138,7 @@ interface Draft {
   name: string;
   color: string | null;
   mentionable: boolean;
+  hoist: boolean;
   permissions: Permission[];
 }
 
@@ -146,6 +147,7 @@ function toDraft(role: Role): Draft {
     name: role.name,
     color: role.color,
     mentionable: role.mentionable,
+    hoist: role.hoist,
     permissions: normalizePermissions(role.permissions),
   };
 }
@@ -155,6 +157,7 @@ function sameDraft(a: Draft, b: Draft): boolean {
     a.name === b.name &&
     a.color === b.color &&
     a.mentionable === b.mentionable &&
+    a.hoist === b.hoist &&
     a.permissions.join() === b.permissions.join()
   );
 }
@@ -199,6 +202,7 @@ function RoleEditor({ team, role, roles }: { team: MeTeam; role: Role; roles: Ro
           ...(draft.name !== baseline.name && name.success ? { name: name.data } : {}),
           ...(draft.color !== baseline.color ? { color: draft.color } : {}),
           ...(draft.mentionable !== baseline.mentionable ? { mentionable: draft.mentionable } : {}),
+          ...(draft.hoist !== baseline.hoist ? { hoist: draft.hoist } : {}),
           ...(draft.permissions.join() !== baseline.permissions.join()
             ? { permissions: draft.permissions }
             : {}),
@@ -345,6 +349,7 @@ function DisplayTab({
   onSubmit: () => void;
 }) {
   const mentionableId = useId();
+  const hoistId = useId();
   if (role.isEveryone) {
     return (
       <p className="flex items-start gap-2 rounded-lg border px-4 py-3 text-sm text-muted-foreground">
@@ -428,6 +433,23 @@ function DisplayTab({
           id={mentionableId}
           checked={draft.mentionable}
           onCheckedChange={(mentionable) => onChange({ mentionable })}
+          disabled={disabled}
+        />
+      </div>
+      <div className="flex items-start justify-between gap-4 rounded-lg border px-4 py-3">
+        <div className="space-y-0.5">
+          <label htmlFor={hoistId} className="text-sm font-medium">
+            Show members separately
+          </label>
+          <p className="text-xs text-muted-foreground">
+            The team’s Members tab lists members with this role in their own section, under their
+            highest such role.
+          </p>
+        </div>
+        <Switch
+          id={hoistId}
+          checked={draft.hoist}
+          onCheckedChange={(hoist) => onChange({ hoist })}
           disabled={disabled}
         />
       </div>

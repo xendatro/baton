@@ -346,6 +346,9 @@ const THIS_VERBS: Record<string, string> = {
   renewed: 'renewed the claim',
   moved: 'moved this',
   edited: 'edited this',
+  // Agent threads (design §4): the loop guard is a system note.
+  agent_loop_guard:
+    'stopped waking agents here: the last 5 replies were all by agents (a person’s reply resumes them)',
 };
 
 /** Feed wording: the verb before the entity phrase (`resolved issue API#4`). */
@@ -367,6 +370,7 @@ const FEED_VERBS: Record<string, string> = {
   revoked: 'revoked',
   uploaded: 'uploaded',
   updated: 'updated',
+  agent_loop_guard: 'stopped waking agents on',
 };
 
 /** Actions whose feed wording doesn't follow "<verb> <entity>". */
@@ -424,6 +428,19 @@ export function describeActivity(
   const subject = options.subject ?? 'this';
   const verb = verbOf(entry.action);
   const changes = Object.entries(entry.changes);
+
+  // The agents' done handshake (design §4): "ethan-ai and @caden-ai agreed nothing more is needed".
+  if (verb === 'agents_agreed_done') {
+    const other = metaString(entry, 'with');
+    const tail: ActivityPart[] =
+      subject === 'this'
+        ? [{ text: 'agreed nothing more is needed' }]
+        : [
+            { text: 'agreed nothing more is needed on' },
+            ...entityPhrase(entry, { withNoun: false, withTitle: false }),
+          ];
+    return other ? [{ text: 'and' }, { text: `@${other}`, emphasis: true }, ...tail] : tail;
+  }
 
   if (subject === 'this') {
     if (changes.length > 0 && !LIFECYCLE.has(verb)) {

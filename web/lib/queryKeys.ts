@@ -28,6 +28,8 @@ export const queryKeys = {
     all: () => ['teams'] as const,
     detail: (teamId: string) => ['teams', teamId] as const,
     members: (teamId: string) => ['teams', teamId, 'members'] as const,
+    /** Who of the team is online (design §4 presence, the Members tab). */
+    presence: (teamId: string) => ['teams', teamId, 'presence'] as const,
     roles: (teamId: string) => ['teams', teamId, 'roles'] as const,
     invites: (teamId: string) => ['teams', teamId, 'invites'] as const,
     projects: (teamId: string) => ['teams', teamId, 'projects'] as const,
@@ -130,5 +132,7 @@ export const queryKeys = {
     deletedTeams: () => ['account', 'deleted-teams'] as const,
     /** Your agent member and its settings (`GET /api/me/agent`). */
     agent: () => ['account', 'agent'] as const,
+    /** Your agent's listener sessions and latest jobs (`GET /api/me/agent/activity`). */
+    agentActivity: () => ['account', 'agent', 'activity'] as const,
   },
 };

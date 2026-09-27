@@ -22,6 +22,7 @@ import {
   type UpdateAgentSettingsInput,
   type UpdateProfileInput,
 } from '@shared/schemas/account';
+import { agentActivitySchema } from '@shared/schemas/agentJobs';
 import { okResponseSchema } from '@shared/schemas/common';
 import {
   apiKeyListResponseSchema,
@@ -310,6 +311,19 @@ export function useAgentSettings() {
   return useQuery({
     queryKey: queryKeys.account.agent(),
     queryFn: ({ signal }) => api.get('/api/me/agent', { schema: agentSettingsSchema, signal }),
+  });
+}
+
+/**
+ * Your agent's listener sessions and latest jobs (design §4). Live `agent_job.changed` events
+ * refresh it; the interval lets sessions turn offline when their listener stops.
+ */
+export function useAgentActivity() {
+  return useQuery({
+    queryKey: queryKeys.account.agentActivity(),
+    queryFn: ({ signal }) =>
+      api.get('/api/me/agent/activity', { schema: agentActivitySchema, signal }),
+    refetchInterval: 30_000,
   });
 }
 

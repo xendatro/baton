@@ -33,6 +33,7 @@ import { useDocumentTitle } from '@web/lib/title';
 import { useMembers, useTeamOverview } from './api';
 import { InviteDialog } from './InviteDialog';
 import { TeamIcon } from './TeamIcon';
+import { TeamTabs } from './TeamTabs';
 
 /** Members shown in the preview before "View all". */
 const MEMBER_PREVIEW = 8;
@@ -95,47 +96,50 @@ function TeamHome({ team }: { team: MeTeam }) {
 
   return (
     <PageContainer>
-      <header className="flex flex-col gap-4 border-b pb-6 sm:flex-row sm:items-start sm:justify-between">
-        <div className="flex min-w-0 items-start gap-4">
-          <TeamIcon icon={team.icon} name={team.name} color={team.color} size="xl" />
-          <div className="min-w-0 space-y-1 pt-1">
-            <h1 className="truncate text-2xl font-semibold tracking-tight">{team.name}</h1>
-            {overview.isPending ? (
-              <Skeleton className="h-4 w-64 max-w-full" />
-            ) : description ? (
-              <p className="max-w-2xl text-sm whitespace-pre-line text-muted-foreground">
-                {description}
-              </p>
-            ) : null}
-            <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-              {memberCount !== undefined ? (
-                <span className="inline-flex items-center gap-1">
-                  <UsersIcon className="size-3.5" aria-hidden="true" />
-                  {pluralize(memberCount, 'member')}
-                </span>
+      <header className="flex flex-col gap-4 border-b">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+          <div className="flex min-w-0 items-start gap-4">
+            <TeamIcon icon={team.icon} name={team.name} color={team.color} size="xl" />
+            <div className="min-w-0 space-y-1 pt-1">
+              <h1 className="truncate text-2xl font-semibold tracking-tight">{team.name}</h1>
+              {overview.isPending ? (
+                <Skeleton className="h-4 w-64 max-w-full" />
+              ) : description ? (
+                <p className="max-w-2xl text-sm whitespace-pre-line text-muted-foreground">
+                  {description}
+                </p>
               ) : null}
-              <span className="inline-flex items-center gap-1">
-                <FolderKanbanIcon className="size-3.5" aria-hidden="true" />
-                {pluralize(team.projects.length, 'project')}
-              </span>
-              {team.isOwner ? <Badge variant="secondary">Owner</Badge> : null}
-            </p>
+              <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                {memberCount !== undefined ? (
+                  <span className="inline-flex items-center gap-1">
+                    <UsersIcon className="size-3.5" aria-hidden="true" />
+                    {pluralize(memberCount, 'member')}
+                  </span>
+                ) : null}
+                <span className="inline-flex items-center gap-1">
+                  <FolderKanbanIcon className="size-3.5" aria-hidden="true" />
+                  {pluralize(team.projects.length, 'project')}
+                </span>
+                {team.isOwner ? <Badge variant="secondary">Owner</Badge> : null}
+              </p>
+            </div>
+          </div>
+          <div className="flex shrink-0 flex-wrap gap-2">
+            {canInvite ? (
+              <Button variant="outline" size="sm" onClick={() => setInviteOpen(true)}>
+                <UserPlusIcon aria-hidden="true" />
+                Invite people
+              </Button>
+            ) : null}
+            <Button variant="outline" size="sm" asChild>
+              <Link to={`/t/${team.slug}/settings`}>
+                <SettingsIcon aria-hidden="true" />
+                Settings
+              </Link>
+            </Button>
           </div>
         </div>
-        <div className="flex shrink-0 flex-wrap gap-2">
-          {canInvite ? (
-            <Button variant="outline" size="sm" onClick={() => setInviteOpen(true)}>
-              <UserPlusIcon aria-hidden="true" />
-              Invite people
-            </Button>
-          ) : null}
-          <Button variant="outline" size="sm" asChild>
-            <Link to={`/t/${team.slug}/settings`}>
-              <SettingsIcon aria-hidden="true" />
-              Settings
-            </Link>
-          </Button>
-        </div>
+        <TeamTabs teamSlug={team.slug} active="overview" />
       </header>
 
       <div className="grid gap-8 pt-6 lg:grid-cols-[minmax(0,1fr)_18rem]">
@@ -197,7 +201,7 @@ function TeamHome({ team }: { team: MeTeam }) {
               Members
             </h2>
             <Button variant="link" size="sm" className="h-auto px-0" asChild>
-              <Link to={`/t/${team.slug}/settings/members`}>View all</Link>
+              <Link to={`/t/${team.slug}/members`}>View all</Link>
             </Button>
           </div>
           <MembersPreview
@@ -317,7 +321,7 @@ function MembersPreview({
       <div className="flex flex-wrap items-center justify-between gap-2 border-t px-3 py-2">
         {rest > 0 ? (
           <Link
-            to={`/t/${teamSlug}/settings/members`}
+            to={`/t/${teamSlug}/members`}
             className="text-xs text-muted-foreground hover:text-foreground hover:underline"
           >
             and {pluralize(rest, 'more member')}

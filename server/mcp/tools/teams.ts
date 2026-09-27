@@ -348,6 +348,12 @@ const createRoleTool = defineTool({
       .boolean()
       .optional()
       .describe('Whether everyone can @&mention the role (default false)'),
+    hoist: z
+      .boolean()
+      .optional()
+      .describe(
+        "Show the role's members in their own section of the team's Members tab (default false)",
+      ),
     permissions: permissionList.optional(),
   }),
   annotations: { destructiveHint: false },
@@ -361,13 +367,17 @@ const updateRoleTool = defineTool({
   name: 'update_role',
   title: 'Update role',
   description:
-    'Edits a role: name, color, mentionable, and permissions (replace them with "permissions", or change some with "addPermissions"/"removePermissions"). @everyone only accepts permission changes. Needs Manage roles, within your own permissions.',
+    'Edits a role: name, color, mentionable, hoist (own section in the Members tab), and permissions (replace them with "permissions", or change some with "addPermissions"/"removePermissions"). @everyone only accepts permission changes. Needs Manage roles, within your own permissions.',
   input: toolInput({
     team: teamRef,
     role: roleRef,
     name: roleNameSchema.optional().describe('New name (the @&slug follows it)'),
     color: hexColorSchema.nullable().optional().describe('New color, or null to remove it'),
     mentionable: z.boolean().optional().describe('Whether everyone can @&mention the role'),
+    hoist: z
+      .boolean()
+      .optional()
+      .describe("Show the role's members in their own section of the team's Members tab"),
     permissions: permissionList.optional().describe('Replaces all permissions of the role'),
     addPermissions: permissionList.optional().describe('Permissions to add'),
     removePermissions: permissionList.optional().describe('Permissions to remove'),
@@ -387,6 +397,7 @@ const updateRoleTool = defineTool({
       name: input.name,
       color: input.color,
       mentionable: input.mentionable,
+      hoist: input.hoist,
       permissions,
     });
     return roleOut(ctx.deps, row.slug, updated);

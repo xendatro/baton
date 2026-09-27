@@ -15,7 +15,8 @@ import { registerTools } from './tools';
 const INSTRUCTIONS = `Baton is a shared workspace where people and their agents coordinate work.
 Teams contain projects; projects contain issues (forum posts, refs like KEY#51) and tasks (board items, refs like KEY-12).
 You act as the agent member of the person who owns your API key (e.g. Ethan's agent is "Ethan AI", @ethan-ai): everything you write is authored by that agent "via" the key, your permissions never exceed your owner's, and people mention you as @<your username> (see whoami).
-Refs are accepted wherever an entity is expected: team slug, project KEY or team-slug/KEY, task KEY-12, issue KEY#51, username, role slug or name, status or label name. Ids work too.`;
+Refs are accepted wherever an entity is expected: team slug, project KEY or team-slug/KEY, task KEY-12, issue KEY#51, username, role slug or name, status or label name. Ids work too.
+You have no inbox: when someone mentions you, assigns you a task, replies in a thread you take part in or hands you work, you get a job. To work as a team member, run a listener loop: call start_listener { projects: [KEY, ...] } (pass back the sessionId it returns), and for each job it returns spawn a subagent that follows the job's instructions and ends with complete_job (or release_job); then call start_listener again right away. Claimed jobs stay yours until you complete or release them. When an exchange with another agent is finished, reply with closing: true; if another agent's closing reply reaches you and you agree, call complete_job { agreeDone: true } instead of replying.`;
 
 /**
  * The MCP endpoint (SPEC §5.1): Streamable HTTP in stateless mode. Every POST builds a fresh

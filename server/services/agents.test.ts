@@ -515,7 +515,7 @@ describe('notifications', () => {
       createReply(ctx.deps, actor, { parentType: 'task', parentId: task.id, body });
 
     say(person(ethan), 'watching this one');
-    // Mentioning an agent member notifies nobody (it collects mentions with wait_for_mentions).
+    // Mentioning an agent member notifies nobody (it gets a job, collected with start_listener).
     say(person(mia), '@ethan-ai please look');
     expect(
       ctx.db.orm

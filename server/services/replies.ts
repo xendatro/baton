@@ -25,7 +25,7 @@ import {
   requirePermission,
 } from './access';
 import { recordActivity } from './activity';
-import { recordAgentMentions } from './agentMentions';
+import { queueThreadReplyJobs } from './agentJobs';
 import { attachmentsByParent, attachToParent, referencedPendingUploads } from './attachments';
 import { emitAfterCommit } from './events';
 import { findItem, itemResolvers, requireItem, type ItemInfo } from './items';
@@ -78,6 +78,7 @@ export function toReplies(db: DbExecutor, rows: readonly ReplyRow[], viewerId: s
     parentId: row.parentId,
     parentReplyId: row.parentReplyId,
     body: row.body,
+    ...(row.closing ? { closing: true } : {}),
     author: row.authorId ? (authors.get(row.authorId) ?? null) : null,
     via: row.viaKeyId ? (keys.get(row.viaKeyId) ?? null) : null,
     attachments: attachments.get(row.id) ?? [],
@@ -376,6 +377,7 @@ export function insertReply(tx: Tx, actor: Actor, prepared: PreparedReply): Repl
       authorId: actor.userId,
       viaKeyId: actor.key?.id ?? null,
       body: input.body,
+      closing: input.closing ?? false,
       createdAt: now,
       updatedAt: now,
     })
@@ -400,7 +402,10 @@ export function insertReply(tx: Tx, actor: Actor, prepared: PreparedReply): Repl
     entityType: 'reply',
     entityId: reply.id,
     action: 'reply.created',
-    meta: activityMeta(item, text.excerpt, answered?.id),
+    meta: {
+      ...activityMeta(item, text.excerpt, answered?.id),
+      ...(input.closing ? { closing: true } : {}),
+    },
   });
   indexSearch(tx, {
     entityType: 'reply',
@@ -418,14 +423,8 @@ export function insertReply(tx: Tx, actor: Actor, prepared: PreparedReply): Repl
     notifyUsers(tx, actor, 'reply', [answered.authorId], target, notified, { direct: true });
   }
   notifyReply(tx, actor, { type: item.type, id: item.id }, target, notified);
-  recordAgentMentions(tx, actor, {
-    id: reply.id,
-    teamId: item.teamId,
-    projectId: item.projectId,
-    parentType: item.type,
-    parentId: item.id,
-    body: reply.body,
-  });
+  // Agents taking part in the thread hear about it through jobs (design §4).
+  queueThreadReplyJobs(tx, actor, reply, item);
   emitAfterCommit(tx, {
     type: 'reply.created',
     teamId: item.teamId,
@@ -499,19 +498,6 @@ export function editReply(
     const target = notificationTarget(item, id, next.body);
     refreshNotificationText(tx, target);
     notifyMentions(tx, actor, target, next.body, { previousBody: row.body });
-    recordAgentMentions(
-      tx,
-      actor,
-      {
-        id,
-        teamId: item.teamId,
-        projectId: item.projectId,
-        parentType: item.type,
-        parentId: item.id,
-        body: next.body,
-      },
-      row.body,
-    );
     emitAfterCommit(tx, {
       type: 'reply.updated',
       teamId: item.teamId,

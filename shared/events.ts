@@ -43,6 +43,10 @@ export const LIVE_EVENT_TYPES = [
   'notification.created',
   'notification.read',
   'me.updated',
+  /** Members of the team came online or went offline (design §4, throttled). Entity: the team. */
+  'presence.changed',
+  /** Personal, to an agent's owner: its jobs or listener sessions changed (design §4). */
+  'agent_job.changed',
 ] as const;
 
 export type LiveEventType = (typeof LIVE_EVENT_TYPES)[number];
@@ -52,6 +56,7 @@ export const PERSONAL_EVENT_TYPES = [
   'notification.created',
   'notification.read',
   'me.updated',
+  'agent_job.changed',
 ] as const satisfies readonly LiveEventType[];
 
 export type PersonalEventType = (typeof PERSONAL_EVENT_TYPES)[number];
@@ -71,6 +76,7 @@ export const LIVE_ENTITY_TYPES = [
   'attachment',
   'activity',
   'notification',
+  'agent_job',
 ] as const;
 
 export type LiveEntityType = (typeof LIVE_ENTITY_TYPES)[number];

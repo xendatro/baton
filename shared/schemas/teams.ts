@@ -166,6 +166,8 @@ export const roleSchema = z.object({
   position: z.number().int().nonnegative(),
   permissions: z.array(permissionSchema),
   mentionable: z.boolean(),
+  /** Listed in its own section of the team's Members tab (design §7). */
+  hoist: z.boolean(),
   isEveryone: z.boolean(),
   /** Members holding the role (every member for `@everyone`). */
   memberCount: z.number().int().nonnegative(),
@@ -184,6 +186,7 @@ export const createRoleInputSchema = z.object({
   name: roleNameSchema,
   color: hexColorSchema.nullable().optional(),
   mentionable: z.boolean().optional(),
+  hoist: z.boolean().optional(),
   permissions: permissionListSchema.optional(),
 });
 export type CreateRoleInput = z.infer<typeof createRoleInputSchema>;
@@ -193,6 +196,8 @@ export const updateRoleInputSchema = z.object({
   name: roleNameSchema.optional(),
   color: hexColorSchema.nullable().optional(),
   mentionable: z.boolean().optional(),
+  /** Show the role's members in their own section of the Members tab. */
+  hoist: z.boolean().optional(),
   /** Replaces the role's permissions. */
   permissions: permissionListSchema.optional(),
 });
@@ -214,6 +219,8 @@ export const memberRoleSchema = z.object({
   name: z.string(),
   color: z.string().nullable(),
   position: z.number().int().nonnegative(),
+  /** Optional so older clients' fixtures still parse. */
+  hoist: z.boolean().optional(),
 });
 export type MemberRole = z.infer<typeof memberRoleSchema>;
 

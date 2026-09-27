@@ -188,10 +188,32 @@ describe('updateRole', () => {
     expect(() =>
       updateRole(ctx.deps, actorOf(owner), team.team.id, everyone, { mentionable: true }),
     ).toThrow(/only have its permissions changed/);
+    expect(() =>
+      updateRole(ctx.deps, actorOf(owner), team.team.id, everyone, { hoist: true }),
+    ).toThrow(/only have its permissions changed/);
     const updated = updateRole(ctx.deps, actorOf(owner), team.team.id, everyone, {
       permissions: ['REPLY'],
     });
     expect(updated.permissions).toEqual(['REPLY']);
+  });
+
+  it('hoists a role (its own Members tab section), audited, and shown on members', async () => {
+    expect(managerRole.hoist).toBe(false);
+    const updated = updateRole(ctx.deps, actorOf(owner), team.team.id, managerRole.id, {
+      hoist: true,
+    });
+    expect(updated.hoist).toBe(true);
+    expect(activity('role.updated')[0]?.changes).toEqual({ hoist: { from: false, to: true } });
+    const res = await ctx.app.request(`/api/teams/${team.team.id}/members`, {
+      headers: bearer(createApiKey(ctx.db, { userId: owner.id }).key),
+    });
+    const body = (await res.json()) as { items: Array<{ roles: Array<{ hoist?: boolean }> }> };
+    expect(body.items.flatMap((m) => m.roles)).toContainEqual(
+      expect.objectContaining({ hoist: true }),
+    );
+    expect(
+      createRole(ctx.deps, actorOf(owner), team.team.id, { name: 'Leads', hoist: true }).hoist,
+    ).toBe(true);
   });
 
   it('applies anti-escalation to the role before and after the change', () => {

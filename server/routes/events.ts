@@ -12,6 +12,7 @@ import {
   subscribeUserEvents,
   type StreamCredential,
 } from '../services/events';
+import { openLiveConnection } from '../services/presence';
 
 /**
  * Live updates: GET /events (Server-Sent Events, SPEC §5). One `message` event per LiveEvent
@@ -69,12 +70,15 @@ eventRoutes.get('/events', (c) => {
     const heartbeat = setInterval(() => {
       if (stillAuthorized()) send(stream.write(': ping\n\n'));
     }, SSE.heartbeatMs);
+    // A person with an open stream is online (design §4); agents are online by their listener.
+    const offline = actor.ownerId ? () => undefined : openLiveConnection(deps, actor.userId);
 
     try {
       await done;
     } finally {
       clearInterval(heartbeat);
       unsubscribe();
+      offline();
     }
   });
   // streamSSE sets its own `Cache-Control: no-cache`, so this goes on the response it returns.
@@ -90,9 +94,16 @@ eventRoutes.get('/events', (c) => {
 eventRoutes.get('/events/poll', validateQuery(livePollQuerySchema), async (c) => {
   const actor = requireActor(c);
   const { cursor } = c.req.valid('query');
-  const result: LivePollResponse = await pollUserEvents(c.var.deps, actor.userId, cursor ?? null, {
-    signal: c.req.raw.signal,
-  });
+  // Long-polling counts as a live connection for presence, and for 60 s after each poll.
+  const offline = actor.ownerId ? () => undefined : openLiveConnection(c.var.deps, actor.userId);
+  let result: LivePollResponse;
+  try {
+    result = await pollUserEvents(c.var.deps, actor.userId, cursor ?? null, {
+      signal: c.req.raw.signal,
+    });
+  } finally {
+    offline();
+  }
   c.header('Cache-Control', 'no-store');
   return c.json(result);
 });

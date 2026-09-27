@@ -46,7 +46,9 @@ const trash = (event: LiveEvent) => teamKeys(event, queryKeys.teams.trash);
 
 const memberChange: Invalidation = (e) => [
   queryKeys.me(),
-  ...teamKeys(e, queryKeys.teams.members, (teamId) => queryKeys.teams.mentionables(teamId)),
+  ...teamKeys(e, queryKeys.teams.members, queryKeys.teams.presence, (teamId) =>
+    queryKeys.teams.mentionables(teamId),
+  ),
   queryKeys.work.all(),
 ];
 
@@ -155,6 +157,10 @@ export const LIVE_INVALIDATIONS: Readonly<Record<LiveEventType, Invalidation>> =
       : projectKeys(e, queryKeys.tasks.all, queryKeys.issues.all)),
   ],
   'me.updated': () => [queryKeys.me(), queryKeys.account.all()],
+  // Someone of the team came online or went offline (throttled on the server).
+  'presence.changed': (e) => teamKeys(e, queryKeys.teams.presence),
+  // Personal: your agent's jobs or listener sessions changed.
+  'agent_job.changed': () => [queryKeys.account.agentActivity()],
 };
 
 /**

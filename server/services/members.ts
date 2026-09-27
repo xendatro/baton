@@ -31,6 +31,7 @@ function toMemberRole(role: RoleRow): MemberRole {
     name: role.name,
     color: role.color,
     position: role.position,
+    hoist: role.hoist,
   };
 }
 

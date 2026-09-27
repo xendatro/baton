@@ -156,6 +156,47 @@ export type Theme = (typeof THEMES)[number];
 export const AGENT_NOTIFICATION_LEVELS = ['all', 'needs_me', 'none'] as const;
 export type AgentNotificationLevel = (typeof AGENT_NOTIFICATION_LEVELS)[number];
 
+/**
+ * Agent jobs (docs/design/agents-and-pipelines.md §4): what wakes an agent member's listener.
+ * `mention` — its username in a reply, task or issue; `assigned` — a task assigned to it;
+ * `thread_reply` — someone else replied where it authored, replied or is assigned; `pool` — a
+ * task it may claim entered a stage (pipelines); `approval` — it may approve a task's stage;
+ * `action_result` — a person decided on an action it asked for (sign-off).
+ */
+export const AGENT_JOB_KINDS = [
+  'mention',
+  'assigned',
+  'thread_reply',
+  'pool',
+  'approval',
+  'action_result',
+] as const;
+export type AgentJobKind = (typeof AGENT_JOB_KINDS)[number];
+
+export const AGENT_JOB_STATUSES = ['pending', 'claimed', 'done', 'cancelled'] as const;
+export type AgentJobStatus = (typeof AGENT_JOB_STATUSES)[number];
+
+export const AGENT_JOB_TARGET_TYPES = ['task', 'issue', 'reply', 'action_request'] as const;
+export type AgentJobTargetType = (typeof AGENT_JOB_TARGET_TYPES)[number];
+
+/** Listener and presence timings (design §4). */
+export const AGENT_LISTENER = {
+  /** Longest `start_listener` wait (below common MCP client timeouts). */
+  maxWaitSeconds: 110,
+  defaultWaitSeconds: 50,
+  /** Jobs handed out by one `start_listener` call at most. */
+  maxJobsPerCall: 10,
+  /** Projects one listener session may cover. */
+  maxProjects: 50,
+  /** A session not seen for this long has disappeared: its claimed jobs go back to the queue. */
+  sessionTimeoutMs: 90_000,
+  /** The loop guard: no reply-triggered jobs once this many latest replies are all by agents. */
+  loopGuardReplies: 5,
+} as const;
+
+/** A person is online while a live-updates request of theirs was seen this recently. */
+export const PERSON_PRESENCE_TIMEOUT_MS = 60_000;
+
 /** Kinds of users: people, and the agent member every person has. */
 export const USER_KINDS = ['human', 'agent'] as const;
 export type UserKind = (typeof USER_KINDS)[number];

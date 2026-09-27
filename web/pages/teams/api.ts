@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
+import { teamPresenceSchema } from '@shared/schemas/agentJobs';
 import { okResponseSchema } from '@shared/schemas/common';
 import type { MeResponse } from '@shared/schemas/core';
 import {
@@ -61,6 +62,20 @@ export function useMembers(teamId: string | undefined) {
     queryFn: ({ signal }) =>
       api.get(`${teamUrl(teamId ?? '')}/members`, { schema: memberListResponseSchema, signal }),
     enabled: Boolean(teamId),
+  });
+}
+
+/**
+ * Ids of the team's members online now (design §4 presence). Live `presence.changed` events
+ * refresh it; the interval catches people going offline between events.
+ */
+export function useTeamPresence(teamId: string | undefined) {
+  return useQuery({
+    queryKey: queryKeys.teams.presence(teamId ?? ''),
+    queryFn: ({ signal }) =>
+      api.get(`${teamUrl(teamId ?? '')}/presence`, { schema: teamPresenceSchema, signal }),
+    enabled: Boolean(teamId),
+    refetchInterval: 60_000,
   });
 }
 

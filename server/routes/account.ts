@@ -30,6 +30,7 @@ import {
   setPassword,
   updateProfile,
 } from '../services/account';
+import { getAgentActivity } from '../services/agentJobs';
 import { getAgentSettings, updateAgentSettings } from '../services/agents';
 
 /**
@@ -67,6 +68,11 @@ accountRoutes.get('/me/agent', webOnly, (c) =>
 
 accountRoutes.patch('/me/agent', webOnly, validateJson(updateAgentSettingsInputSchema), (c) =>
   c.json(updateAgentSettings(c.var.deps, requireActor(c), c.req.valid('json'))),
+);
+
+/** Its listener sessions and latest jobs (design §4). */
+accountRoutes.get('/me/agent/activity', webOnly, (c) =>
+  c.json(getAgentActivity(c.var.deps, requireActor(c))),
 );
 
 // ---------------------------------------------------------------------------------------------

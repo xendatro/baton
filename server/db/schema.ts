@@ -24,6 +24,9 @@ import {
 } from 'drizzle-orm/sqlite-core';
 import {
   ACTIVITY_ENTITY_TYPES,
+  AGENT_JOB_KINDS,
+  AGENT_JOB_STATUSES,
+  AGENT_JOB_TARGET_TYPES,
   AGENT_NOTIFICATION_LEVELS,
   ACTOR_SOURCES,
   ATTACHMENT_PARENT_TYPES,
@@ -262,6 +265,8 @@ export const role = sqliteTable(
       .notNull()
       .default(sql`'[]'`),
     mentionable: bool('mentionable').notNull().default(false),
+    /** Members with the role are listed in its own section of the Members tab (design §7). */
+    hoist: bool('hoist').notNull().default(false),
     isEveryone: bool('is_everyone').notNull().default(false),
     createdAt: createdAtColumn(),
     updatedAt: updatedAtColumn(),
@@ -729,6 +734,8 @@ export const reply = sqliteTable(
     viaKeyId: text('via_key_id').references(() => apiKey.id, { onDelete: 'set null' }),
     /** Markdown. */
     body: text('body').notNull(),
+    /** "No further discussion needed at this time" (the agents' done handshake, design §4). */
+    closing: bool('closing').notNull().default(false),
     createdAt: createdAtColumn(),
     updatedAt: updatedAtColumn(),
     editedAt: timestamp('edited_at'),
@@ -833,32 +840,95 @@ export const notification = sqliteTable(
 );
 
 /**
- * An @agent mention waiting for its agent (BAT-6): a reply naming the agent of an API key
- * (`@claude`) on a task or issue that key replied to or created. `wait_for_mentions` hands it
- * to the agent once and sets `deliveredAt`.
+ * Work waiting for an agent member (docs/design/agents-and-pipelines.md §4): a mention, an
+ * assignment, a reply in its thread, a pool hand-off, an approval, an action result. Its listener
+ * session claims it (`start_listener`) and holds it until it completes or releases it; jobs of a
+ * session that disappeared go back to `pending`. Targets are referenced by type and id without a
+ * foreign key (like replies' parents).
  */
-export const agentMention = sqliteTable(
-  'agent_mention',
+export const agentJob = sqliteTable(
+  'agent_job',
   {
     id: idColumn(),
-    keyId: text('key_id')
+    agentUserId: text('agent_user_id')
       .notNull()
-      .references(() => apiKey.id, { onDelete: 'cascade' }),
+      .references(() => user.id, { onDelete: 'cascade' }),
     teamId: text('team_id')
       .notNull()
       .references(() => team.id, { onDelete: 'cascade' }),
-    replyId: text('reply_id')
+    projectId: text('project_id')
       .notNull()
-      .references(() => reply.id, { onDelete: 'cascade' }),
-    parentType: text('parent_type', { enum: ['issue', 'task'] }).notNull(),
-    parentId: text('parent_id').notNull(),
-    deliveredAt: timestamp('delivered_at'),
+      .references(() => project.id, { onDelete: 'cascade' }),
+    kind: text('kind', { enum: AGENT_JOB_KINDS }).notNull(),
+    targetType: text('target_type', { enum: AGENT_JOB_TARGET_TYPES }).notNull(),
+    targetId: text('target_id').notNull(),
+    /** The reply that caused the job (mentions and thread replies in replies). */
+    triggerReplyId: text('trigger_reply_id').references(() => reply.id, { onDelete: 'set null' }),
+    /** Extra context from the job's source, e.g. a stage's instructions. */
+    payload: text('payload', { mode: 'json' })
+      .$type<Record<string, unknown>>()
+      .notNull()
+      .default(sql`'{}'`),
+    /** Triggered by another agent's closing reply (the done handshake). */
+    closing: bool('closing').notNull().default(false),
+    status: text('status', { enum: AGENT_JOB_STATUSES }).notNull().default('pending'),
+    /** The listener session holding a claimed job. */
+    sessionId: text('session_id').references(() => agentSession.id, { onDelete: 'set null' }),
     createdAt: createdAtColumn(),
+    claimedAt: timestamp('claimed_at'),
+    completedAt: timestamp('completed_at'),
   },
   (t) => [
-    index('agent_mention_key_idx').on(t.keyId, t.deliveredAt),
-    uniqueIndex('agent_mention_key_reply_unique').on(t.keyId, t.replyId),
+    index('agent_job_agent_status_idx').on(t.agentUserId, t.status, t.createdAt),
+    index('agent_job_target_idx').on(t.targetType, t.targetId),
+    index('agent_job_session_idx').on(t.sessionId),
+    index('agent_job_team_idx').on(t.teamId),
+    index('agent_job_project_idx').on(t.projectId),
+    index('agent_job_trigger_reply_idx').on(t.triggerReplyId),
   ],
+);
+
+/**
+ * A listener of an agent member (`start_listener`): the key it runs with and the projects it
+ * listens to. Seen at every listener call; while it waits it counts as seen. Not seen for 90 s:
+ * gone (its claimed jobs are put back), and the agent is offline unless another session lives.
+ */
+export const agentSession = sqliteTable(
+  'agent_session',
+  {
+    id: idColumn(),
+    agentUserId: text('agent_user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    keyId: text('key_id').references(() => apiKey.id, { onDelete: 'set null' }),
+    projectIds: text('project_ids', { mode: 'json' })
+      .$type<string[]>()
+      .notNull()
+      .default(sql`'[]'`),
+    startedAt: createdAtColumn(),
+    lastSeenAt: timestamp('last_seen_at').notNull(),
+  },
+  (t) => [
+    index('agent_session_agent_idx').on(t.agentUserId, t.lastSeenAt),
+    index('agent_session_key_idx').on(t.keyId),
+  ],
+);
+
+/**
+ * Agent state of a task's or issue's thread (design §4): when the loop guard tripped (the last
+ * replies were all by agents) and when agents agreed nothing more is needed (the done
+ * handshake). Either stops jobs from agent replies there until a person replies, which deletes
+ * the row.
+ */
+export const agentThread = sqliteTable(
+  'agent_thread',
+  {
+    parentType: text('parent_type', { enum: REPLY_PARENT_TYPES }).notNull(),
+    parentId: text('parent_id').notNull(),
+    loopGuardAt: timestamp('loop_guard_at'),
+    closedAt: timestamp('closed_at'),
+  },
+  (t) => [primaryKey({ columns: [t.parentType, t.parentId] })],
 );
 
 /**

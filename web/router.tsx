@@ -41,6 +41,7 @@ const shellRoutes: RouteObject[] = [
   // teams
   { path: 'join/:code', ...page(() => import('./pages/join/JoinPage')) },
   { path: 't/:team', ...page(() => import('./pages/teams/TeamHomePage')) },
+  { path: 't/:team/members', ...page(() => import('./pages/teams/TeamMembersPage')) },
   {
     path: 't/:team/settings',
     ...page(() => import('./pages/team-settings/TeamSettingsLayout')),

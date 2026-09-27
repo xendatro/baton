@@ -11,9 +11,10 @@ import {
   removeMember,
   unassignRole,
 } from '../services/members';
+import { getTeamPresence } from '../services/presence';
 
 /**
- * Team members: list, remove, leave, grant and revoke roles.
+ * Team members: list, presence, remove, leave, grant and revoke roles.
  * Owner: teams module. Paths are relative to /api and declared in full in this file.
  */
 export const memberRoutes = new Hono<AppEnv>();
@@ -26,6 +27,11 @@ const memberRoleParams = validateParams(
 
 memberRoutes.get('/teams/:teamId/members', teamParams, (c) =>
   c.json(listMembers(c.var.deps, requireActor(c), c.req.valid('param').teamId)),
+);
+
+/** Members online now (design §4 presence, for the Members tab §7). */
+memberRoutes.get('/teams/:teamId/presence', teamParams, (c) =>
+  c.json(getTeamPresence(c.var.deps, requireActor(c), c.req.valid('param').teamId)),
 );
 
 memberRoutes.delete('/teams/:teamId/members/:userId', memberParams, (c) => {

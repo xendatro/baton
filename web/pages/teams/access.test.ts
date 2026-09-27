@@ -20,6 +20,7 @@ function role(id: string, permissions: Permission[], extra: Partial<Role> = {}):
     position: 1,
     permissions,
     mentionable: false,
+    hoist: false,
     isEveryone: false,
     memberCount: 0,
     createdAt: '2026-01-01T00:00:00.000Z',

@@ -25,6 +25,7 @@ import {
   teamMemberIds,
   visibleProjectIds,
 } from './access';
+import { queueAssignedJobs, queueMentionJobs } from './agentJobs';
 import { emitAfterCommit } from './events';
 import { subscriberIds } from './subscriptions';
 import { getUserSummaries } from './users';
@@ -34,6 +35,8 @@ import { getUserSummaries } from './users';
  * transaction; each helper skips the actor, agent members (they have no inbox), non-members and
  * anyone already notified for the same event (pass one `notified` set through every call of an
  * event), inserts the rows and queues a personal `notification.created` event per recipient.
+ * What would notify an agent member (a mention, an assignment) queues an agent job instead
+ * (./agentJobs, design §4).
  */
 
 /** What the notification is about and where it links. */
@@ -277,6 +280,9 @@ export function notifyMentions(
           .filter((role) => role.mentionable || mentionAll)
           .map((role) => role.id);
 
+  // Agent members have no inbox: a mention of one becomes a job for its listener (design §4).
+  queueMentionJobs(tx, actor, target, direct);
+
   const group = new Set(roleMemberIds(tx, roleIds));
   if (mentions.everyone && mentionAll) {
     for (const id of teamMemberIds(tx, target.teamId)) group.add(id);
@@ -296,6 +302,10 @@ export function notifyAssigned(
   assignees: { userIds?: readonly string[]; roleIds?: readonly string[] },
   notified: NotifiedSet = new Set(),
 ): string[] {
+  // An agent assigned directly gets an `assigned` job instead (design §4).
+  if (target.entityType === 'task') {
+    queueAssignedJobs(tx, actor, target.entityId, assignees.userIds ?? []);
+  }
   const userIds = new Set(assignees.userIds ?? []);
   for (const id of roleMemberIds(tx, assignees.roleIds ?? [])) userIds.add(id);
   return notifyUsers(tx, actor, 'assigned', userIds, target, notified);

@@ -57,6 +57,7 @@ const role = (overrides: Partial<Role> & Pick<Role, 'id' | 'name'>): Role => ({
   position: 1,
   permissions: [],
   mentionable: false,
+  hoist: false,
   isEveryone: false,
   memberCount: 1,
   createdAt: NOW,

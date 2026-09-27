@@ -53,7 +53,10 @@ import {
   dismissStageApprovals,
   enterStage,
   guardStageMove,
+  mayApproveStage,
+  moveMeta,
   recordForced,
+  returnOf,
   rulesOf,
   saveEvidence,
   type GuardResult,
@@ -1015,7 +1018,7 @@ export function updateTask(
       entityId: taskId,
       action: 'task.updated',
       changes,
-      meta: taskMeta(updated, project.key),
+      meta: { ...taskMeta(updated, project.key), ...moveMeta(move?.guard ?? null) },
     });
     transition?.recordRelease();
     if (move) {
@@ -1038,7 +1041,10 @@ export function updateTask(
         move.to,
         now,
         notified,
-        assigneesChanged ? { assignees: { users: users.after, roles: roles.after } } : {},
+        {
+          ...(assigneesChanged ? { assignees: { users: users.after, roles: roles.after } } : {}),
+          ...returnOf(move.guard),
+        },
       );
     }
     if (changes.title || changes.description) {
@@ -1125,7 +1131,15 @@ export function moveTask(deps: AppDeps, actor: Actor, taskId: string, input: Mov
     });
     if (!input.statusId && !input.afterId && !input.beforeId) return getTask(deps, actor, taskId);
   }
-  requireCanUpdateTask(membership, task, "You don't have permission to move tasks");
+  // Approvers of the task's stage may send it back without UPDATE_TASKS (BAT-27); the guard
+  // below checks that the move is one.
+  const approverSendBack =
+    !canUpdateTask(membership, task) &&
+    input.statusId !== undefined &&
+    mayApproveStage(orm, actor, task);
+  if (!approverSendBack) {
+    requireCanUpdateTask(membership, task, "You don't have permission to move tasks");
+  }
 
   deps.db.write((tx) => {
     const now = new Date();
@@ -1150,6 +1164,9 @@ export function moveTask(deps: AppDeps, actor: Actor, taskId: string, input: Mov
     let guard: GuardResult | null = null;
     if (to.id !== from.id) {
       guard = guardStageMove(tx, actor, { task: current, project, membership }, from, to, input);
+      if (approverSendBack && guard.direction !== 'backward') {
+        throw errors.forbidden("You don't have permission to move tasks");
+      }
       changes.status = change(from.name, to.name);
       patch.statusId = to.id;
       transition = applyStatusTransition(
@@ -1163,6 +1180,7 @@ export function moveTask(deps: AppDeps, actor: Actor, taskId: string, input: Mov
       );
       Object.assign(patch, transition.patch);
     } else {
+      if (approverSendBack) throw errors.forbidden("You don't have permission to move tasks");
       const before = columnOf(tx, to.id).findIndex((row) => row.id === taskId);
       if (before === index) return;
       changes.position = change(before + 1, index + 1);
@@ -1182,7 +1200,7 @@ export function moveTask(deps: AppDeps, actor: Actor, taskId: string, input: Mov
       entityId: taskId,
       action: 'task.moved',
       changes,
-      meta: { ...taskMeta(updated, project.key), status: to.name },
+      meta: { ...taskMeta(updated, project.key), status: to.name, ...moveMeta(guard) },
     });
     transition?.recordRelease();
     if (guard) {
@@ -1195,6 +1213,7 @@ export function moveTask(deps: AppDeps, actor: Actor, taskId: string, input: Mov
         to,
         now,
         notified,
+        returnOf(guard),
       );
     }
     emitTaskChange(tx, 'task.updated', updated, actor);

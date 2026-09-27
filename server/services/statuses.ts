@@ -229,10 +229,10 @@ export function createStatus(
       throw errors.validation(`A project can have at most ${PROJECT_LIMITS.statuses} statuses`);
     }
     const existing = tx
-      .select({ position: s.status.position })
+      .select({ id: s.status.id, position: s.status.position })
       .from(s.status)
       .where(eq(s.status.pipelineId, pipeline.id))
-      .orderBy(desc(s.status.position))
+      .orderBy(desc(s.status.position), desc(s.status.createdAt))
       .all();
     requireUniqueName(tx, pipeline.id, input.name);
     const now = new Date();
@@ -247,6 +247,8 @@ export function createStatus(
         icon: input.icon ?? DEFAULT_STATUS_ICON,
         position: (existing[0]?.position ?? -1) + 1,
         isDefault: false,
+        // BAT-27: by default a new (last) stage can send tasks back to every earlier one.
+        sendBackTo: existing.map((row) => row.id).reverse(),
         createdAt: now,
         updatedAt: now,
       })

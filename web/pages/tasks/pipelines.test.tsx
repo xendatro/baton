@@ -128,7 +128,8 @@ describe('StagePanel', () => {
     expect(within(panel).getByText('Looks good')).toBeInTheDocument();
     expect(within(panel).getByText('To move on to Done, it still needs:')).toBeInTheDocument();
     expect(within(panel).getByText('1 more approval from Reviewer')).toBeInTheDocument();
-    expect(within(panel).queryByRole('button', { name: /Move to/ })).not.toBeInTheDocument();
+    // BAT-27: the green move is there, disabled while something is missing.
+    expect(within(panel).getByRole('button', { name: /Move to Done/ })).toBeDisabled();
   });
 
   it('saves only the evidence that changed', async () => {
@@ -158,17 +159,69 @@ describe('StagePanel', () => {
     const user = userEvent.setup();
     renderWith(<StagePanel task={task} teamId="team1" />);
     await user.type(screen.getByRole('textbox', { name: 'Approval comment (optional)' }), 'Tests?');
-    await user.click(screen.getByRole('button', { name: /Request changes/ }));
+    // BAT-27: Request changes asks where to send it back and why (the comment prefilled).
+    await user.click(
+      screen.getByRole('button', {
+        name: 'Request changes… (sends it back to an earlier stage)',
+      }),
+    );
+    const dialog = await screen.findByTestId('send-back-dialog');
+    expect(within(dialog).getByRole('textbox', { name: 'Reason' })).toHaveValue('Tests?');
+    await user.click(
+      within(dialog).getByRole('button', { name: /Request changes, send back to In Progress/ }),
+    );
     await waitFor(() => {
       const post = fetchMock.mock.calls.find(([, init]) => init?.method === 'POST');
       expect(JSON.parse(post?.[1]?.body as string)).toEqual({
         decision: 'request_changes',
         comment: 'Tests?',
+        sendBackTo: 's-doing',
       });
     });
-    expect(
-      screen.getByRole('button', { name: 'Request changes (sends it back to In Progress)' }),
-    ).toBeInTheDocument();
+  });
+
+  it('sends back with a required reason, to one of the allowed stages (BAT-27)', async () => {
+    mockApi({});
+    const onSendBack = vi.fn(() => Promise.resolve());
+    const user = userEvent.setup();
+    renderWith(
+      <StagePanel
+        task={{
+          ...task,
+          stage: {
+            ...stage,
+            canMoveTo: {
+              forward: { id: 's-done', name: 'Done', missing: [] },
+              back: [
+                { id: 's-doing', name: 'In Progress' },
+                { id: 's-open', name: 'Open' },
+              ],
+            },
+            returnReason: {
+              reason: 'Crashes on start',
+              by: ann,
+              via: null,
+              from: { id: 's-done', name: 'Done' },
+              at: NOW,
+            },
+          },
+        }}
+        teamId="team1"
+        onMoveOn={vi.fn()}
+        onSendBack={onSendBack}
+      />,
+    );
+    expect(screen.getByTestId('return-reason')).toHaveTextContent('Crashes on start');
+    expect(screen.getByRole('button', { name: /Move to Done/ })).toBeEnabled();
+    await user.click(screen.getByRole('button', { name: /Send back…/ }));
+    const dialog = await screen.findByTestId('send-back-dialog');
+    await user.click(within(dialog).getByRole('radio', { name: 'Open' }));
+    await user.click(within(dialog).getByRole('button', { name: /Send back to Open/ }));
+    expect(within(dialog).getByRole('alert')).toHaveTextContent('Give a reason');
+    expect(onSendBack).not.toHaveBeenCalled();
+    await user.type(within(dialog).getByRole('textbox', { name: 'Reason' }), 'Wrong approach');
+    await user.click(within(dialog).getByRole('button', { name: /Send back to Open/ }));
+    expect(onSendBack).toHaveBeenCalledWith({ statusId: 's-open', reason: 'Wrong approach' });
   });
 
   it('is read-only for people who may not give evidence or approve', () => {

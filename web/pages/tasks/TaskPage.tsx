@@ -78,6 +78,7 @@ import { useDifficulties } from '../projects/difficultyQueries';
 import { useCreateLabel, useLabels, usePipelines, useStatuses } from '../projects/queries';
 import { ClaimPanel } from './ClaimPanel';
 import { ForceMoveDialog } from './ForceMoveDialog';
+import { SendBackDialog, type SendBackResult } from './SendBackDialog';
 import { StagePanel } from './StagePanel';
 import {
   restoreDeletedTask,
@@ -85,6 +86,7 @@ import {
   useClaimAction,
   useDeleteTask,
   useTask,
+  useStageMove,
   useTaskSubscription,
   useUpdateTask,
 } from './queries';
@@ -179,6 +181,13 @@ function TaskView({ task, team, project }: { task: Task; team: MeTeam; project: 
   const [confirmDelete, setConfirmDelete] = useState(false);
   /** A move the stage rules block, which the viewer may force (owner / administrator). */
   const [forcing, setForcing] = useState<{ statusId: string; reason: string } | null>(null);
+  /** BAT-27: a status picked from the earlier stages it may go back to (asks for the reason). */
+  const [sendingBack, setSendingBack] = useState<string | null>(null);
+  const stageMove = useStageMove(task);
+  const sendBack = ({ statusId, reason }: SendBackResult) =>
+    stageMove
+      .mutateAsync({ statusId, reason })
+      .then((updated) => toast.success(`Sent back to ${updated.status.name}`));
 
   const save = (input: UpdateTaskInput, optimistic?: Partial<Task>, success?: string) =>
     update.mutateAsync({ input, optimistic }).then(
@@ -246,7 +255,13 @@ function TaskView({ task, team, project }: { task: Task; team: MeTeam; project: 
   useHotkey('escape', back.goBack, {
     description: 'Close the task',
     group: 'Task',
-    enabled: picker === null && !editingTitle && !editingDescription && !confirmDelete && !forcing,
+    enabled:
+      picker === null &&
+      !editingTitle &&
+      !editingDescription &&
+      !confirmDelete &&
+      !forcing &&
+      sendingBack === null,
   });
 
   const url = `${window.location.origin}${task.path}`;
@@ -388,6 +403,10 @@ function TaskView({ task, team, project }: { task: Task; team: MeTeam; project: 
   const changeStatus = (statusId: string) => {
     const next = statusList.find((status) => status.id === statusId);
     if (!next || statusId === task.status.id) return;
+    if (task.stage?.canMoveTo?.back.some((stage) => stage.id === statusId)) {
+      setSendingBack(statusId);
+      return;
+    }
     const blocked = blockedMoves[statusId];
     if (blocked) {
       if (task.stage?.canForce) setForcing({ statusId, reason: blocked });
@@ -739,6 +758,7 @@ function TaskView({ task, team, project }: { task: Task; team: MeTeam; project: 
                     ? () => changeStatus(task.stage?.next?.id ?? task.status.id)
                     : undefined
                 }
+                onSendBack={canUpdate || task.stage.approvals?.canApprove ? sendBack : undefined}
               />
             </div>
           ) : null}
@@ -856,6 +876,14 @@ function TaskView({ task, team, project }: { task: Task; team: MeTeam; project: 
             'Moved past the stage rules',
           ).then(() => setForcing(null))
         }
+      />
+      <SendBackDialog
+        open={sendingBack !== null}
+        onOpenChange={(open) => (open ? undefined : setSendingBack(null))}
+        from={task.status.name}
+        stages={task.stage?.canMoveTo?.back ?? []}
+        initialStageId={sendingBack ?? undefined}
+        onConfirm={sendBack}
       />
       <ConfirmDialog
         open={confirmDelete}

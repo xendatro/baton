@@ -348,7 +348,10 @@ describe('moving tasks', () => {
     expect(activityOf(task.id).find((row) => row.action === 'task.moved')?.changes).toEqual({
       status: { from: 'Open', to: 'Done' },
     });
-    const reopened = updateTask(ctx.deps, web(owner), task.id, { statusId: statusId(open) });
+    const reopened = updateTask(ctx.deps, web(owner), task.id, {
+      statusId: statusId(open),
+      reason: 'Not done yet',
+    });
     expect(reopened.completedAt).toBeNull();
     expect(() =>
       moveTask(ctx.deps, web(owner), task.id, { statusId: statusId(done), afterId: task.id }),

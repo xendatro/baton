@@ -79,6 +79,10 @@ describe('pipeline stages create agent jobs', () => {
         },
       },
     });
+    // Open moves on to it (BAT-27: moves go to the next stage only).
+    updateStatus(ctx.deps, web(owner), project.statuses[0]?.id ?? '', {
+      rules: { nextStatusId: pool.id },
+    });
     const task = createTask(ctx.deps, web(owner), project.project.id, { title: 'Pooled' });
     moveTask(ctx.deps, web(owner), task.id, { statusId: pool.id });
 
@@ -113,6 +117,9 @@ describe('pipeline stages create agent jobs', () => {
           dismissOnChange: false,
         },
       },
+    });
+    updateStatus(ctx.deps, web(owner), project.statuses[0]?.id ?? '', {
+      rules: { nextStatusId: review.id },
     });
     const task = createTask(ctx.deps, web(owner), project.project.id, { title: 'Review me' });
     moveTask(ctx.deps, web(owner), task.id, { statusId: review.id });

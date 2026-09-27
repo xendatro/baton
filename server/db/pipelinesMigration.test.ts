@@ -5,7 +5,7 @@ import { migrate } from 'drizzle-orm/better-sqlite3/migrator';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createTeam, createUser } from '../test/fixtures';
 import { openDatabase, type Database } from './index';
-import { MIGRATIONS_DIR, runMigrations } from './migrate';
+import { MIGRATIONS_DIR } from './migrate';
 
 /**
  * Migration 0017 (BAT-25, pipelines) against data shaped like before it: every project gets one
@@ -141,7 +141,8 @@ describe('migration 0017 (pipelines)', () => {
     });
     const before = snapshot();
 
-    runMigrations(db);
+    // Up to this migration only: later ones add columns of their own.
+    migrate(db.orm, { migrationsFolder: migrationsUpTo('0017_pipelines') });
 
     expect(snapshot()).toEqual(before);
     const pipelines = all(

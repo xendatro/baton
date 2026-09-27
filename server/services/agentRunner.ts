@@ -531,8 +531,41 @@ function stageSection(stage: TaskStage): string {
     );
   }
   if (stage.moveRule) parts.push(`Only ${stage.moveRule} can move it on.`);
-  parts.push(stage.next ? `Next stage: **${stage.next.name}**.` : 'This is the last stage.');
+  parts.push(
+    stage.next
+      ? `Next stage: **${stage.next.name}** (the only stage it moves on to).`
+      : 'This is the last stage.',
+  );
+  const back = stage.canMoveTo?.back ?? [];
+  if (back.length > 0) {
+    parts.push(
+      `It can be sent back to ${back.map((item) => `**${item.name}**`).join(', ')} with move_task { status, reason } (the reason is required).`,
+    );
+  }
   return parts.join('\n\n');
+}
+
+/**
+ * BAT-27: "Sent back because", at the top of the brief of a job for a stage the task was sent
+ * back into (the job's `returnReason`, else the current visit's while the job is for it). A
+ * resumed harness session gets it as the start of its new prompt.
+ */
+function sentBackSection(job: JobRow, stage: TaskStage | null): string[] {
+  const payloadReason =
+    typeof job.payload.returnReason === 'string' ? job.payload.returnReason : '';
+  const forStage =
+    typeof job.payload.statusId !== 'string' || job.payload.statusId === stage?.status.id;
+  const visit = forStage ? stage?.returnReason : null;
+  const reason = payloadReason || visit?.reason || '';
+  if (!reason.trim()) return [];
+  const from =
+    typeof job.payload.returnedFrom === 'string'
+      ? job.payload.returnedFrom
+      : (visit?.from?.name ?? null);
+  const by = !payloadReason && visit?.by ? ` by @${visit.by.username ?? 'someone'}` : '';
+  return [
+    `## Sent back because\n\n${quote(reason)}\n\nThe task was sent back${from ? ` from ${from}` : ''}${by}. Deal with this first: it is why the task is here again.`,
+  ];
 }
 
 function recentReplies(
@@ -642,8 +675,12 @@ export function jobBrief(
   const me = names.get(agent.id)?.username ?? 'your-agent';
   const owner = names.get(agent.ownerId)?.username ?? 'your owner';
   const ref = context.target.ref ?? 'the item';
+  const stage = task
+    ? stageOf(orm, { userId: agent.id, ownerId: agent.ownerId, source: 'api', key: null }, task)
+    : null;
   const sections: string[] = [
     `# Baton job: ${job.kind.replace('_', ' ')} on ${ref}${context.target.title ? ` — ${context.target.title}` : ''}`,
+    ...sentBackSection(job, stage),
     `You are **@${me}**, the Baton agent of **@${owner}**, running headless on their machine for this one job. Use the Baton MCP tools (get_task, add_reply, move_task, complete_job, …) to read and write in Baton: everything you write is posted as @${me}. Work in the current folder, with your usual tools and settings.`,
     `## The job\n\n${context.instructions}\n\nJob id: \`${job.id}\`.`,
   ];
@@ -663,14 +700,7 @@ export function jobBrief(
       }\n\n${item.body.trim() || '_(empty)_'}`,
     );
   }
-  if (task) {
-    const stage = stageOf(
-      orm,
-      { userId: agent.id, ownerId: agent.ownerId, source: 'api', key: null },
-      task,
-    );
-    if (stage) sections.push(stageSection(stage));
-  }
+  if (stage) sections.push(stageSection(stage));
   if (context.stageInstructions && !task) {
     sections.push(`## Stage instructions\n\n${context.stageInstructions}`);
   }

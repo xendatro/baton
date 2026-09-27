@@ -8,6 +8,7 @@ import {
   type ReplyNode,
   type UpdateReplyInput,
 } from '@shared/schemas/core';
+import { LIMITS } from '@shared/constants';
 import type { Actor, AppDeps } from '../context';
 import type { DbExecutor, Tx } from '../db';
 import * as s from '../db/schema';
@@ -362,7 +363,12 @@ export function prepareReply(deps: AppDeps, actor: Actor, input: CreateReplyInpu
  * activity, claims pending attachments, subscribes the author, indexes it for search and notifies
  * mentioned members and the parent's subscribers (one notification per person).
  */
-export function insertReply(tx: Tx, actor: Actor, prepared: PreparedReply): ReplyRow {
+export function insertReply(
+  tx: Tx,
+  actor: Actor,
+  prepared: PreparedReply,
+  options: { agentJobs?: boolean } = {},
+): ReplyRow {
   const { item, input, text } = prepared;
   // Checked again inside the write: the answered reply may have been deleted meanwhile.
   const answered = input.parentReplyId ? answeredReply(tx, item, input.parentReplyId) : null;
@@ -426,7 +432,7 @@ export function insertReply(tx: Tx, actor: Actor, prepared: PreparedReply): Repl
   }
   notifyReply(tx, actor, { type: item.type, id: item.id }, target, notified);
   // Agents taking part in the thread hear about it through jobs (design §4).
-  queueThreadReplyJobs(tx, actor, reply, item);
+  if (options.agentJobs !== false) queueThreadReplyJobs(tx, actor, reply, item);
   emitAfterCommit(tx, {
     type: 'reply.created',
     teamId: item.teamId,
@@ -438,6 +444,32 @@ export function insertReply(tx: Tx, actor: Actor, prepared: PreparedReply): Repl
     actorId: actor.userId,
   });
   return reply;
+}
+
+/**
+ * Posts a reply the server writes for the actor as part of another change, inside its write (e.g.
+ * the reason a task was sent back, BAT-27): no permission check, and no agent jobs (the change
+ * queues its own). Null when the item is gone.
+ */
+export function insertChangeReply(
+  tx: Tx,
+  actor: Actor,
+  parent: { type: 'task' | 'issue'; id: string },
+  body: string,
+): ReplyRow | null {
+  const item = findItem(tx, parent.type, parent.id);
+  if (!item) return null;
+  const text = body.trim().slice(0, LIMITS.replyBody.max);
+  return insertReply(
+    tx,
+    actor,
+    {
+      item,
+      input: { parentType: parent.type, parentId: parent.id, body: text },
+      text: derivedText(text),
+    },
+    { agentJobs: false },
+  );
 }
 
 /** Posts a reply (`REPLY` permission) in its own transaction; see `insertReply`. */

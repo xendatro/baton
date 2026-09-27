@@ -18,7 +18,7 @@ import { newId } from '../lib/ids';
 import { requirePermission } from './access';
 import { recordActivity } from './activity';
 import { emitAfterCommit } from './events';
-import { mergeRules, ruleColumns, rulesOf, type StatusRow } from './pipelines';
+import { backStages, mergeRules, ruleColumns, rulesOf, type StatusRow } from './pipelines';
 import { defaultPipeline, pipelineStatuses, resolvePipeline } from './projectPipelines';
 import { requireProject } from './projects';
 import { statusesOf, syncCompletion } from './statuses';
@@ -380,8 +380,15 @@ export function copyPipeline(
           ? { ...rules.approvals, rule: mapRule(rules.approvals.rule, where('approvers')) }
           : null,
         nextStatusId: rules.nextStatusId ? (idMap.get(rules.nextStatusId) ?? null) : null,
+        // Earlier source stages come first in the target too (copied order), so they stay earlier.
+        sendBackTo: backStages(sourceStatuses, row).flatMap((earlier) => {
+          const id = idMap.get(earlier.id);
+          return id ? [id] : [];
+        }),
       };
-      const valid = mergeRules(tx, targetScope, targetId, DEFAULT_STAGE_RULES, mapped);
+      const valid = mergeRules(tx, targetScope, targetId, DEFAULT_STAGE_RULES, mapped, {
+        anyOrder: true,
+      });
       const before = tx
         .select({ blocksDependents: s.status.blocksDependents })
         .from(s.status)

@@ -2,9 +2,9 @@ import { and, asc, count, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type { Principal, PrincipalRule } from '@shared/principals';
 import { formatTaskRef } from '@shared/refs';
 import type { StatusIconShape } from '@shared/constants';
+import { backStagesOf, earlierStageIds, nextStageOf } from '@shared/stageMoves';
 import {
   DEFAULT_STAGE_RULES,
-  isGatedStage,
   RULE_HANDOFF_MODES,
   stageRulesSchema,
   type ApprovalInput,
@@ -31,6 +31,7 @@ import { isClaimValid } from './claimLease';
 import { emitAfterCommit } from './events';
 import { queueLinkedIssueEvents } from './linkEvents';
 import { notifyAssigned, notifyUsers, type NotifiedSet } from './notifications';
+import { insertChangeReply } from './replies';
 import { onStageApprovalsReset, onTaskEnteredStage } from './pipelineHooks';
 import { pipelinePermissions } from './projectPipelines';
 import { matchesRule, expandRule } from './principals';
@@ -52,15 +53,17 @@ import { getUserSummaries, getViaKeys } from './users';
  * Pipelines (docs/design/agents-and-pipelines.md §5): per-status ("stage") rules.
  *
  *   - On enter: the hand-off (who gets the task), `notify`, a `task_stage_entry` row, and the
- *     Wave 2C hook `onTaskEnteredStage` (server/services/pipelineHooks.ts).
- *   - To leave forward (to a later column or the stage's `nextStatusId`): the move rule, evidence
- *     for every exit criterion and enough approvals. Skipping a later stage that has such rules
- *     is refused too, so a gate can't be jumped over.
- *   - Backward from a gated stage: only to the previous column, when `allowSendBack`.
+ *     Wave 2C hook `onTaskEnteredStage` (server/services/pipelineHooks.ts). Coming back to a
+ *     stage starts a fresh visit: its earlier approvals are dismissed and its evidence archived.
+ *   - Strict moves (BAT-27), like invisible arrows between the stages of a pipeline:
+ *     - forward only to the stage's next stage (`nextStatusId`, else the next column), through its
+ *       leave rules: the move rule, evidence for every exit criterion and enough approvals;
+ *     - back only to the earlier stages checked in its `sendBackTo`, by whoever may move it on or
+ *       approve the stage, always with a reason (stored on the new visit, posted in the thread and
+ *       given to the agents working on it next).
  *   - Team owner / ADMINISTRATOR may force any move with a reason (`task.forced`).
  *
- * Every function taking a `tx` runs inside the caller's write. A project whose statuses have no
- * rules behaves exactly as before (nothing is checked; only the stage entries are recorded).
+ * Every function taking a `tx` runs inside the caller's write.
  */
 
 export type StatusRow = typeof s.status.$inferSelect;
@@ -98,7 +101,7 @@ export function rulesOf(row: StatusRow): StageRules {
       : null,
     autoAdvance: row.autoAdvance,
     nextStatusId: row.nextStatusId,
-    allowSendBack: row.allowSendBack,
+    sendBackTo: row.sendBackTo,
   };
 }
 
@@ -134,7 +137,7 @@ export function ruleColumns(rules: StageRules) {
     approvals: rules.approvals,
     autoAdvance: rules.autoAdvance,
     nextStatusId: rules.nextStatusId,
-    allowSendBack: rules.allowSendBack,
+    sendBackTo: rules.sendBackTo,
   };
 }
 
@@ -177,38 +180,12 @@ export function stagesOf(db: DbExecutor, status: Pick<StatusRow, 'pipelineId'>):
 
 /** The stage after `from`: its `nextStatusId`, else the next column (null: the last stage). */
 export function nextStage(statuses: readonly StatusRow[], from: StatusRow): StatusRow | null {
-  const rules = rulesOf(from);
-  if (rules.nextStatusId) {
-    const next = statuses.find((row) => row.id === rules.nextStatusId);
-    if (next && next.id !== from.id) return next;
-  }
-  const index = statuses.findIndex((row) => row.id === from.id);
-  return statuses[index + 1] ?? null;
+  return nextStageOf(statuses, from);
 }
 
-function previousStage(statuses: readonly StatusRow[], from: StatusRow): StatusRow | null {
-  const index = statuses.findIndex((row) => row.id === from.id);
-  return index > 0 ? (statuses[index - 1] ?? null) : null;
-}
-
-/**
- * Does any status of the project have workflow rules a task page shows (instructions, hand-offs
- * to people, notify, exit rules, auto-advance, next stage, no send-back)? A stage's own behaviour
- * (on-enter effects, blocking, claimable, assigning nobody) shows nothing on its own.
- */
-function hasPipeline(statuses: readonly StatusRow[]): boolean {
-  return statuses.some((row) => {
-    const rules = rulesOf(row);
-    return (
-      isGatedStage(rules) ||
-      (rules.handoff.mode !== 'keep' && rules.handoff.mode !== 'nobody') ||
-      rules.notify !== null ||
-      rules.autoAdvance ||
-      rules.nextStatusId !== null ||
-      !rules.allowSendBack ||
-      rules.instructions.trim() !== ''
-    );
-  });
+/** The earlier stages `from` may send tasks back to (its `sendBackTo`), nearest first. */
+export function backStages(statuses: readonly StatusRow[], from: StatusRow): StatusRow[] {
+  return backStagesOf(statuses, from);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -373,7 +350,7 @@ function ruleSummaries(db: DbExecutor, rules: StageRules): Record<keyof StageRul
       : null,
     autoAdvance: rules.autoAdvance,
     nextStatusId: statusName(rules.nextStatusId),
-    allowSendBack: rules.allowSendBack,
+    sendBackTo: rules.sendBackTo.map((id) => statusName(id) ?? 'a deleted stage'),
   };
 }
 
@@ -450,7 +427,8 @@ export function validateRulePrincipals(
 
 /**
  * The rules of `status` with `patch` applied, validated against the project: stages it names are
- * statuses of the project, principals exist in its team.
+ * statuses of the same pipeline (send-back stages earlier ones, unless `options.anyOrder`: a copy
+ * reorders the stages afterwards), principals exist in its team.
  */
 export function mergeRules(
   db: DbExecutor,
@@ -458,11 +436,33 @@ export function mergeRules(
   statusId: string,
   current: StageRules,
   patch: StageRulesPatch,
+  options: { anyOrder?: boolean } = {},
 ): StageRules {
+  const { allowSendBack, ...fields } = patch;
+  // Before BAT-27: `allowSendBack` meant "back to the previous stages".
+  const legacySendBack =
+    fields.sendBackTo === undefined && allowSendBack !== undefined
+      ? {
+          sendBackTo: allowSendBack
+            ? earlierStageIds(
+                stagesOf(db, {
+                  pipelineId:
+                    db
+                      .select({ pipelineId: s.status.pipelineId })
+                      .from(s.status)
+                      .where(eq(s.status.id, statusId))
+                      .get()?.pipelineId ?? '',
+                }),
+                statusId,
+              )
+            : [],
+        }
+      : {};
   const parsed = stageRulesSchema.safeParse({
     ...current,
-    ...patch,
-    onEnter: { ...current.onEnter, ...patch.onEnter },
+    ...fields,
+    ...legacySendBack,
+    onEnter: { ...current.onEnter, ...fields.onEnter },
   });
   if (!parsed.success) {
     const issue = parsed.error.issues[0];
@@ -492,6 +492,23 @@ export function mergeRules(
   }
   if (merged.handoff.mode === 'stage_holder' && !samePipeline(merged.handoff.statusId ?? '')) {
     throw errors.validation('The hand-off stage must be a stage of the same pipeline');
+  }
+  if (merged.sendBackTo.length > 0) {
+    const earlier = new Set(
+      own === undefined ? [] : earlierStageIds(stagesOf(db, { pipelineId: own }), statusId),
+    );
+    const bad = merged.sendBackTo.filter((id) =>
+      options.anyOrder ? id === statusId || !samePipeline(id) : !earlier.has(id),
+    );
+    if (bad.length > 0 && patch.sendBackTo === undefined) {
+      // Stages deleted or reordered after since: dropped when another rule is saved.
+      merged.sendBackTo = merged.sendBackTo.filter((id) => !bad.includes(id));
+    } else if (bad.length > 0) {
+      throw errors.validation(
+        'A stage can only send tasks back to earlier stages of its own pipeline',
+        { sendBackTo: bad },
+      );
+    }
   }
   validatePrincipals(db, scope, merged);
   return merged;
@@ -532,6 +549,10 @@ function activeApprovals(db: DbExecutor, taskId: string, statusId: string): Acti
     .all();
 }
 
+/**
+ * Evidence of the task: of `statusId`'s current visit (archived evidence of earlier visits left
+ * out), or every row of every stage and visit.
+ */
 function evidenceRows(db: DbExecutor, taskId: string, statusId?: string) {
   return db
     .select()
@@ -539,9 +560,12 @@ function evidenceRows(db: DbExecutor, taskId: string, statusId?: string) {
     .where(
       and(
         eq(s.taskStageEvidence.taskId, taskId),
-        statusId ? eq(s.taskStageEvidence.statusId, statusId) : undefined,
+        statusId
+          ? and(eq(s.taskStageEvidence.statusId, statusId), isNull(s.taskStageEvidence.archivedAt))
+          : undefined,
       ),
     )
+    .orderBy(asc(s.taskStageEvidence.createdAt), asc(s.taskStageEvidence.id))
     .all();
 }
 
@@ -596,7 +620,7 @@ export function missingToLeave(db: DbExecutor, task: TaskRow, status: StatusRow)
 
 export interface MoveCheck {
   direction: 'none' | 'forward' | 'backward';
-  /** Why the mover may not make this move at all (403). */
+  /** Why the mover may not make this move at all (403): not a move the stage allows, or not them. */
   forbidden: string | null;
   /** What the task still needs (409). */
   missing: string[];
@@ -609,43 +633,19 @@ interface MoveSubject {
   userId: string | null;
 }
 
-/** Memo of the checks that are the same for every forward target of one stage. */
+/** Memo of the checks that are the same for every target of one stage. */
 interface LeaveMemo {
   forbidden?: string | null;
   missing?: string[];
-  gated?: Map<string, boolean>;
+  backForbidden?: string | null;
 }
 
-function isGated(memo: LeaveMemo, row: StatusRow): boolean {
-  memo.gated ??= new Map();
-  let gated = memo.gated.get(row.id);
-  if (gated === undefined) {
-    gated = isGatedStage(rulesOf(row));
-    memo.gated.set(row.id, gated);
-  }
-  return gated;
-}
-
-/** Stages a forward move from `from` to `to` jumps over (following the `next` chain). */
-function skippedStages(
-  statuses: readonly StatusRow[],
-  from: StatusRow,
-  to: StatusRow,
-): StatusRow[] {
-  const chain: StatusRow[] = [];
-  let at: StatusRow | null = nextStage(statuses, from);
-  for (let steps = 0; at && steps < statuses.length; steps += 1) {
-    if (at.id === to.id) return chain;
-    chain.push(at);
-    at = nextStage(statuses, at);
-  }
-  // Not on the chain: the columns in between.
-  const a = statuses.findIndex((row) => row.id === from.id);
-  const b = statuses.findIndex((row) => row.id === to.id);
-  return statuses.slice(a + 1, b);
-}
-
-/** Can the task move from `from` to `to` (without force)? Pure check; nothing is written. */
+/**
+ * Can the task move from `from` to `to` (without force)? Pure check; nothing is written. Strict
+ * (BAT-27): forward only to the next stage, through its leave rules; back only to a stage checked
+ * in `from`'s `sendBackTo`, by whoever may move it on or approve `from` (the caller asks for the
+ * reason). Everything else is refused.
+ */
 export function evaluateMove(
   db: DbExecutor,
   subject: MoveSubject,
@@ -656,48 +656,44 @@ export function evaluateMove(
 ): MoveCheck {
   if (from.id === to.id) return { direction: 'none', forbidden: null, missing: [] };
   const rules = rulesOf(from);
+  const next = nextStage(statuses, from);
+  if (next?.id === to.id) {
+    if (memo.forbidden === undefined) {
+      memo.forbidden = mayMoveOn(db, subject, rules)
+        ? null
+        : `Only ${whoMovesOn(rules, (rule) => describeRule(db, rule))} can move tasks out of ${from.name}`;
+    }
+    memo.missing ??= missingToLeave(db, subject.task, from);
+    return { direction: 'forward', forbidden: memo.forbidden, missing: [...memo.missing] };
+  }
+  const back = backStages(statuses, from);
+  if (back.some((row) => row.id === to.id)) {
+    if (memo.backForbidden === undefined) {
+      memo.backForbidden = maySendBack(db, subject, rules)
+        ? null
+        : `Only ${whoSendsBack(rules, (rule) => describeRule(db, rule))} can send tasks back from ${from.name}`;
+    }
+    return { direction: 'backward', forbidden: memo.backForbidden, missing: [] };
+  }
   const fromIndex = statuses.findIndex((row) => row.id === from.id);
   const toIndex = statuses.findIndex((row) => row.id === to.id);
-  const next = nextStage(statuses, from);
-  const forward = next?.id === to.id || toIndex > fromIndex;
-
-  if (!forward) {
-    if (!isGatedStage(rules) && rules.allowSendBack) {
-      return { direction: 'backward', forbidden: null, missing: [] };
-    }
-    if (!rules.allowSendBack) {
-      return {
-        direction: 'backward',
-        forbidden: `${from.name} doesn’t allow moving tasks back`,
-        missing: [],
-      };
-    }
-    const previous = previousStage(statuses, from);
+  if (toIndex > fromIndex) {
     return {
-      direction: 'backward',
-      forbidden:
-        previous && previous.id !== to.id
-          ? `From ${from.name}, tasks can only be sent back to ${previous.name}`
-          : null,
+      direction: 'forward',
+      forbidden: next
+        ? `From ${from.name}, tasks only move on to ${next.name}`
+        : `${from.name} is the last stage: tasks don’t move on from it`,
       missing: [],
     };
   }
-
-  if (memo.forbidden === undefined) {
-    memo.forbidden = mayMoveOn(db, subject, rules)
-      ? null
-      : `Only ${whoMovesOn(rules, (rule) => describeRule(db, rule))} can move tasks out of ${from.name}`;
-  }
-  memo.missing ??= isGatedStage(rules) ? missingToLeave(db, subject.task, from) : [];
-  const missing = [...memo.missing];
-  if (next?.id !== to.id) {
-    for (const skipped of skippedStages(statuses, from, to)) {
-      if (isGated(memo, skipped)) {
-        missing.push(`going through ${skipped.name} first (it has rules to leave it)`);
-      }
-    }
-  }
-  return { direction: 'forward', forbidden: memo.forbidden, missing };
+  return {
+    direction: 'backward',
+    forbidden:
+      back.length > 0
+        ? `From ${from.name}, tasks can only be sent back to ${joinOr(back.map((row) => row.name))}`
+        : `${from.name} doesn’t send tasks back`,
+    missing: [],
+  };
 }
 
 function moveByWords(moveBy: StageRules['moveBy']): string {
@@ -749,6 +745,43 @@ function mayMoveOn(db: DbExecutor, subject: MoveSubject, rules: StageRules): boo
   return moveRule ? matchesRule(db, subject.scope, userId, moveRule) : false;
 }
 
+/**
+ * May `subject.userId` send the task back from its stage? Whoever may move it on (anyone who may
+ * move tasks when the stage names nobody), and whoever may approve the stage.
+ */
+function maySendBack(db: DbExecutor, subject: MoveSubject, rules: StageRules): boolean {
+  if (mayMoveOn(db, subject, rules)) return true;
+  return Boolean(
+    rules.approvals &&
+    subject.userId &&
+    matchesRule(db, subject.scope, subject.userId, rules.approvals.rule),
+  );
+}
+
+/** May the actor approve the task's current stage (and so send it back, BAT-27)? */
+export function mayApproveStage(db: DbExecutor, actor: Actor, task: TaskRow): boolean {
+  const status = db.select().from(s.status).where(eq(s.status.id, task.statusId)).get();
+  const approvals = status ? rulesOf(status).approvals : null;
+  return Boolean(
+    approvals &&
+    matchesRule(
+      db,
+      { teamId: task.teamId, projectId: task.projectId },
+      actor.userId,
+      approvals.rule,
+    ),
+  );
+}
+
+/** Who may send a task back from a stage, in words. */
+function whoSendsBack(rules: StageRules, words: (rule: PrincipalRule) => string): string {
+  const parts = [
+    whoMovesOn(rules, words) ?? 'whoever may move tasks',
+    ...(rules.approvals ? [`its approvers (${words(rules.approvals.rule)})`] : []),
+  ];
+  return parts.join(' or ');
+}
+
 /** Team owner or ADMINISTRATOR: may force a move past every rule. */
 export function canForceMove(membership: Membership): boolean {
   return membership.isOwner || hasPermission(membership, 'ADMINISTRATOR');
@@ -762,15 +795,37 @@ export interface ForceOptions {
 export interface GuardResult {
   /** Rules a forced move went past (empty when nothing was bypassed). */
   bypassed: string[];
+  /** Which way the move goes within the pipeline (`pipeline`: to another pipeline). */
+  direction: 'none' | 'forward' | 'backward' | 'pipeline';
+  /** The reason given (required to send a task back, and to force a move). */
+  reason: string | null;
+}
+
+/**
+ * The audit meta of a move (BAT-27): a move back says so, with its reason
+ * (`{ direction: 'back', reason }`).
+ */
+export function moveMeta(guard: GuardResult | null): Record<string, unknown> {
+  return guard?.direction === 'backward' && guard.reason
+    ? { direction: 'back', reason: guard.reason }
+    : {};
+}
+
+/** Entry options for a guarded move: a move back carries its reason into the stage. */
+export function returnOf(guard: GuardResult | null): EnterOptions {
+  return guard?.direction === 'backward' && guard.reason
+    ? { returned: { reason: guard.reason } }
+    : {};
 }
 
 const EVIDENCE_HINT =
   ' Give evidence for each criterion (move_task evidence: [{ criterion, text }], or on the task page).';
 
 /**
- * Checks a status change of the task against the stage rules, inside the write. Throws 403 when
- * the mover may not make the move and 409 listing everything that is missing, unless a team owner
- * or administrator forces it with a reason.
+ * Checks a status change of the task against the stage rules, inside the write (BAT-27: forward
+ * only to the next stage, back only to a send-back stage with a reason). Throws 403 when the mover
+ * may not make the move, 409 listing everything that is missing and 400 when a move back has no
+ * reason, unless a team owner or administrator forces it with a reason.
  */
 export function guardStageMove(
   tx: Tx,
@@ -780,13 +835,16 @@ export function guardStageMove(
   to: StatusRow,
   options: ForceOptions = {},
 ): GuardResult {
-  if (from.id === to.id) return { bypassed: [] };
-  if (from.pipelineId !== to.pipelineId)
-    return guardPipelineMove(tx, actor, access, from, to, options);
-  const statuses = stagesOf(tx, from);
-  if (!statuses.some((row) => isGatedStage(rulesOf(row)) || !row.allowSendBack)) {
-    return { bypassed: [] };
+  const reason = options.reason?.trim() || null;
+  if (from.id === to.id) return { bypassed: [], direction: 'none', reason: null };
+  if (from.pipelineId !== to.pipelineId) {
+    return {
+      ...guardPipelineMove(tx, actor, access, from, to, options),
+      direction: 'pipeline',
+      reason,
+    };
   }
+  const statuses = stagesOf(tx, from);
   const check = evaluateMove(
     tx,
     {
@@ -798,18 +856,26 @@ export function guardStageMove(
     from,
     to,
   );
+  const ref = formatTaskRef(access.project.key, access.task.number);
   const problems = [...(check.forbidden ? [check.forbidden] : []), ...check.missing];
-  if (problems.length === 0) return { bypassed: [] };
+  if (problems.length === 0) {
+    if (check.direction === 'backward' && !reason) {
+      throw errors.validation(
+        `Give a reason for sending ${ref} back to ${to.name} (reason): it is posted on the task and given to whoever works on it next.`,
+        { field: 'reason' },
+      );
+    }
+    return { bypassed: [], direction: check.direction, reason };
+  }
   if (options.force) {
     if (!canForceMove(access.membership)) {
       throw errors.forbidden(
         'Only the team owner or an administrator can force a move past the stage rules',
       );
     }
-    if (!options.reason?.trim()) throw errors.validation('Give a reason for forcing the move');
-    return { bypassed: problems };
+    if (!reason) throw errors.validation('Give a reason for forcing the move');
+    return { bypassed: problems, direction: check.direction, reason };
   }
-  const ref = formatTaskRef(access.project.key, access.task.number);
   const details = { from: from.name, to: to.name, missing: problems };
   if (check.forbidden) throw errors.forbidden(`${check.forbidden}.`, details);
   const needsEvidence = check.missing.some((item) => item.startsWith('evidence for'));
@@ -826,7 +892,7 @@ function forceOrThrow(
   options: ForceOptions,
   problems: string[],
   fail: () => never,
-): GuardResult {
+): Pick<GuardResult, 'bypassed'> {
   if (problems.length === 0) return { bypassed: [] };
   if (!options.force) fail();
   if (!canForceMove(access.membership)) {
@@ -851,7 +917,7 @@ function guardPipelineMove(
   from: StatusRow,
   to: StatusRow,
   options: ForceOptions,
-): GuardResult {
+): Pick<GuardResult, 'bypassed'> {
   const problems: string[] = [];
   const rules = rulesOf(from);
   const subject = {
@@ -1045,12 +1111,18 @@ export interface EnterOptions {
    * status and assignees): they become the new stage's assignees and the hand-off is skipped.
    */
   assignees?: Assignees;
+  /**
+   * BAT-27: the task was sent back into `to` (a backward move): the reason is stored on the new
+   * visit, posted in the task's thread ("Sent back from …: …") and given to its agents' jobs.
+   */
+  returned?: { reason: string };
 }
 
 /**
  * Everything that happens when a task enters `to` (inside the caller's write, after the status
  * column and the move's own audit row are written): closes the visit of `from` (remembering who
- * held it), dismisses leftover approvals of an earlier visit of `to`, decides `to`'s assignees
+ * held it), dismisses leftover approvals and archives the evidence of an earlier visit of `to` (a
+ * new visit needs new ones; the old ones stay as history), decides `to`'s assignees
  * with the hand-off, applies `notify`, records the new visit and calls the Wave 2C hook. Returns
  * the task row afterwards.
  *
@@ -1076,6 +1148,7 @@ export function enterStage(
 ): TaskRow {
   const { task } = context;
   const rules = rulesOf(to);
+  const returned = options.returned?.reason.trim() ? options.returned : null;
   // Who had the task before: the stage it left (at creation, whom it was created with).
   const previous: Assignees = {
     users: stageUserIds(tx, task.id, from?.id ?? to.id),
@@ -1115,7 +1188,19 @@ export function enterStage(
     }
   }
 
-  // A new visit starts without the decisions of an earlier one.
+  // A new visit starts without the decisions and evidence of an earlier one.
+  if (from) {
+    tx.update(s.taskStageEvidence)
+      .set({ archivedAt: now })
+      .where(
+        and(
+          eq(s.taskStageEvidence.taskId, task.id),
+          eq(s.taskStageEvidence.statusId, to.id),
+          isNull(s.taskStageEvidence.archivedAt),
+        ),
+      )
+      .run();
+  }
   tx.update(s.taskApproval)
     .set({ dismissedAt: now })
     .where(
@@ -1242,8 +1327,24 @@ export function enterStage(
       enteredViaKeyId: actor?.key?.id ?? null,
       handoffMode: rules.handoff.mode,
       assignedUserIds,
+      ...(returned
+        ? {
+            returnReason: returned.reason,
+            returnedById: actor?.userId ?? null,
+            returnedViaKeyId: actor?.key?.id ?? null,
+            returnedFromStatusId: from?.id ?? null,
+          }
+        : {}),
     })
     .run();
+  if (returned && actor) {
+    insertChangeReply(
+      tx,
+      actor,
+      { type: 'task', id: task.id },
+      `Sent back from ${from?.name ?? 'another stage'}: ${returned.reason}`,
+    );
+  }
 
   onTaskEnteredStage(tx, updated, to, actor, {
     from,
@@ -1251,6 +1352,7 @@ export function enterStage(
     pool,
     assignedUserIds,
     needsApprovals: rules.approvals !== null,
+    returned: returned ? { reason: returned.reason, from: from?.name ?? null } : null,
   });
   return updated;
 }
@@ -1268,6 +1370,7 @@ function changeStatus(
   to: StatusRow,
   now: Date,
   meta: Record<string, unknown>,
+  enter: EnterOptions = {},
 ): TaskRow {
   const notified = new Set<string>();
   const transition = applyStatusTransition(
@@ -1310,6 +1413,7 @@ function changeStatus(
     to,
     now,
     notified,
+    enter,
   );
   emitAfterCommit(tx, taskEvent('task.updated', updated, actor));
   queueLinkedIssueEvents(tx, actor, [updated.id]);
@@ -1512,8 +1616,9 @@ export function saveTaskEvidence(
  * Approve / Request changes on the task's current stage (`POST /api/tasks/:id/approvals`, MCP
  * `approve_task`). Only people and agents matching the stage's `approvals.rule` may decide; each
  * counts once (a new decision replaces their previous one). Request changes sends the task back to
- * the previous stage when the stage allows it; otherwise it blocks leaving until it is dismissed.
- * An approval that satisfies the stage auto-advances it when `autoAdvance`.
+ * one of the stage's send-back stages (`sendBackTo`, default the nearest) with the comment as the
+ * reason (required then); a stage that can't send back blocks leaving until it is dismissed. An
+ * approval that satisfies the stage auto-advances it when `autoAdvance`.
  */
 export function decideApproval(
   deps: AppDeps,
@@ -1551,6 +1656,30 @@ export function decideApproval(
       )
       .run();
     const comment = input.comment?.trim() || null;
+    // Request changes sends it back (BAT-27): to the stage asked for, else the nearest one.
+    let sendBackTo: StatusRow | null = null;
+    if (input.decision === 'request_changes') {
+      const back = backStages(stagesOf(tx, status), status);
+      if (input.sendBackTo) {
+        sendBackTo = back.find((row) => row.id === input.sendBackTo) ?? null;
+        if (!sendBackTo) {
+          throw errors.validation(
+            back.length > 0
+              ? `From ${status.name}, tasks can only be sent back to ${joinOr(back.map((row) => row.name))}`
+              : `${status.name} doesn’t send tasks back`,
+            { field: 'sendBackTo' },
+          );
+        }
+      } else {
+        sendBackTo = back[0] ?? null;
+      }
+      if (sendBackTo && !comment) {
+        throw errors.validation(
+          `Say what has to change (comment): it is the reason ${ref} goes back to ${sendBackTo.name}`,
+          { field: 'comment' },
+        );
+      }
+    }
     tx.insert(s.taskApproval)
       .values({
         id: newId(),
@@ -1581,9 +1710,17 @@ export function decideApproval(
     });
     emitAfterCommit(tx, taskEvent('task.updated', task, actor));
     if (input.decision === 'request_changes') {
-      const previous = rules.allowSendBack ? previousStage(stagesOf(tx, status), status) : null;
-      if (previous) {
-        changeStatus(tx, actor, context, status, previous, now, { reason: 'changes_requested' });
+      if (sendBackTo && comment) {
+        changeStatus(
+          tx,
+          actor,
+          context,
+          status,
+          sendBackTo,
+          now,
+          { changesRequested: true, direction: 'back', reason: comment },
+          { returned: { reason: comment } },
+        );
       }
       return;
     }
@@ -1667,14 +1804,32 @@ function criteriaWithEvidence(
   return [...listed, ...orphans];
 }
 
+type EntryRow = typeof s.taskStageEntry.$inferSelect;
+
+/** The visit of `statusId` a row written at `at` belongs to: the latest one entered by then. */
+function visitAt(entries: readonly EntryRow[], statusId: string, at: Date): EntryRow | null {
+  let found: EntryRow | null = null;
+  for (const entry of entries) {
+    if (entry.statusId !== statusId || entry.enteredAt.getTime() > at.getTime()) continue;
+    if (!found || entry.enteredAt.getTime() >= found.enteredAt.getTime()) found = entry;
+  }
+  return found;
+}
+
+function visitRef(entry: EntryRow | null) {
+  return entry
+    ? { enteredAt: entry.enteredAt.toISOString(), leftAt: entry.leftAt?.toISOString() ?? null }
+    : null;
+}
+
 /**
- * The task's stage as the viewer sees it (task page, `get_task`), or null when the project has no
- * pipeline rules.
+ * The task's stage as the viewer sees it (task page, `get_task`), or null when its status is gone:
+ * what to do, the criteria and approvals of the current visit, where it can move (BAT-27), why it
+ * came back, and the evidence, decisions and visits of earlier ones.
  */
 export function stageOf(db: DbExecutor, viewer: Actor, task: TaskRow): TaskStage | null {
   const own = db.select().from(s.status).where(eq(s.status.id, task.statusId)).get();
   const statuses = own ? stagesOf(db, own) : [];
-  if (!hasPipeline(statuses) && !task.poolRule) return null;
   const current = statuses.find((row) => row.id === task.statusId);
   if (!current) return null;
   const rules = rulesOf(current);
@@ -1682,15 +1837,29 @@ export function stageOf(db: DbExecutor, viewer: Actor, task: TaskRow): TaskStage
   const access = getProjectAccess(db, viewer.userId, task.projectId);
   const canUpdate = access ? canUpdateTask(access, task) : false;
   const book = nameBook(db, [rules.moveRule, rules.approvals?.rule, task.poolRule]);
+  const statusNames = new Map(projectStatuses(db, task.projectId).map((row) => [row.id, row.name]));
+  const ref = (id: string) => ({ id, name: statusNames.get(id) ?? 'a deleted stage' });
+
+  const entries = db
+    .select()
+    .from(s.taskStageEntry)
+    .where(eq(s.taskStageEntry.taskId, task.id))
+    .orderBy(asc(s.taskStageEntry.enteredAt), asc(s.taskStageEntry.id))
+    .all();
+  const currentVisit =
+    [...entries].reverse().find((entry) => entry.statusId === current.id && !entry.leftAt) ?? null;
 
   const evidence = evidenceRows(db, task.id);
   const criteria = criteriaWithEvidence(
     db,
     rules.exitCriteria,
-    evidence.filter((row) => row.statusId === current.id),
+    evidence.filter((row) => row.statusId === current.id && !row.archivedAt),
     false,
   );
 
+  const canApprove = rules.approvals
+    ? matchesRule(db, scope, viewer.userId, rules.approvals.rule)
+    : false;
   let approvals: TaskStage['approvals'] = null;
   if (rules.approvals) {
     const active = activeApprovals(db, task.id, current.id);
@@ -1718,12 +1887,13 @@ export function stageOf(db: DbExecutor, viewer: Actor, task: TaskRow): TaskStage
       rule: ruleText(rules.approvals.rule, book),
       dismissOnChange: rules.approvals.dismissOnChange,
       given,
-      canApprove: matchesRule(db, scope, viewer.userId, rules.approvals.rule),
+      canApprove,
     };
   }
 
+  // Where it can go (BAT-27).
   const next = nextStage(statuses, current);
-  const previous = previousStage(statuses, current);
+  const back = backStages(statuses, current);
   const subject = { task, scope, userId: viewer.userId };
   const memo: LeaveMemo = {};
   const blockedMoves: Record<string, string> = {};
@@ -1734,56 +1904,129 @@ export function stageOf(db: DbExecutor, viewer: Actor, task: TaskRow): TaskStage
     if (reasons.length > 0) blockedMoves[target.id] = reasons.join('; ');
   }
   const nextCheck = next ? evaluateMove(db, subject, statuses, current, next, memo) : null;
+  const mayBack = (canUpdate && maySendBack(db, subject, rules)) || canApprove;
+  const canMoveTo = {
+    forward:
+      next && nextCheck
+        ? {
+            id: next.id,
+            name: next.name,
+            missing: [
+              ...(canUpdate ? [] : ['permission to move tasks']),
+              ...(nextCheck.forbidden ? [nextCheck.forbidden] : []),
+              ...nextCheck.missing,
+            ],
+          }
+        : null,
+    back: mayBack ? back.map((row) => ({ id: row.id, name: row.name })) : [],
+  };
   const assigned = stageUserIds(db, task.id, task.statusId).includes(viewer.userId);
 
-  const previousEvidence = statuses
-    .filter((row) => row.id !== current.id)
-    .flatMap((row) => {
-      const rowsOfStage = evidence.filter((item) => item.statusId === row.id);
-      if (rowsOfStage.length === 0) return [];
-      const stageCriteria = rulesOf(row).exitCriteria.filter((criterion) =>
-        rowsOfStage.some((item) => item.criterionId === criterion.id),
+  const people = getUserSummaries(
+    db,
+    entries.flatMap((entry) => [entry.enteredById, entry.returnedById]),
+  );
+  const entryKeys = getViaKeys(
+    db,
+    entries.map((entry) => entry.returnedViaKeyId),
+  );
+  const returnReason =
+    currentVisit?.returnReason != null
+      ? {
+          reason: currentVisit.returnReason,
+          by: currentVisit.returnedById ? (people.get(currentVisit.returnedById) ?? null) : null,
+          via: currentVisit.returnedViaKeyId
+            ? (entryKeys.get(currentVisit.returnedViaKeyId) ?? null)
+            : null,
+          from: currentVisit.returnedFromStatusId ? ref(currentVisit.returnedFromStatusId) : null,
+          at: currentVisit.enteredAt.toISOString(),
+        }
+      : null;
+  const visits = entries.map((entry) => ({
+    id: entry.id,
+    status: ref(entry.statusId),
+    enteredAt: entry.enteredAt.toISOString(),
+    leftAt: entry.leftAt?.toISOString() ?? null,
+    enteredBy: entry.enteredById ? (people.get(entry.enteredById) ?? null) : null,
+    returnReason: entry.returnReason,
+    returnedFrom: entry.returnedFromStatusId ? ref(entry.returnedFromStatusId) : null,
+  }));
+
+  // Evidence of other stages and of earlier visits of this one, a group per visit.
+  const evidenceGroups = new Map<
+    string,
+    { status: string; visit: EntryRow | null; rows: typeof evidence }
+  >();
+  for (const row of evidence) {
+    if (row.statusId === current.id && !row.archivedAt) continue;
+    const visit = visitAt(entries, row.statusId, row.createdAt);
+    const key = `${row.statusId}:${visit?.id ?? ''}`;
+    const group = evidenceGroups.get(key) ?? { status: row.statusId, visit, rows: [] };
+    group.rows.push(row);
+    evidenceGroups.set(key, group);
+  }
+  const statusRules = new Map(statuses.map((row) => [row.id, rulesOf(row)]));
+  const previousEvidence = [...evidenceGroups.values()]
+    .sort(
+      (a, b) =>
+        (a.visit?.enteredAt.getTime() ?? a.rows[0]?.createdAt.getTime() ?? 0) -
+        (b.visit?.enteredAt.getTime() ?? b.rows[0]?.createdAt.getTime() ?? 0),
+    )
+    .map((group) => {
+      const stageCriteria = (statusRules.get(group.status)?.exitCriteria ?? []).filter(
+        (criterion) => group.rows.some((item) => item.criterionId === criterion.id),
       );
-      return [
-        {
-          status: { id: row.id, name: row.name },
-          criteria: criteriaWithEvidence(db, stageCriteria, rowsOfStage),
-        },
-      ];
+      return {
+        status: ref(group.status),
+        visit: visitRef(group.visit),
+        criteria: criteriaWithEvidence(db, stageCriteria, group.rows),
+      };
     });
 
-  const earlierDecisions = db
+  // Decisions of other stages and earlier visits (those dismissed during their visit left out).
+  const decisions = db
     .select()
     .from(s.taskApproval)
-    .where(and(eq(s.taskApproval.taskId, task.id), isNull(s.taskApproval.dismissedAt)))
-    .orderBy(asc(s.taskApproval.createdAt))
+    .where(eq(s.taskApproval.taskId, task.id))
+    .orderBy(asc(s.taskApproval.createdAt), asc(s.taskApproval.id))
     .all()
-    .filter((row) => row.statusId !== current.id);
+    .flatMap((row) => {
+      const visit = visitAt(entries, row.statusId, row.createdAt);
+      // The current visit's decisions are `approvals.given`.
+      if (row.statusId === current.id && (!visit || visit.id === currentVisit?.id)) return [];
+      if (row.dismissedAt && (!visit?.leftAt || row.dismissedAt < visit.leftAt)) return [];
+      return [{ row, visit }];
+    });
   const deciders = getUserSummaries(
     db,
-    earlierDecisions.map((row) => row.userId),
+    decisions.map((item) => item.row.userId),
   );
   const decisionKeys = getViaKeys(
     db,
-    earlierDecisions.map((row) => row.viaKeyId),
+    decisions.map((item) => item.row.viaKeyId),
   );
-  const previousApprovals = statuses.flatMap((row) => {
-    const decisions = earlierDecisions.filter((decision) => decision.statusId === row.id);
-    if (decisions.length === 0) return [];
-    return [
-      {
-        status: { id: row.id, name: row.name },
-        decisions: decisions.map((decision) => ({
-          id: decision.id,
-          user: decision.userId ? (deciders.get(decision.userId) ?? null) : null,
-          via: decision.viaKeyId ? (decisionKeys.get(decision.viaKeyId) ?? null) : null,
-          decision: decision.decision,
-          comment: decision.comment,
-          createdAt: decision.createdAt.toISOString(),
-        })),
-      },
-    ];
-  });
+  const decisionGroups = new Map<
+    string,
+    { status: string; visit: EntryRow | null; rows: Array<(typeof decisions)[number]['row']> }
+  >();
+  for (const { row, visit } of decisions) {
+    const key = `${row.statusId}:${visit?.id ?? ''}`;
+    const group = decisionGroups.get(key) ?? { status: row.statusId, visit, rows: [] };
+    group.rows.push(row);
+    decisionGroups.set(key, group);
+  }
+  const previousApprovals = [...decisionGroups.values()].map((group) => ({
+    status: ref(group.status),
+    visit: visitRef(group.visit),
+    decisions: group.rows.map((decision) => ({
+      id: decision.id,
+      user: decision.userId ? (deciders.get(decision.userId) ?? null) : null,
+      via: decision.viaKeyId ? (decisionKeys.get(decision.viaKeyId) ?? null) : null,
+      decision: decision.decision,
+      comment: decision.comment,
+      createdAt: decision.createdAt.toISOString(),
+    })),
+  }));
 
   return {
     status: { id: current.id, name: current.name },
@@ -1792,7 +2035,10 @@ export function stageOf(db: DbExecutor, viewer: Actor, task: TaskRow): TaskStage
     approvals,
     moveRule: whoMovesOn(rules, (rule) => ruleText(rule, book)),
     next: next ? { id: next.id, name: next.name } : null,
-    sendBackTo: previous && rules.allowSendBack ? { id: previous.id, name: previous.name } : null,
+    sendBackTo: back[0] ? { id: back[0].id, name: back[0].name } : null,
+    canMoveTo,
+    returnReason,
+    visits,
     autoAdvance: rules.autoAdvance,
     pool: task.poolRule
       ? {
@@ -1846,7 +2092,7 @@ export function pipelineSummaries(
       criterionId: s.taskStageEvidence.criterionId,
     })
     .from(s.taskStageEvidence)
-    .where(inArray(s.taskStageEvidence.taskId, ids))
+    .where(and(inArray(s.taskStageEvidence.taskId, ids), isNull(s.taskStageEvidence.archivedAt)))
     .all();
   const approvals = db
     .select({

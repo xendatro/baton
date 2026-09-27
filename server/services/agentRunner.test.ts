@@ -40,7 +40,7 @@ import { getTeamPresence } from './presence';
 import { createReply } from './replies';
 import { decideApproval } from './pipelines';
 import { updateStatus } from './statuses';
-import { getTask, updateTask } from './tasks';
+import { getTask, moveTask, updateTask } from './tasks';
 
 /**
  * The desktop app's runners (BAT-24): registering, claiming jobs, whose jobs run without asking,
@@ -246,6 +246,30 @@ describe('job briefs, sessions and usage', () => {
     expect(getTask(ctx.deps, ethanWeb, task.id).stage?.previousApprovals).toMatchObject([
       { status: { name: 'Open' }, decisions: [{ comment: 'Add a download link on the web too' }] },
     ]);
+  });
+
+  it('puts the send-back reason at the top of the brief (BAT-27)', async () => {
+    const runner = register();
+    const [open, done] = ctx.db.orm
+      .select()
+      .from(s.status)
+      .where(eq(s.status.projectId, projectId))
+      .orderBy(s.status.position)
+      .all();
+    if (!open || !done) throw new Error('statuses');
+    updateTask(ctx.deps, ethanWeb, task.id, { assigneeUsers: { set: [runnerKey.userId] } });
+    updateTask(ctx.deps, ethanWeb, task.id, { statusId: done.id });
+    moveTask(ctx.deps, ethanWeb, task.id, {
+      statusId: open.id,
+      reason: 'The download link is broken',
+    });
+    const jobs = (await nextRunnerJobs(ctx.deps, runnerKey, runner.id, 0)).jobs;
+    const job = jobs.find((item) => item.kind === 'assigned');
+    expect(job?.payload).toMatchObject({ returnReason: 'The download link is broken' });
+    expect(job?.instructions).toContain('was sent back to Open from Done because');
+    const { prompt } = jobBrief(ctx.deps, runnerKey, job?.jobId ?? '', runner.id);
+    expect(prompt).toContain('## Sent back because\n\n> The download link is broken');
+    expect(prompt.indexOf('## Sent back because')).toBeLessThan(prompt.indexOf('## The job'));
   });
 
   it('records usage when a job completes or is released, and sums it in stats', async () => {

@@ -158,12 +158,18 @@ function actions(taskId: string): string[] {
 }
 
 describe('a project without rules', () => {
-  it('behaves as before: any move, no stage on the task', () => {
+  it('moves strictly too (BAT-27): on to the next stage, back with a reason', () => {
     const task = newTask();
-    expect(task.stage).toBeUndefined();
-    expect(move(ben, task.id, done).status.name).toBe('Done');
-    expect(move(ben, task.id, todo).status.name).toBe('Open');
-    expect(move(ben, task.id, review).status.name).toBe('In Review');
+    expect(task.stage?.canMoveTo).toEqual({
+      forward: { id: doing.id, name: 'In Progress', missing: [] },
+      back: [],
+    });
+    expect(failure(() => move(ben, task.id, done)).message).toBe(
+      'From Open, tasks only move on to In Progress.',
+    );
+    expect(move(ben, task.id, doing).status.name).toBe('In Progress');
+    expect(failure(() => move(ben, task.id, todo)).code).toBe('validation_failed');
+    expect(move(ben, task.id, todo, { reason: 'Not ready' }).status.name).toBe('Open');
     const board = getBoard(ctx.deps, web(ben), project.project.id, { limit: 50 });
     expect(board.columns.flatMap((column) => column.tasks)[0]).not.toHaveProperty('pipeline');
   });
@@ -250,7 +256,7 @@ describe('status rules', () => {
 describe('hand-off on enter', () => {
   it('specific: assigns the rule’s users who can see the project', () => {
     setRules(review, { handoff: { mode: 'specific', rule: rule([reviewers('both')]) } });
-    const task = newTask({ assignees: [ben.id] });
+    const task = newTask({ assignees: [ben.id], statusId: doing.id });
     move(ben, task.id, review);
     expect(assigneeIds(task.id)).toEqual([ann.id, annAi.id].sort());
     expect(actions(task.id)).toContain('task.handed_off');
@@ -277,7 +283,7 @@ describe('hand-off on enter', () => {
     setRules(review, {
       handoff: { mode: 'specific', rule: rule([reviewers('people')], [user(ann)]) },
     });
-    const task = newTask({ assignees: [ben.id] });
+    const task = newTask({ assignees: [ben.id], statusId: doing.id });
     move(ben, task.id, review);
     expect(assigneeIds(task.id)).toEqual([ben.id]);
   });
@@ -300,14 +306,14 @@ describe('hand-off on enter', () => {
     newTask({ assignees: [ben.id] });
     newTask({ assignees: [ben.id] });
     newTask({ assignees: [cal.id], statusId: done.id }); // done: doesn't count
-    const task = newTask();
+    const task = newTask({ statusId: doing.id });
     move(owner, task.id, review);
     expect(assigneeIds(task.id)).toEqual([cal.id]);
-    const second = newTask();
+    const second = newTask({ statusId: doing.id });
     move(owner, second.id, review);
     newTask({ assignees: [cal.id] });
     newTask({ assignees: [cal.id] });
-    const third = newTask();
+    const third = newTask({ statusId: doing.id });
     move(owner, third.id, review);
     expect(assigneeIds(third.id)).toEqual([ben.id]);
   });
@@ -342,7 +348,7 @@ describe('hand-off on enter', () => {
 describe('notify on enter', () => {
   it('notifies the rule’s users (stage_entered), never the mover', () => {
     setRules(review, { notify: rule([reviewers('people'), user(ben)]) });
-    const task = newTask();
+    const task = newTask({ statusId: doing.id });
     move(ben, task.id, review);
     const notes = ctx.db.orm
       .select({ userId: s.notification.userId, snippet: s.notification.snippet })
@@ -580,28 +586,30 @@ describe('moving back and skipping', () => {
     setRules(review, { exitCriteria: [{ id: 'ok', text: 'Checked' }] });
   });
 
-  it('a gated stage only sends back to the previous stage', () => {
+  it('a stage only sends back to the stages checked in sendBackTo, with a reason', () => {
+    setRules(review, { sendBackTo: [doing.id] });
     const task = newTask({ statusId: review.id });
     expect(failure(() => move(ben, task.id, todo)).message).toBe(
       'From In Review, tasks can only be sent back to In Progress.',
     );
-    expect(move(ben, task.id, doing).status.name).toBe('In Progress');
+    expect(failure(() => move(ben, task.id, doing)).message).toContain('Give a reason');
+    expect(move(ben, task.id, doing, { reason: 'Redo' }).status.name).toBe('In Progress');
   });
 
-  it('allow_send_back: false refuses every backward move', () => {
+  it('allow_send_back: false (legacy) empties sendBackTo and refuses every backward move', () => {
     setRules(review, { allowSendBack: false });
     const task = newTask({ statusId: review.id });
-    expect(failure(() => move(ben, task.id, doing)).message).toBe(
-      'In Review doesn’t allow moving tasks back.',
+    expect(failure(() => move(ben, task.id, doing, { reason: 'x' })).message).toBe(
+      'In Review doesn’t send tasks back.',
     );
   });
 
-  it('a gated stage can’t be skipped', () => {
+  it('a stage can’t be skipped', () => {
     const task = newTask({ statusId: doing.id });
     const error = failure(() => move(ben, task.id, done));
-    expect(error.message).toContain('going through In Review first');
+    expect(error.message).toContain('From In Progress, tasks only move on to In Review');
     const stage = getTask(ctx.deps, web(ben), task.id).stage;
-    expect(stage?.blockedMoves[done.id]).toContain('going through In Review first');
+    expect(stage?.blockedMoves[done.id]).toContain('only move on to In Review');
     expect(stage?.blockedMoves[review.id]).toBeUndefined();
     expect(stage?.next?.name).toBe('In Review');
     expect(stage?.canMove).toBe(true);
@@ -691,7 +699,7 @@ describe('pools', () => {
   });
 
   it('unassign the task; only pool members claim it, which assigns them', () => {
-    const task = newTask({ assignees: [ben.id] });
+    const task = newTask({ assignees: [ben.id], statusId: doing.id });
     move(ben, task.id, review);
     expect(assigneeIds(task.id)).toEqual([]);
     const pooled = getTask(ctx.deps, web(ann), task.id);
@@ -718,7 +726,7 @@ describe('pools', () => {
   });
 
   it('free a claim when the task enters the pool', () => {
-    const task = newTask();
+    const task = newTask({ statusId: doing.id });
     claimTask(ctx.deps, web(ben), task.id, {});
     move(ben, task.id, review);
     expect(getTask(ctx.deps, web(ann), task.id).claim).toBeNull();
@@ -726,7 +734,7 @@ describe('pools', () => {
   });
 
   it('claim_next_task skips pools the caller isn’t in', () => {
-    const task = newTask();
+    const task = newTask({ statusId: doing.id });
     move(ben, task.id, review);
     // Everything else is claimed.
     expect(claimNextTask(ctx.deps, web(ben), project.project.id, {}).task).toBeNull();
@@ -735,7 +743,7 @@ describe('pools', () => {
   });
 
   it('assigning someone takes the task out of the pool', () => {
-    const task = newTask();
+    const task = newTask({ statusId: doing.id });
     move(ben, task.id, review);
     updateTask(ctx.deps, web(owner), task.id, { assigneeUsers: { set: [cal.id] } });
     expect(getTask(ctx.deps, web(ben), task.id).stage?.pool).toBeNull();

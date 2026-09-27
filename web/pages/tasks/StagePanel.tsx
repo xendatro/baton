@@ -5,6 +5,7 @@ import {
   CircleCheckIcon,
   CircleIcon,
   HandIcon,
+  HistoryIcon,
   ShieldCheckIcon,
   TriangleAlertIcon,
   UndoIcon,
@@ -26,14 +27,17 @@ import {
   CollapsibleTrigger,
 } from '@web/components/ui/collapsible';
 import { Textarea } from '@web/components/ui/textarea';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@web/components/ui/tooltip';
 import { errorMessage } from '@web/lib/api';
 import { cn } from '@web/lib/utils';
 import { useClaimAction, useDecideApproval, useSaveEvidence } from './queries';
+import { SendBackDialog, type SendBackResult } from './SendBackDialog';
 
 /**
- * The task's stage in the project's pipeline (design §5): what to do (instructions), the exit
- * criteria with their evidence (editable while the task is in the stage), approvals with Approve /
- * Request changes, Claim for tasks waiting in a pool, and what still blocks moving on.
+ * The task's stage in the project's pipeline (design §5): why it was sent back (BAT-27), what to do
+ * (instructions), the exit criteria with their evidence (editable while the task is in the stage),
+ * approvals with Approve / Request changes, Claim for tasks waiting in a pool, what still blocks
+ * moving on, the green "Move to <next>" and amber "Send back…" buttons, and the stage history.
  */
 
 export interface StagePanelProps {
@@ -42,9 +46,11 @@ export interface StagePanelProps {
   /** Moves the task on to `stage.next` (the page's status change, with its error handling). */
   onMoveOn?: () => void;
   moving?: boolean;
+  /** Sends the task back to an earlier stage with a reason (BAT-27). */
+  onSendBack?: (result: SendBackResult) => Promise<unknown>;
 }
 
-export function StagePanel({ task, teamId, onMoveOn, moving }: StagePanelProps) {
+export function StagePanel({ task, teamId, onMoveOn, moving, onSendBack }: StagePanelProps) {
   const { stage } = task;
   const headingId = useId();
   return (
@@ -66,6 +72,8 @@ export function StagePanel({ task, teamId, onMoveOn, moving }: StagePanelProps) 
           </span>
         ) : null}
       </div>
+
+      {stage.returnReason ? <ReturnReason stage={stage} /> : null}
 
       {stage.instructions.trim() ? (
         <div className="mt-3 text-sm">
@@ -102,19 +110,120 @@ export function StagePanel({ task, teamId, onMoveOn, moving }: StagePanelProps) 
               ))}
             </ul>
           </div>
-        ) : stage.canMove && onMoveOn ? (
-          <div className="mt-4">
-            <Button size="sm" onClick={onMoveOn} disabled={moving}>
-              {moving ? <Spinner /> : <ArrowRightIcon aria-hidden="true" />}
-              Move to {stage.next.name}
-            </Button>
-          </div>
         ) : null
       ) : null}
 
+      <StageMoves stage={stage} onMoveOn={onMoveOn} moving={moving} onSendBack={onSendBack} />
+
       <PreviousReviews stage={stage} />
       {stage.previousEvidence.length > 0 ? <PreviousEvidence stage={stage} /> : null}
+      {(stage.visits?.length ?? 0) > 1 ? <StageHistory stage={stage} /> : null}
     </section>
+  );
+}
+
+/** Why the task is back in this stage (BAT-27). */
+function ReturnReason({ stage }: { stage: TaskStage }) {
+  const returned = stage.returnReason;
+  if (!returned) return null;
+  return (
+    <div
+      role="note"
+      data-testid="return-reason"
+      className="mt-3 rounded-md border border-amber-500/40 bg-amber-500/5 px-3 py-2 text-sm"
+    >
+      <p className="flex flex-wrap items-center gap-1 text-xs text-muted-foreground">
+        <UndoIcon className="size-3.5 text-amber-600 dark:text-amber-400" aria-hidden="true" />
+        Sent back{returned.from ? ` from ${returned.from.name}` : ''} by
+        <UserName user={returned.by} via={returned.via} avatar="xs" />
+        <RelativeTime value={returned.at} />
+      </p>
+      <p className="mt-1 break-words whitespace-pre-wrap">{returned.reason}</p>
+    </div>
+  );
+}
+
+/**
+ * The moves the viewer can make (BAT-27): a green button to the next stage (disabled, with what
+ * is missing, while it is blocked) and an amber Send back… for the earlier stages it may go to.
+ */
+function StageMoves({
+  stage,
+  onMoveOn,
+  moving,
+  onSendBack,
+}: {
+  stage: TaskStage;
+  onMoveOn?: (() => void) | undefined;
+  moving?: boolean | undefined;
+  onSendBack?: ((result: SendBackResult) => Promise<unknown>) | undefined;
+}) {
+  const [sending, setSending] = useState(false);
+  const forward =
+    stage.canMoveTo?.forward ??
+    (stage.next ? { ...stage.next, missing: stage.canMove ? [] : stage.missing } : null);
+  const back = onSendBack ? (stage.canMoveTo?.back ?? []) : [];
+  if (!forward && back.length === 0) return null;
+  const blocked = !forward || forward.missing.length > 0 || !onMoveOn;
+  const moveButton = forward ? (
+    <Button
+      size="sm"
+      onClick={onMoveOn}
+      disabled={blocked || moving}
+      data-testid="move-forward"
+      className="bg-emerald-600 text-white hover:bg-emerald-600/90 dark:bg-emerald-600 dark:hover:bg-emerald-600/90"
+    >
+      {moving ? <Spinner /> : <ArrowRightIcon aria-hidden="true" />}
+      Move to {forward.name}
+    </Button>
+  ) : null;
+  return (
+    <div className="mt-4 flex flex-wrap items-center gap-2">
+      {forward && blocked && forward.missing.length > 0 ? (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            {/* A disabled button gets no pointer or focus events: the wrapper shows the reason. */}
+            <span
+              tabIndex={0}
+              className="rounded-md"
+              aria-label={`Move to ${forward.name}: blocked`}
+            >
+              {moveButton}
+            </span>
+          </TooltipTrigger>
+          <TooltipContent className="max-w-xs">
+            <p className="font-medium">Still needed:</p>
+            <ul className="list-disc pl-4">
+              {forward.missing.map((item) => (
+                <li key={item}>{item}</li>
+              ))}
+            </ul>
+          </TooltipContent>
+        </Tooltip>
+      ) : (
+        moveButton
+      )}
+      {back.length > 0 && onSendBack ? (
+        <>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => setSending(true)}
+            className="border-amber-500/60 text-amber-700 hover:bg-amber-500/10 hover:text-amber-800 dark:text-amber-400 dark:hover:text-amber-300"
+          >
+            <UndoIcon aria-hidden="true" />
+            Send back…
+          </Button>
+          <SendBackDialog
+            open={sending}
+            onOpenChange={setSending}
+            from={stage.status.name}
+            stages={back}
+            onConfirm={onSendBack}
+          />
+        </>
+      ) : null}
+    </div>
   );
 }
 
@@ -267,7 +376,10 @@ function Approvals({ task }: { task: Task & { stage: TaskStage } }) {
   const decide = useDecideApproval(task);
   const [comment, setComment] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [requesting, setRequesting] = useState(false);
   if (!approvals) return null;
+  // Where Request changes can send it (BAT-27): the reviewer picks the stage and the reason.
+  const back = task.stage.canMoveTo?.back ?? (task.stage.sendBackTo ? [task.stage.sendBackTo] : []);
 
   const run = (decision: 'approve' | 'request_changes') => {
     setError(null);
@@ -354,16 +466,34 @@ function Approvals({ task }: { task: Task & { stage: TaskStage } }) {
             <Button
               size="sm"
               variant="outline"
-              onClick={() => run('request_changes')}
+              onClick={() => (back.length > 0 ? setRequesting(true) : run('request_changes'))}
               disabled={decide.isPending}
+              className="border-amber-500/60 text-amber-700 hover:bg-amber-500/10 hover:text-amber-800 dark:text-amber-400 dark:hover:text-amber-300"
             >
               <UndoIcon aria-hidden="true" />
-              Request changes
-              {task.stage.sendBackTo ? (
-                <span className="sr-only"> (sends it back to {task.stage.sendBackTo.name})</span>
+              Request changes{back.length > 0 ? '…' : ''}
+              {back[0] ? (
+                <span className="sr-only"> (sends it back to an earlier stage)</span>
               ) : null}
             </Button>
           </div>
+          <SendBackDialog
+            open={requesting}
+            onOpenChange={setRequesting}
+            from={task.stage.status.name}
+            stages={back}
+            initialReason={comment}
+            title="Request changes"
+            confirmLabel="Request changes, send back"
+            onConfirm={({ statusId, reason }) =>
+              decide
+                .mutateAsync({ decision: 'request_changes', comment: reason, sendBackTo: statusId })
+                .then((updated) => {
+                  setComment('');
+                  toast.success(`Changes requested: sent back to ${updated.status.name}`);
+                })
+            }
+          />
           {error ? (
             <p role="alert" className="text-xs text-destructive">
               {error}
@@ -387,7 +517,7 @@ function PreviousReviews({ stage }: { stage: TaskStage }) {
   return (
     <div className="mt-4 border-t pt-3">
       <h3 className="mb-2 text-xs font-medium text-muted-foreground">
-        Reviews from earlier stages
+        Reviews from earlier stages and visits
       </h3>
       <ul className="grid gap-2" aria-label="Reviews from earlier stages">
         {groups.flatMap((group) =>
@@ -397,6 +527,7 @@ function PreviousReviews({ stage }: { stage: TaskStage }) {
                 @{decision.user?.username ?? 'someone'}{' '}
                 {decision.decision === 'approve' ? 'approved' : 'requested changes'} in{' '}
                 {group.status.name}
+                {group.status.id === stage.status.id ? ' (a previous visit)' : ''}
               </p>
               <p className="whitespace-pre-wrap">{decision.comment}</p>
             </li>
@@ -417,13 +548,20 @@ function PreviousEvidence({ stage }: { stage: TaskStage }) {
             className={cn('transition-transform', open && 'rotate-90')}
             aria-hidden="true"
           />
-          Evidence from earlier stages
+          Evidence from earlier stages and visits
         </Button>
       </CollapsibleTrigger>
       <CollapsibleContent>
         <div className="mt-2 grid gap-3">
           {stage.previousEvidence.map((group) => (
-            <Section key={group.status.id} title={group.status.name}>
+            <Section
+              key={`${group.status.id}:${group.visit?.enteredAt ?? ''}`}
+              title={
+                group.status.id === stage.status.id
+                  ? `${group.status.name}, a previous visit`
+                  : group.status.name
+              }
+            >
               <ul className="grid gap-2">
                 {group.criteria.map((criterion) => (
                   <li key={criterion.id} className="flex items-start gap-2">
@@ -449,5 +587,44 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
       <h4 className="mb-1 text-xs font-medium text-muted-foreground">{title} (locked)</h4>
       {children}
     </div>
+  );
+}
+
+/** Every visit of the task to a stage, oldest first (BAT-27), with why it came back. */
+function StageHistory({ stage }: { stage: TaskStage }) {
+  const [open, setOpen] = useState(false);
+  const visits = stage.visits ?? [];
+  return (
+    <Collapsible open={open} onOpenChange={setOpen} className="mt-4 border-t pt-3">
+      <CollapsibleTrigger asChild>
+        <Button variant="ghost" size="sm" className="-ml-2 h-7 text-xs text-muted-foreground">
+          <ChevronRightIcon
+            className={cn('transition-transform', open && 'rotate-90')}
+            aria-hidden="true"
+          />
+          <HistoryIcon aria-hidden="true" />
+          Stage history ({visits.length} visits)
+        </Button>
+      </CollapsibleTrigger>
+      <CollapsibleContent>
+        <ol className="mt-2 grid gap-2" aria-label="Stage history" data-testid="stage-history">
+          {visits.map((visit) => (
+            <li key={visit.id} className="grid gap-0.5 text-sm">
+              <p className="flex flex-wrap items-center gap-1">
+                <span className="font-medium">{visit.status.name}</span>
+                <RelativeTime value={visit.enteredAt} className="text-xs text-muted-foreground" />
+                {visit.leftAt ? null : <span className="text-xs text-muted-foreground">(now)</span>}
+              </p>
+              {visit.returnReason ? (
+                <p className="text-xs break-words whitespace-pre-wrap text-muted-foreground">
+                  Sent back{visit.returnedFrom ? ` from ${visit.returnedFrom.name}` : ''}:{' '}
+                  {visit.returnReason}
+                </p>
+              ) : null}
+            </li>
+          ))}
+        </ol>
+      </CollapsibleContent>
+    </Collapsible>
   );
 }

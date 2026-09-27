@@ -111,7 +111,7 @@ status pending|claimed|done|cancelled, session)`. Kinds: `mention` (agent's
 
 > **BAT-25:** a project can now have several pipelines, each its own ordered set of stages and
 > board (see docs/API.md "Pipelines (BAT-25)" and DECISIONS 2026-09-27). Everything below applies
-> per pipeline: the next stage, send-back and skipped stages are those of the task's pipeline.
+> per pipeline: the next stage and the send-back stages are those of the task's pipeline.
 
 Statuses are stages with **no hidden open/done category** (2026-09-27 "stages"): each has a name,
 color, a user-chosen **icon shape** and optional rules. A new project's Open and Done are ordinary
@@ -145,7 +145,19 @@ Every status (stage) gets optional rules (`status` columns, JSON where noted):
   `{ count, rule, dismissOnChange }` (Approve / Request changes in the task thread; each person or
   agent counts once; stale approvals dismissed on edits when `dismissOnChange`); `auto_advance`
   (move by itself as soon as criteria + approvals are satisfied); `next_status_id` (default: the
-  next column); `allow_send_back` (Request changes / moving back goes to the **previous stage only**).
+  next column).
+- **Strict moves (BAT-27)**, like invisible arrows, in every project: **forward** only to the next
+  stage (`next_status_id`, else the next column), through the leave rules above; no skipping (a
+  stage to skip is configured out with `next_status_id`). **Back** only to the earlier stages checked
+  in the stage's `send_back_to` ("Can move to" in the stage dialog; empty: it can't send back), with
+  no approvals or evidence needed but always a **reason**, by whoever may move it on or approve the
+  stage. Request changes sends it back with the reviewer's comment as the reason (the reviewer picks
+  the stage when several are checked; default the nearest). The reason is stored on the new visit
+  (`task_stage_entry.return_reason`, `returned_by_id`, `returned_from_status_id`), posted in the
+  thread ("Sent back from Human Review: …"), audited as `task.moved` with `meta.direction: 'back'`,
+  shown on the task page and put at the top of the agent's next job brief ("Sent back because";
+  `payload.returnReason`). Coming back to a stage starts a fresh review: its earlier approvals are
+  dismissed and its evidence archived (both shown as previous visits).
 - The last stage simply has no next stage; its hand-off can assign back to the author or notify.
 - **Admin override**: team owner/ADMINISTRATOR can force a move past any rule, with a reason
   (logged as `task.forced`).
@@ -154,9 +166,10 @@ Every status (stage) gets optional rules (`status` columns, JSON where noted):
 - **Cards show what blocks them**: "Approvals 1/2", "Criteria 2/3", "Claimable".
 - **Copy pipeline** from another project you can manage: copies statuses and all rules; principals
   that don't exist in the target team are flagged for re-picking, never silently dropped.
-- MCP: `get_task` includes the stage's instructions, criteria (with evidence), approvals status and
-  what is missing to move on; `move_task` accepts `evidence`; new `approve_task { task, decision,
-comment? }`; pool tasks are claimed with `claim_task`.
+- MCP: `get_task` includes the stage's instructions, criteria (with evidence), approvals status,
+  what is missing to move on, `canMoveTo { forward, back }` and `returnReason`; `move_task` accepts
+  `evidence` and needs `reason` to send back; `approve_task { task, decision, comment?, sendBackTo? }`;
+  pool tasks are claimed with `claim_task`.
 - Rollout data (after deploy, by the lead, **not** Caden's projects): BAT's In-Review needs
   1 approval from people (agents denied).
 

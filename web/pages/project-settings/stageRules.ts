@@ -41,7 +41,6 @@ export function countRules(rules: StageRules | undefined): number {
     rules.approvals !== null,
     rules.autoAdvance,
     rules.nextStatusId !== null,
-    !rules.allowSendBack,
   ].filter(Boolean).length;
 }
 

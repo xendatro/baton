@@ -74,6 +74,7 @@ import {
 } from '../projects/queries';
 import { BoardBackLink, ReadOnlyNotice, SettingsCard, SettingsHeader } from './common';
 import { CopyPipelineDialog } from './CopyPipelineDialog';
+import { PipelineDiagram } from './PipelineDiagram';
 import { PipelinesBar } from './PipelinesBar';
 import { usePrincipalOptions } from './pipelineQueries';
 import { StatusDialog, type StatusDialogState } from './StatusDialog';
@@ -286,6 +287,7 @@ function Statuses({ teamId, projectId }: { teamId: string; projectId: string }) 
           </DndContext>
         )}
       </SettingsCard>
+      <PipelineDiagram statuses={items} />
       <DeleteStatusDialog
         projectId={projectId}
         status={deleting}

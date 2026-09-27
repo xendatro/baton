@@ -654,8 +654,13 @@ label names, usernames, role names or `@&slug`, `KEY#51` issues) and priorities 
 #### Pipelines (docs/design/agents-and-pipelines.md §5)
 
 Schemas: `shared/schemas/pipelines.ts`. Every `Status` carries `rules: StageRules` =
-`{ instructions (markdown), handoff: { mode: 'keep'|'nobody'|'specific'|'pool'|'round_robin'|'least_busy'|'author'|'mover'|'stage_holder', rule?: PrincipalRule, statusId? }, notify: PrincipalRule|null, onEnter: { resolveIssues, releaseClaim, notifyAuthor, notifyAssignees, notifyPreviousHolder }, blocksDependents, claimable, exitCriteria: [{ id, text }], moveBy: { assignees, claimer }, moveRule: PrincipalRule|null, approvals: { count, rule: PrincipalRule, dismissOnChange }|null, autoAdvance, nextStatusId|null, allowSendBack }`
-(the defaults, `keep`/`null`/all `false`/`true`/`true`/`[]`/`null`/`null`/`false`/`null`/`true`, change nothing). Statuses have no hidden category: `onEnter.resolveIssues` resolves the issues the task `fixes`, `onEnter.releaseClaim` releases its claim, `onEnter.notifyAuthor` sends `task_done` ("Reached <stage>") to the author and `onEnter.notifyPreviousHolder` to whoever held it in the stage it left; `onEnter.notifyAssignees` (default true) sends `assigned` to the people the hand-off assigns; they run on every entry. A hand-off to `nobody` also releases the claim. `blocksDependents: false` means tasks there no longer block the tasks waiting on them and count as completed (`completedAt` is set on entry, kept while moving between such stages and cleared on entering a blocking one; changing the rule updates the stage's tasks). `claimable: false` keeps `claim_next_task` away and makes `claim_task` need `moveToStatusId`. A new project's Done has `handoff: nobody`, all three `onEnter` flags, `blocksDependents: false` and `claimable: false`; its Open has the defaults. `onEnter` in a patch merges flag by flag. `POST /api/projects/:projectId/statuses`
+`{ instructions (markdown), handoff: { mode: 'keep'|'nobody'|'specific'|'pool'|'round_robin'|'least_busy'|'author'|'mover'|'stage_holder', rule?: PrincipalRule, statusId? }, notify: PrincipalRule|null, onEnter: { resolveIssues, releaseClaim, notifyAuthor, notifyAssignees, notifyPreviousHolder }, blocksDependents, claimable, exitCriteria: [{ id, text }], moveBy: { assignees, claimer }, moveRule: PrincipalRule|null, approvals: { count, rule: PrincipalRule, dismissOnChange }|null, autoAdvance, nextStatusId|null, sendBackTo: statusId[] }`
+(the defaults, `keep`/`null`/all `false`/`true`/`true`/`[]`/`null`/`null`/`false`/`null`/`[]`, change nothing; a
+status created without `sendBackTo` gets every earlier stage of its pipeline, and a new project's Done
+can send back to Open). `sendBackTo` (BAT-27) lists the earlier stages of the same pipeline a task may
+be sent back to (`400` for any other stage; ids of stages deleted or reordered after since are ignored,
+and dropped when other rules are saved). The deprecated `allowSendBack` is still accepted in a patch:
+`true` sets `sendBackTo` to every earlier stage, `false` empties it. Statuses have no hidden category: `onEnter.resolveIssues` resolves the issues the task `fixes`, `onEnter.releaseClaim` releases its claim, `onEnter.notifyAuthor` sends `task_done` ("Reached <stage>") to the author and `onEnter.notifyPreviousHolder` to whoever held it in the stage it left; `onEnter.notifyAssignees` (default true) sends `assigned` to the people the hand-off assigns; they run on every entry. A hand-off to `nobody` also releases the claim. `blocksDependents: false` means tasks there no longer block the tasks waiting on them and count as completed (`completedAt` is set on entry, kept while moving between such stages and cleared on entering a blocking one; changing the rule updates the stage's tasks). `claimable: false` keeps `claim_next_task` away and makes `claim_task` need `moveToStatusId`. A new project's Done has `handoff: nobody`, all three `onEnter` flags, `blocksDependents: false` and `claimable: false`; its Open has the defaults. `onEnter` in a patch merges flag by flag. `POST /api/projects/:projectId/statuses`
 and `PATCH /api/statuses/:statusId` take `rules` (a partial `StageRules`: only the fields given change;
 `MANAGE_STATUSES`); stages it names must be statuses of the project and principals members, roles and
 project roles of its team (`400` otherwise). Rule changes are audited on `status.updated` in words
@@ -676,32 +681,58 @@ picks the one directly assigned to the fewest tasks of the project (current stag
 the project, and when nobody matches it behaves as `keep`; a hand-off releases a claim whose holder
 no longer has the task, a pool always does; a task created with assignees keeps them, and assignees
 given in the same `PATCH` as a new status become the new stage's (no hand-off),
-`stage_entered` notifications for `notify`, and a new visit (earlier approvals of the stage are
-dismissed). Leaving forward (a later column or `nextStatusId`) needs the mover to match `moveRule`
-(`403` naming who may), evidence for every exit criterion and `approvals.count` approvals with no
-open "changes requested" (`409` listing exactly what is missing, `details: { from, to, missing }`);
-jumping over a later stage that has such rules is refused too. From a stage with exit rules, moving
-back only goes to the previous column (`allowSendBack`; `false` refuses every backward move). The
-team owner and administrators may pass `force: true, reason` to `PATCH /api/tasks/:taskId` or `POST
-/api/tasks/:taskId/move` to go past every rule (audited as `task.forced` with `meta.reason` and
-`meta.bypassed`). Both also take `evidence: { [criterionId]: text }`, saved first (even when the move
-is then refused); without anything else to change they only save it.
+`stage_entered` notifications for `notify`, and a new visit: coming back to a stage dismisses its
+earlier approvals and archives its evidence (`task_stage_evidence.archived_at`), so its exit criteria
+need new evidence; both stay as history.
 
-`Task.stage` (null or absent when the project has no rules) = `{ status: { id, name }, instructions,
+Moves within a pipeline are strict (BAT-27), in every project, with or without rules:
+
+- **Forward** only to the stage's next stage (`nextStatusId`, else the next column; the last stage has
+  none). It needs the mover to be allowed to move it on (`moveBy`/`moveRule`; `403` naming who may),
+  evidence for every exit criterion and `approvals.count` approvals with no open "changes requested"
+  (`409` listing exactly what is missing, `details: { from, to, missing }`). Any other later stage is
+  refused (`403` "From X, tasks only move on to Y"): a stage that should be skipped is configured out
+  with `nextStatusId`.
+- **Back** only to a stage of `sendBackTo` (`403` naming them otherwise, or "X doesn't send tasks
+  back"), with a non-empty `reason` (`400` `validation_failed`, `details.field: 'reason'`). No approvals
+  or evidence are needed. Who may: whoever may move it on (anyone who may move tasks when the stage
+  names nobody), plus whoever may approve the stage — an approver needs no `UPDATE_TASKS` for a move
+  back with `POST /move`. The reason is stored on the new visit (`task_stage_entry.return_reason`,
+  `returned_by_id`, `returned_via_key_id`, `returned_from_status_id`), posted as a reply by the mover
+  ("Sent back from Human Review: …"), audited on the move's row (`task.moved`, or `task.updated` for a
+  `PATCH`) as `meta.direction: 'back'` and `meta.reason`, and given to the returned stage's agent
+  jobs (`payload.returnReason`, `payload.returnedFrom`; its agent assignees get an `assigned` job even
+  when the hand-off kept them). `keep` restores the assignees the stage had before.
+- Moves to another pipeline (BAT-25) are unchanged.
+
+The team owner and administrators may pass `force: true, reason` to `PATCH /api/tasks/:taskId` or
+`POST /api/tasks/:taskId/move` to make any move past every rule (audited as `task.forced` with
+`meta.reason` and `meta.bypassed`; a forced move back is a return with that reason). Both also take
+`evidence: { [criterionId]: text }`, saved first (even when the move is then refused); without
+anything else to change they only save it. A claim with `moveToStatusId` follows the same rules (it
+carries no reason, so it can't move a task back).
+
+`Task.stage` (on the full task, for every task whose status exists) = `{ status: { id, name }, instructions,
 criteria: [{ id, text, evidence: { text, user, via, updatedAt } | null }], approvals: { required,
 approved, rule (in words), dismissOnChange, given: [{ id, user, via, decision, comment, createdAt }],
-canApprove } | null, moveRule (in words) | null, next | null, sendBackTo | null, autoAdvance, pool: {
-rule, canClaim } | null, canEditEvidence, canMove, canForce, missing: string[], blockedMoves: {
-[statusId]: reason }, previousEvidence: [{ status, criteria }] }` (viewer-specific). `TaskCard.pipeline`
+canApprove } | null, moveRule (in words) | null, next | null, sendBackTo (the nearest send-back stage)
+| null, canMoveTo: { forward: { id, name, missing: string[] } | null, back: [{ id, name }] },
+returnReason: { reason, by, via, from, at } | null (while the current visit is a return), visits: [{
+id, status, enteredAt, leftAt, enteredBy, returnReason, returnedFrom }], autoAdvance, pool: { rule,
+canClaim } | null, canEditEvidence, canMove, canForce, missing: string[], blockedMoves: { [statusId]:
+reason }, previousEvidence: [{ status, visit: { enteredAt, leftAt } | null, criteria }],
+previousApprovals: [{ status, visit, decisions }] }` (viewer-specific: `canMoveTo.back` is empty when
+the viewer may not send it back; earlier visits of the current stage appear in `previousEvidence` and
+`previousApprovals`). `TaskCard.pipeline`
 (sent when the stage has criteria or approvals, or the task waits in a pool) = `{ approvals: {
 approved, required } | null, criteria: { done, total } | null, claimable }`.
 
-| Method & path                                        | Request                                                          | Response                                                                                                                                                                                                                                                                                                                                                           | Permission                                              |
-| ---------------------------------------------------- | ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------- |
-| `PUT /api/tasks/:taskId/evidence`                    | `{ evidence: { [criterionId]: text } }` (`""` removes one)       | `Task`. Only the current stage's criteria (`400` naming its criteria otherwise): evidence of earlier stages is locked. Audited as `task.evidence_updated` (changes keyed by criterion text); dismisses the stage's approvals when `dismissOnChange`; may auto-advance                                                                                              | author, `UPDATE_TASKS`, an assignee or the claim holder |
-| `POST /api/tasks/:taskId/approvals`                  | `{ decision: 'approve' \| 'request_changes', comment? }`         | `201 Task`. Each person or agent counts once (a new decision replaces theirs). `request_changes` sends the task back to the previous column when `allowSendBack` (else it blocks leaving until dismissed). An approval that satisfies the stage auto-advances it when `autoAdvance`. `409` where the stage takes none                                              | matches the stage's `approvals.rule`                    |
-| `GET /api/projects/:projectId/pipeline/copy-preview` | `?from=<projectId>`                                              | `{ source, statuses: [{ name, action: 'create'\|'update', hasRules }], unresolved: [{ key, principal, label, usedIn }] }`                                                                                                                                                                                                                                          | `MANAGE_STATUSES` in both projects                      |
-| `POST /api/projects/:projectId/pipeline/copy`        | `{ fromProjectId, replacements?: { [key]: Principal \| null } }` | `{ items: Status[] }`. Statuses match by name (their rules are replaced, and their tasks' `completedAt` follows the copied `blocksDependents`; name, color and icon stay), missing ones are created, this project's others follow. Every `unresolved` key must be answered (a replacement, or `null` to drop it), else `400`. Audited as `project.pipeline_copied` | `MANAGE_STATUSES` in both projects                      |
+| Method & path                                        | Request                                                               | Response                                                                                                                                                                                                                                                                                                                                                                                                                                               | Permission                                              |
+| ---------------------------------------------------- | --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------- |
+| `PUT /api/tasks/:taskId/evidence`                    | `{ evidence: { [criterionId]: text } }` (`""` removes one)            | `Task`. Only the current stage's criteria (`400` naming its criteria otherwise): evidence of earlier stages is locked. Audited as `task.evidence_updated` (changes keyed by criterion text); dismisses the stage's approvals when `dismissOnChange`; may auto-advance                                                                                                                                                                                  | author, `UPDATE_TASKS`, an assignee or the claim holder |
+| `POST /api/tasks/:taskId/approvals`                  | `{ decision: 'approve' \| 'request_changes', comment?, sendBackTo? }` | `201 Task`. Each person or agent counts once (a new decision replaces theirs). `request_changes` sends the task back to `sendBackTo` (one of the stage's send-back stages, `400` otherwise; default the nearest) with `comment` as the reason (then required, `400`); a stage that sends nothing back blocks leaving until it is dismissed. An approval that satisfies the stage auto-advances it when `autoAdvance`. `409` where the stage takes none | matches the stage's `approvals.rule`                    |
+| `GET /api/projects/:projectId/pipeline/copy-preview` | `?from=<projectId>`                                                   | `{ source, statuses: [{ name, action: 'create'\|'update', hasRules }], unresolved: [{ key, principal, label, usedIn }] }`                                                                                                                                                                                                                                                                                                                              | `MANAGE_STATUSES` in both projects                      |
+| `POST /api/projects/:projectId/pipeline/copy`        | `{ fromProjectId, replacements?: { [key]: Principal \| null } }`      | `{ items: Status[] }`. Statuses match by name (their rules are replaced, and their tasks' `completedAt` follows the copied `blocksDependents`; name, color and icon stay), missing ones are created, this project's others follow. Every `unresolved` key must be answered (a replacement, or `null` to drop it), else `400`. Audited as `project.pipeline_copied`                                                                                     | `MANAGE_STATUSES` in both projects                      |
 
 Auto-advance moves the task as whoever completed the stage (`task.moved` with `meta.autoAdvance`),
 without checking the move rule, at most one stage per request. Pool tasks are claimed with `POST
@@ -713,8 +744,11 @@ without checking the move rule, at most one stage per request. Pool tasks are cl
 
 MCP: `get_task` includes `stage` (with `blockedMoves` keyed by status name), `move_task` and
 `update_task` take `evidence: [{ criterion, text }]` (a list, since tool inputs are closed
-objects), `force` and `reason`; `approve_task { task, decision, comment? }`; `claim_task` claims pool
-tasks.
+objects), `force` and `reason` (required to send a task back: a clear error names it when missing);
+`get_task`'s `stage` includes `canMoveTo`, `returnReason` and `visits`; `approve_task { task,
+decision: 'approve' | 'request_changes' | 'changes', comment?, sendBackTo? }` (with changes, the
+comment is the reason and `sendBackTo` a status name); `create_status` / `update_status` take
+`sendBackTo` (stage names); `claim_task` claims pool tasks.
 
 ### Work (My tasks, dashboard; work module)
 

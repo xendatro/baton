@@ -252,7 +252,24 @@ const stageFields = {
     .enum(STATUS_CATEGORIES)
     .optional()
     .describe('Deprecated and ignored: statuses have no open/done category any more'),
+  sendBackTo: z
+    .array(z.string().min(1))
+    .max(50)
+    .optional()
+    .describe(
+      'Earlier stages of the same pipeline (names or ids) tasks may be sent back to from this one, with a reason; [] for none. A new stage can send back to every earlier stage by default.',
+    ),
 };
+
+/** Send-back stage refs as ids of the pipeline's stages. */
+function sendBackIds(
+  ctx: ToolContext,
+  projectId: string,
+  refs: readonly string[] | undefined,
+  pipelineId: string | undefined,
+) {
+  return refs?.map((ref) => resolveStatus(ctx.deps.db.orm, projectId, ref, { pipelineId }).id);
+}
 
 /** The stage fields as a rules patch (undefined when none is given). */
 function stageRulesPatch(input: {
@@ -268,6 +285,7 @@ function stageRulesPatch(input: {
     | undefined;
   blocksDependents?: boolean | undefined;
   claimable?: boolean | undefined;
+  sendBackTo?: string[] | undefined;
 }) {
   const onEnter = input.onEnter
     ? Object.fromEntries(Object.entries(input.onEnter).filter(([, value]) => value !== undefined))
@@ -277,6 +295,7 @@ function stageRulesPatch(input: {
     ...(onEnter ? { onEnter } : {}),
     ...(input.blocksDependents !== undefined ? { blocksDependents: input.blocksDependents } : {}),
     ...(input.claimable !== undefined ? { claimable: input.claimable } : {}),
+    ...(input.sendBackTo !== undefined ? { sendBackTo: input.sendBackTo } : {}),
   };
   return Object.keys(patch).length > 0 ? patch : undefined;
 }
@@ -389,13 +408,31 @@ const createStatusTool = defineTool({
   }),
   annotations: { destructiveHint: false },
   handler: (ctx, input) => {
-    const { project, pipeline, handoff, onEnter, blocksDependents, claimable, ...fields } = input;
+    const {
+      project,
+      pipeline,
+      handoff,
+      onEnter,
+      blocksDependents,
+      claimable,
+      sendBackTo,
+      ...fields
+    } = input;
     const projectId = projectContext(ctx, project).id;
-    const rules = stageRulesPatch({ handoff, onEnter, blocksDependents, claimable });
+    const pipelineId = pipeline
+      ? resolvePipeline(ctx.deps.db.orm, projectId, pipeline).id
+      : undefined;
+    const rules = stageRulesPatch({
+      handoff,
+      onEnter,
+      blocksDependents,
+      claimable,
+      sendBackTo: sendBackIds(ctx, projectId, sendBackTo, pipelineId),
+    });
     const parsed = parseInput(createStatusInputSchema, {
       ...fields,
       ...(rules ? { rules } : {}),
-      ...(pipeline ? { pipelineId: resolvePipeline(ctx.deps.db.orm, projectId, pipeline).id } : {}),
+      ...(pipelineId ? { pipelineId } : {}),
     });
     return createStatus(ctx.deps, ctx.actor, projectId, parsed);
   },
@@ -419,10 +456,26 @@ const updateStatusTool = defineTool({
   }),
   annotations: { destructiveHint: false },
   handler: (ctx, input) => {
-    const { project, status, handoff, onEnter, blocksDependents, claimable, ...fields } = input;
+    const {
+      project,
+      status,
+      handoff,
+      onEnter,
+      blocksDependents,
+      claimable,
+      sendBackTo,
+      ...fields
+    } = input;
     const projectId = projectContext(ctx, project).id;
-    const statusId = resolveStatus(ctx.deps.db.orm, projectId, status).id;
-    const rules = stageRulesPatch({ handoff, onEnter, blocksDependents, claimable });
+    const row = resolveStatus(ctx.deps.db.orm, projectId, status);
+    const statusId = row.id;
+    const rules = stageRulesPatch({
+      handoff,
+      onEnter,
+      blocksDependents,
+      claimable,
+      sendBackTo: sendBackIds(ctx, projectId, sendBackTo, row.pipelineId),
+    });
     const parsed = parseInput(updateStatusInputSchema, { ...fields, ...(rules ? { rules } : {}) });
     return updateStatus(ctx.deps, ctx.actor, statusId, parsed);
   },

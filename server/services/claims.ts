@@ -23,8 +23,10 @@ import {
   canClaimFromPool,
   enterStage,
   guardStageMove,
+  moveMeta,
   poolClaimRefusal,
   recordForced,
+  returnOf,
   takeFromPool,
 } from './pipelines';
 import { hiddenStatusIds } from './projectPipelines';
@@ -138,7 +140,7 @@ function moveOnClaim(
     entityId: task.id,
     action: 'task.moved',
     changes: { status: { from: from.name, to: to.name } },
-    meta: { ...taskMeta(task, access.project.key), status: to.name },
+    meta: { ...taskMeta(task, access.project.key), status: to.name, ...moveMeta(guard) },
   });
   // Linked issues of other projects show the task's status.
   queueLinkedIssueEvents(tx, actor, [task.id]);
@@ -155,6 +157,8 @@ function moveOnClaim(
         from,
         to,
         now,
+        new Set(),
+        returnOf(guard),
       );
     },
   };

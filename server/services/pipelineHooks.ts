@@ -32,6 +32,12 @@ export interface StageEntryDetails {
   assignedUserIds: string[];
   /** The stage takes approvals (`rules.approvals`): approvals given earlier were dismissed. */
   needsApprovals: boolean;
+  /**
+   * BAT-27: the task was sent back into the stage: why, and from which stage. Its jobs carry the
+   * reason (`payload.returnReason`), and its agent assignees get an `assigned` job even when the
+   * hand-off kept them.
+   */
+  returned?: { reason: string; from: string | null } | null;
 }
 
 /**
@@ -47,15 +53,36 @@ export function onTaskEnteredStage(
   details: StageEntryDetails,
 ): void {
   const instructions = details.rules.instructions || undefined;
+  const returned = details.returned ?? null;
   const jobs: QueueJobInput[] = [];
   if (details.pool) {
     for (const agentUserId of agentsOf(tx, task, details.pool, actor)) {
-      jobs.push(stageJob(task, status, agentUserId, 'pool', instructions));
+      jobs.push(stageJob(task, status, agentUserId, 'pool', instructions, returned));
     }
   }
   if (details.needsApprovals && details.rules.approvals) {
     for (const agentUserId of agentsOf(tx, task, details.rules.approvals.rule, actor)) {
-      jobs.push(stageJob(task, status, agentUserId, 'approval', instructions));
+      jobs.push(stageJob(task, status, agentUserId, 'approval', instructions, returned));
+    }
+  }
+  if (returned) {
+    // Sent back: its agent assignees in this stage pick it up again, with the reason.
+    const assignees = tx
+      .select({ id: s.user.id })
+      .from(s.taskAssigneeUser)
+      .innerJoin(s.user, eq(s.user.id, s.taskAssigneeUser.userId))
+      .where(
+        and(
+          eq(s.taskAssigneeUser.taskId, task.id),
+          eq(s.taskAssigneeUser.statusId, status.id),
+          eq(s.user.kind, 'agent'),
+        ),
+      )
+      .all()
+      .map((row) => row.id)
+      .filter((id) => id !== actor?.userId);
+    for (const agentUserId of assignees) {
+      jobs.push(stageJob(task, status, agentUserId, 'assigned', instructions, returned));
     }
   }
   if (jobs.length > 0) {
@@ -122,8 +149,9 @@ function stageJob(
   task: TaskRow,
   status: StatusRow,
   agentUserId: string,
-  kind: 'pool' | 'approval',
+  kind: 'pool' | 'approval' | 'assigned',
   instructions: string | undefined,
+  returned: StageEntryDetails['returned'] = null,
 ): QueueJobInput {
   return {
     agentUserId,
@@ -132,6 +160,16 @@ function stageJob(
     kind,
     targetType: 'task',
     targetId: task.id,
-    payload: { stage: status.name, ...(instructions ? { instructions } : {}) },
+    payload: {
+      stage: status.name,
+      statusId: status.id,
+      ...(instructions ? { instructions } : {}),
+      ...(returned
+        ? {
+            returnReason: returned.reason,
+            ...(returned.from ? { returnedFrom: returned.from } : {}),
+          }
+        : {}),
+    },
   };
 }

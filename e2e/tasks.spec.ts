@@ -356,6 +356,10 @@ test('task page: edit the title, change status, claim, release, delete and undo'
   await expect(page.getByRole('listbox')).toBeHidden();
   await page.keyboard.press('s');
   await page.getByRole('option', { name: 'Open' }).click();
+  // A move back asks for the reason (BAT-27).
+  const sendBack = page.getByTestId('send-back-dialog');
+  await sendBack.getByRole('textbox', { name: 'Reason' }).fill('Not done yet');
+  await sendBack.getByRole('button', { name: 'Send back to Open' }).click();
   await expect(details.getByRole('button', { name: 'Status: Open' })).toBeVisible();
 
   await details.getByRole('button', { name: 'Claim', exact: true }).click();

@@ -1,4 +1,23 @@
-import { ArrowDownIcon, ArrowUpIcon, GaugeIcon, PlusIcon, Trash2Icon } from 'lucide-react';
+import {
+  closestCenter,
+  DndContext,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type Announcements,
+  type DragEndEvent,
+  type UniqueIdentifier,
+} from '@dnd-kit/core';
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
+import { GaugeIcon, GripVerticalIcon, PlusIcon, Trash2Icon } from 'lucide-react';
 import { useId, useState, type FormEvent, type KeyboardEvent } from 'react';
 import { toast } from 'sonner';
 import { COLOR_PALETTE, LIMITS } from '@shared/constants';
@@ -20,12 +39,15 @@ import {
 } from '@web/components/ui/dialog';
 import { Input } from '@web/components/ui/input';
 import { Label } from '@web/components/ui/label';
+import { RadioGroup, RadioGroupItem } from '@web/components/ui/radio-group';
 import { Skeleton } from '@web/components/ui/skeleton';
 import { errorMessage } from '@web/lib/api';
+import { easiestFirstIds, hardestFirst } from '@web/lib/difficulty';
 import { pluralize } from '@web/lib/format';
 import { useProjectAccess } from '@web/lib/permissions';
 import { useRouteContext } from '@web/lib/routeContext';
 import { useDocumentTitle } from '@web/lib/title';
+import { cn } from '@web/lib/utils';
 import {
   useCreateDifficulty,
   useDeleteDifficulty,
@@ -36,9 +58,10 @@ import {
 import { BoardBackLink, ReadOnlyNotice, SettingsCard, SettingsHeader } from './common';
 
 /**
- * Project settings → Difficulty (BAT-24): the project's difficulty levels, easiest first. A task
- * has one level or none; each person maps levels to the models their agent runs (Account
- * settings). Rename and recolor in place, move up and down, add and delete.
+ * Project settings → Difficulty (BAT-24): the project's difficulty levels, shown hardest at the top
+ * (BAT-30; stored easiest first). A task has one level or none; each person maps levels to the
+ * models their agent runs (Account settings). Rename and recolor in place, drag the grip (or use
+ * its arrow keys) to reorder, add and delete.
  */
 export default function DifficultySettingsPage() {
   const { team, project } = useRouteContext();
@@ -61,13 +84,19 @@ function Levels({ teamId, projectId }: { teamId: string; projectId: string }) {
   const [creating, setCreating] = useState(false);
   const [deleting, setDeleting] = useState<Difficulty | null>(null);
   const items = levels.data ?? [];
+  const shown = hardestFirst(items);
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
 
-  const move = (index: number, by: -1 | 1) => {
-    const ids = items.map((level) => level.id);
-    const [moved] = ids.splice(index, 1);
-    if (!moved) return;
-    ids.splice(index + by, 0, moved);
-    reorder.mutate(ids, { onError: (cause) => toast.error(errorMessage(cause)) });
+  const onDragEnd = ({ active, over }: DragEndEvent) => {
+    if (!over || active.id === over.id) return;
+    const from = shown.findIndex((level) => level.id === active.id);
+    const to = shown.findIndex((level) => level.id === over.id);
+    if (from < 0 || to < 0) return;
+    const ids = arrayMove(shown, from, to).map((level) => level.id);
+    reorder.mutate(easiestFirstIds(ids));
   };
 
   const newButton = canManage ? (
@@ -81,7 +110,7 @@ function Levels({ teamId, projectId }: { teamId: string; projectId: string }) {
     <div>
       <SettingsHeader
         title="Difficulty"
-        description="How hard a task is, easiest first. Each person picks which model their agent uses for each level (Account settings → Agent); a task without a level uses their default."
+        description="How hard a task is, hardest at the top. Each person picks which model their agent uses for each level (Account settings → Agent); a task without a level uses their default."
         actions={items.length > 0 ? newButton : null}
       />
       {canManage ? null : <ReadOnlyNotice permission="Manage labels" />}
@@ -105,22 +134,44 @@ function Levels({ teamId, projectId }: { teamId: string; projectId: string }) {
           action={newButton}
         />
       ) : (
-        <SettingsCard>
-          <ol aria-label="Difficulty levels, easiest first">
-            {items.map((level, index) => (
-              <LevelRow
-                key={level.id}
-                level={level}
-                projectId={projectId}
-                canManage={canManage}
-                first={index === 0}
-                last={index === items.length - 1}
-                onMove={(by) => move(index, by)}
-                onDelete={() => setDeleting(level)}
-              />
-            ))}
-          </ol>
-        </SettingsCard>
+        <div className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-2">
+          <DirectionRail />
+          <div className="grid gap-1">
+            <p className="px-1 text-xs font-medium text-muted-foreground">Hardest</p>
+            <SettingsCard>
+              <DndContext
+                sensors={sensors}
+                collisionDetection={closestCenter}
+                onDragEnd={onDragEnd}
+                accessibility={{
+                  announcements: announcements(shown),
+                  screenReaderInstructions: {
+                    draggable:
+                      'To reorder a level, press Space or Enter to pick it up, use the arrow keys to move it (up is harder), and press Space or Enter again to drop it. Press Escape to cancel.',
+                  },
+                }}
+              >
+                <SortableContext
+                  items={shown.map((level) => level.id)}
+                  strategy={verticalListSortingStrategy}
+                >
+                  <ol aria-label="Difficulty levels, hardest first">
+                    {shown.map((level) => (
+                      <LevelRow
+                        key={level.id}
+                        level={level}
+                        projectId={projectId}
+                        canManage={canManage}
+                        onDelete={() => setDeleting(level)}
+                      />
+                    ))}
+                  </ol>
+                </SortableContext>
+              </DndContext>
+            </SettingsCard>
+            <p className="px-1 text-xs font-medium text-muted-foreground">Easiest</p>
+          </div>
+        </div>
       )}
       <CreateLevelDialog
         open={creating}
@@ -150,24 +201,57 @@ function Levels({ teamId, projectId }: { teamId: string; projectId: string }) {
   );
 }
 
+/** What screen readers hear while a level is dragged, by name rather than by id. */
+function announcements(levels: readonly Difficulty[]): Announcements {
+  const name = (id: UniqueIdentifier | undefined) =>
+    levels.find((level) => level.id === id)?.name ?? 'the level';
+  const at = (active: UniqueIdentifier, over: UniqueIdentifier | undefined) =>
+    over === undefined || over === active
+      ? `${name(active)} is in its original place.`
+      : `${name(active)} is at ${name(over)}’s place.`;
+  return {
+    onDragStart: ({ active }) => `Picked up ${name(active.id)}.`,
+    onDragOver: ({ active, over }) => at(active.id, over?.id),
+    onDragEnd: ({ active, over }) =>
+      over && over.id !== active.id
+        ? `Dropped ${name(active.id)} at ${name(over.id)}’s place.`
+        : `Dropped ${name(active.id)}.`,
+    onDragCancel: ({ active }) => `Cancelled. ${name(active.id)} stays where it was.`,
+  };
+}
+
+/** A thin gradient bar beside the list, dark (hardest) at the top fading to light (easiest). */
+function DirectionRail() {
+  return (
+    <div aria-hidden="true" className="flex flex-col items-center py-1.5">
+      <span className="size-1.5 rounded-full bg-muted-foreground" />
+      <span className="w-0.5 flex-1 rounded-full bg-gradient-to-b from-muted-foreground to-muted-foreground/15" />
+      <span className="size-1.5 rounded-full bg-muted-foreground/15" />
+    </div>
+  );
+}
+
 function LevelRow({
   level,
   projectId,
   canManage,
-  first,
-  last,
-  onMove,
   onDelete,
 }: {
   level: Difficulty;
   projectId: string;
   canManage: boolean;
-  first: boolean;
-  last: boolean;
-  onMove: (by: -1 | 1) => void;
   onDelete: () => void;
 }) {
   const update = useUpdateDifficulty(projectId);
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    setActivatorNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: level.id, disabled: !canManage });
   const [name, setName] = useState(level.name);
   const [saved, setSaved] = useState(level.name);
   if (level.name !== saved) {
@@ -198,29 +282,26 @@ function LevelRow({
     }
   };
   return (
-    <li className="flex items-center gap-2 border-b px-3 py-2 last:border-b-0">
-      <div className="flex flex-col">
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          className="size-5"
-          disabled={!canManage || first}
-          aria-label={`Move ${level.name} easier`}
-          onClick={() => onMove(-1)}
-        >
-          <ArrowUpIcon aria-hidden="true" />
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          className="size-5"
-          disabled={!canManage || last}
-          aria-label={`Move ${level.name} harder`}
-          onClick={() => onMove(1)}
-        >
-          <ArrowDownIcon aria-hidden="true" />
-        </Button>
-      </div>
+    <li
+      ref={setNodeRef}
+      style={{ transform: CSS.Transform.toString(transform), transition }}
+      className={cn(
+        'flex items-center gap-2 border-b bg-card px-3 py-2 last:border-b-0',
+        isDragging && 'relative z-10 rounded-md shadow-lg ring-1 ring-border',
+      )}
+      data-testid="difficulty-row"
+    >
+      <button
+        type="button"
+        ref={setActivatorNodeRef}
+        {...attributes}
+        {...listeners}
+        disabled={!canManage}
+        aria-label={`Reorder ${level.name}`}
+        className="flex size-8 shrink-0 cursor-grab items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring active:cursor-grabbing disabled:cursor-default disabled:opacity-40 disabled:hover:bg-transparent"
+      >
+        <GripVerticalIcon className="size-4" aria-hidden="true" />
+      </button>
       <ColorPicker
         value={level.color}
         onChange={(color) => update.mutate({ id: level.id, input: { color } })}
@@ -272,12 +353,15 @@ function CreateLevelDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
   projectId: string;
+  /** The current levels, easiest first (API order). */
   existing: readonly Difficulty[];
 }) {
   const create = useCreateDifficulty(projectId);
+  const reorder = useReorderDifficulties(projectId);
   const nameId = useId();
   const [name, setName] = useState('');
   const [color, setColor] = useState('');
+  const [at, setAt] = useState<'easiest' | 'hardest'>('easiest');
   const [error, setError] = useState<string | null>(null);
   const suggested =
     COLOR_PALETTE.find((option) => !existing.some((level) => level.color === option.hex))?.hex ??
@@ -293,8 +377,13 @@ function CreateLevelDialog({
     create.mutate(parsed.data, {
       onSuccess: (level) => {
         toast.success(`Added ${level.name}`);
+        // The server adds a level as the hardest; move it to the easiest end unless asked not to.
+        if (at === 'easiest' && existing.length > 0) {
+          reorder.mutate([level.id, ...existing.map((item) => item.id)]);
+        }
         setName('');
         setColor('');
+        setAt('easiest');
         setError(null);
         onOpenChange(false);
       },
@@ -308,7 +397,9 @@ function CreateLevelDialog({
         <form onSubmit={submit} className="grid gap-4" noValidate>
           <DialogHeader>
             <DialogTitle>New difficulty level</DialogTitle>
-            <DialogDescription>It’s added as the hardest; move it afterwards.</DialogDescription>
+            <DialogDescription>
+              Drag it elsewhere in the list afterwards if needed.
+            </DialogDescription>
           </DialogHeader>
           <div className="grid gap-1.5">
             <Label htmlFor={nameId}>Name</Label>
@@ -338,6 +429,23 @@ function CreateLevelDialog({
               </p>
             ) : null}
           </div>
+          <fieldset className="grid gap-1.5">
+            <legend className="mb-1.5 text-sm font-medium">Add as</legend>
+            <RadioGroup
+              value={at}
+              onValueChange={(next) => setAt(next === 'hardest' ? 'hardest' : 'easiest')}
+              className="flex gap-4"
+            >
+              <Label className="flex items-center gap-2 font-normal">
+                <RadioGroupItem value="easiest" />
+                Easiest
+              </Label>
+              <Label className="flex items-center gap-2 font-normal">
+                <RadioGroupItem value="hardest" />
+                Hardest
+              </Label>
+            </RadioGroup>
+          </fieldset>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
               Cancel

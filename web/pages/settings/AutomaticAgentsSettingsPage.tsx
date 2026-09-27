@@ -43,6 +43,7 @@ import { Switch } from '@web/components/ui/switch';
 import { errorMessage } from '@web/lib/api';
 import { useMe } from '@web/lib/auth';
 import { isDesktopApp } from '@web/lib/desktop';
+import { hardestFirst } from '@web/lib/difficulty';
 import { pluralize } from '@web/lib/format';
 import { cn } from '@web/lib/utils';
 import { useDifficulties } from '../projects/difficultyQueries';
@@ -598,47 +599,53 @@ function ProjectLevels({
   }
   const mapping = value.projects[projectId]?.levels ?? {};
   return (
-    <ul className="grid gap-3" aria-label="Models by difficulty level">
-      {levels.data.map((level) => {
-        const resolved = resolveChain({
-          levels: levels.data,
-          difficultyId: level.id,
-          project: { levels: mapping },
-          defaults: value.default,
-        });
-        return (
-          <li key={level.id} className={cn('grid gap-1.5 rounded-md border p-3')}>
-            <span className="flex items-center gap-2 text-sm font-medium">
-              <span
-                className="size-2.5 rounded-full"
-                style={{ backgroundColor: level.color }}
-                aria-hidden="true"
+    <>
+      <p className="text-xs text-muted-foreground">
+        Hardest → easiest. A level without its own chain uses the closest easier level’s, then a
+        harder one’s.
+      </p>
+      <ul className="grid gap-3" aria-label="Models by difficulty level, hardest first">
+        {hardestFirst(levels.data).map((level) => {
+          const resolved = resolveChain({
+            levels: levels.data,
+            difficultyId: level.id,
+            project: { levels: mapping },
+            defaults: value.default,
+          });
+          return (
+            <li key={level.id} className={cn('grid gap-1.5 rounded-md border p-3')}>
+              <span className="flex items-center gap-2 text-sm font-medium">
+                <span
+                  className="size-2.5 rounded-full"
+                  style={{ backgroundColor: level.color }}
+                  aria-hidden="true"
+                />
+                {level.name}
+              </span>
+              <ChainEditor
+                label={`${level.name} chain`}
+                value={mapping[level.id] ?? []}
+                onChange={(chain) =>
+                  onChange({
+                    ...value,
+                    projects: {
+                      ...value.projects,
+                      [projectId]: { levels: { ...mapping, [level.id]: chain } },
+                    },
+                  })
+                }
+                emptyText={`Uses ${resolved.source}: ${resolved.chain
+                  .map(
+                    (entry) =>
+                      `${HARNESS_LABELS[entry.harness]}${entry.model ? ` ${entry.model}` : ''}`,
+                  )
+                  .join(' → ')}`}
               />
-              {level.name}
-            </span>
-            <ChainEditor
-              label={`${level.name} chain`}
-              value={mapping[level.id] ?? []}
-              onChange={(chain) =>
-                onChange({
-                  ...value,
-                  projects: {
-                    ...value.projects,
-                    [projectId]: { levels: { ...mapping, [level.id]: chain } },
-                  },
-                })
-              }
-              emptyText={`Uses ${resolved.source}: ${resolved.chain
-                .map(
-                  (entry) =>
-                    `${HARNESS_LABELS[entry.harness]}${entry.model ? ` ${entry.model}` : ''}`,
-                )
-                .join(' → ')}`}
-            />
-          </li>
-        );
-      })}
-    </ul>
+            </li>
+          );
+        })}
+      </ul>
+    </>
   );
 }
 

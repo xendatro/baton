@@ -5,6 +5,7 @@ import {
   MessagesSquareIcon,
   SettingsIcon,
   TagsIcon,
+  UserCogIcon,
   type LucideIcon,
 } from 'lucide-react';
 import { useState } from 'react';
@@ -13,6 +14,7 @@ import type { MeProject, MeTeam } from '@shared/schemas/core';
 import { EntityIcon } from '@web/components/common/EntityIcon';
 import { NotFound } from '@web/components/common/NotFound';
 import { usePaletteCommands } from '@web/components/palette/registry';
+import { Button } from '@web/components/ui/button';
 import { Skeleton } from '@web/components/ui/skeleton';
 import { useLiveEventListener } from '@web/lib/live';
 import { queryKeys } from '@web/lib/queryKeys';
@@ -146,6 +148,14 @@ function ProjectFrame({ team, project }: { team: MeTeam; project: MeProject }) {
       keywords: [project.key, 'tags', 'label settings'],
       perform: () => void navigate(`${base}/settings/labels`),
     },
+    {
+      id: `project.${project.id}.me`,
+      label: `${project.name} › Your project settings`,
+      group: 'Project',
+      icon: UserCogIcon,
+      keywords: [project.key, 'your project settings', 'my notifications', 'my models'],
+      perform: () => void navigate(`${base}/me`),
+    },
   ]);
 
   const description = details.data?.description ?? '';
@@ -182,6 +192,21 @@ function ProjectFrame({ team, project }: { team: MeTeam; project: MeProject }) {
               </p>
             ) : null}
           </div>
+          <Button
+            asChild
+            size="sm"
+            variant={section === 'me' ? 'secondary' : 'ghost'}
+            className="shrink-0"
+          >
+            <Link
+              to={`${base}/me`}
+              aria-label="Your settings for this project"
+              aria-current={section === 'me' ? 'page' : undefined}
+            >
+              <UserCogIcon aria-hidden="true" />
+              <span className="hidden sm:inline">Your settings</span>
+            </Link>
+          </Button>
         </div>
         <nav aria-label="Project" className="-mb-px overflow-x-auto px-2 sm:px-4">
           <ul className="flex min-w-max gap-1 pt-3">

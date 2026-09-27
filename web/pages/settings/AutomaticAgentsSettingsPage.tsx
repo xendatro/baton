@@ -1,29 +1,14 @@
-import {
-  ArrowDownIcon,
-  ArrowUpIcon,
-  CheckIcon,
-  DownloadIcon,
-  MonitorIcon,
-  PauseIcon,
-  PlusIcon,
-  Trash2Icon,
-  XIcon,
-} from 'lucide-react';
+import { CheckIcon, DownloadIcon, MonitorIcon, PauseIcon, XIcon } from 'lucide-react';
 import { useId, useState, type ReactNode } from 'react';
 import { Link } from 'react-router';
 import { toast } from 'sonner';
-import { resolveChain } from '@shared/agentChains';
 import {
-  AGENT_RUNNER_LIMITS,
   DEFAULT_CHAIN,
-  HARNESS_IDS,
   HARNESS_LABELS,
   type AgentUsageTotals,
   type Chain,
-  type ChainEntry,
   type HarnessId,
   type JobSourceMode,
-  type ModelMappings,
 } from '@shared/schemas/agentRunner';
 import type { PrincipalRule } from '@shared/principals';
 import { EmptyState } from '@web/components/common/EmptyState';
@@ -35,7 +20,6 @@ import { PrincipalRulePicker } from '@web/components/pickers/PrincipalRulePicker
 import { EMPTY_RULE, type PrincipalOptions } from '@web/components/pickers/principals';
 import { Badge } from '@web/components/ui/badge';
 import { Button } from '@web/components/ui/button';
-import { Input } from '@web/components/ui/input';
 import { Label } from '@web/components/ui/label';
 import { RadioGroup, RadioGroupItem } from '@web/components/ui/radio-group';
 import { Skeleton } from '@web/components/ui/skeleton';
@@ -44,8 +28,6 @@ import { errorMessage } from '@web/lib/api';
 import { useMe } from '@web/lib/auth';
 import { isDesktopApp } from '@web/lib/desktop';
 import { pluralize } from '@web/lib/format';
-import { cn } from '@web/lib/utils';
-import { useDifficulties } from '../projects/difficultyQueries';
 import { useMembers, useRoles } from '../teams/api';
 import {
   useAgentStats,
@@ -57,13 +39,16 @@ import {
   useSetModelMappings,
   useWaitingJobs,
 } from './automaticAgentsQueries';
+import { ChainEditor } from './ChainEditor';
+import { chainSummary } from './chainSummary';
 import { useAgentSettings, useUpdateAgentSettings } from './queries';
 import { SettingsCard, SettingsCardSkeleton, SettingsPage } from './SettingsCard';
 
 /**
  * Settings → Automatic agents (BAT-24): the Baton desktop app runs your agent's jobs in your own
  * harness (Claude Code, Codex, …). Here: your desktop apps, jobs waiting for your OK, whose jobs
- * run by themselves, which model runs each difficulty level, usage stats and the global pause.
+ * run by themselves, your default models (each project's own are on its Your settings page,
+ * BAT-29), usage stats and the global pause.
  */
 export default function AutomaticAgentsSettingsPage() {
   return (
@@ -370,141 +355,10 @@ function Choice({ value, label, help }: { value: string; label: string; help?: R
 // Models
 // ---------------------------------------------------------------------------------------------
 
-/** Suggestions only: model lists are never hardcoded (free text always works). */
-const MODEL_ALIASES: Partial<Record<HarnessId, string[]>> = {
-  claude: ['opus', 'sonnet', 'haiku'],
-};
-const EFFORTS = ['low', 'medium', 'high', 'max'];
-
-function ChainEditor({
-  label,
-  value,
-  onChange,
-  emptyText,
-}: {
-  label: string;
-  value: Chain;
-  onChange: (chain: Chain) => void;
-  /** Shown when empty (e.g. "Uses Normal (closest mapped level)"). */
-  emptyText?: string;
-}) {
-  const listId = useId();
-  const set = (index: number, patch: Partial<ChainEntry>) =>
-    onChange(value.map((entry, at) => (at === index ? { ...entry, ...patch } : entry)));
-  const move = (index: number, by: -1 | 1) => {
-    const next = [...value];
-    const [entry] = next.splice(index, 1);
-    if (entry) next.splice(index + by, 0, entry);
-    onChange(next);
-  };
-  return (
-    <div className="grid gap-1.5" role="group" aria-label={label}>
-      {value.length === 0 && emptyText ? (
-        <p className="text-sm text-muted-foreground">{emptyText}</p>
-      ) : null}
-      <ol className="grid gap-1.5">
-        {value.map((entry, index) => (
-          <li key={index} className="flex flex-wrap items-center gap-1.5">
-            <span className="w-14 text-xs text-muted-foreground">
-              {index === 0 ? 'Run with' : 'then'}
-            </span>
-            <select
-              aria-label={`${label}: harness ${index + 1}`}
-              value={entry.harness}
-              onChange={(event) => set(index, { harness: event.target.value as HarnessId })}
-              className="h-8 rounded-md border border-input bg-transparent px-2 text-sm dark:bg-input/30"
-            >
-              {HARNESS_IDS.map((harness) => (
-                <option key={harness} value={harness}>
-                  {HARNESS_LABELS[harness]}
-                </option>
-              ))}
-            </select>
-            <Input
-              aria-label={`${label}: model ${index + 1}`}
-              value={entry.model}
-              onChange={(event) => set(index, { model: event.target.value })}
-              list={`${listId}-models-${entry.harness}`}
-              placeholder="default model"
-              maxLength={AGENT_RUNNER_LIMITS.model}
-              className="h-8 w-36"
-            />
-            <datalist id={`${listId}-models-${entry.harness}`}>
-              {(MODEL_ALIASES[entry.harness] ?? []).map((model) => (
-                <option key={model} value={model} />
-              ))}
-            </datalist>
-            <Input
-              aria-label={`${label}: effort ${index + 1}`}
-              value={entry.effort}
-              onChange={(event) => set(index, { effort: event.target.value })}
-              list={`${listId}-efforts`}
-              placeholder="effort"
-              maxLength={AGENT_RUNNER_LIMITS.effort}
-              className="h-8 w-24"
-            />
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              aria-label={`Move step ${index + 1} up`}
-              disabled={index === 0}
-              onClick={() => move(index, -1)}
-            >
-              <ArrowUpIcon aria-hidden="true" />
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              aria-label={`Move step ${index + 1} down`}
-              disabled={index === value.length - 1}
-              onClick={() => move(index, 1)}
-            >
-              <ArrowDownIcon aria-hidden="true" />
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              aria-label={`Remove step ${index + 1}`}
-              onClick={() => onChange(value.filter((_, at) => at !== index))}
-            >
-              <Trash2Icon aria-hidden="true" />
-            </Button>
-          </li>
-        ))}
-      </ol>
-      <datalist id={`${listId}-efforts`}>
-        {EFFORTS.map((effort) => (
-          <option key={effort} value={effort} />
-        ))}
-      </datalist>
-      <Button
-        variant="outline"
-        size="sm"
-        className="justify-self-start"
-        disabled={value.length >= AGENT_RUNNER_LIMITS.chain}
-        onClick={() =>
-          onChange([
-            ...value,
-            { harness: value.length === 0 ? 'claude' : 'codex', model: '', effort: '' },
-          ])
-        }
-      >
-        <PlusIcon aria-hidden="true" />
-        {value.length === 0 ? 'Set a model' : 'Add a fallback'}
-      </Button>
-    </div>
-  );
-}
-
 function ModelsCard() {
   const mappings = useModelMappings();
   const save = useSetModelMappings();
-  const [draft, setDraft] = useState<ModelMappings | null>(null);
-  const projects = (useMe().data?.teams ?? []).flatMap((team) =>
-    team.projects.map((project) => ({ ...project, teamName: team.name })),
-  );
-  const [projectId, setProjectId] = useState<string>('');
-  const selectId = useId();
+  const [draft, setDraft] = useState<Chain | null>(null);
   if (mappings.isPending) return <SettingsCardSkeleton rows={3} />;
   if (mappings.isError) {
     return (
@@ -515,17 +369,21 @@ function ModelsCard() {
       />
     );
   }
-  const value = draft ?? mappings.data;
-  const dirty = draft !== null && JSON.stringify(draft) !== JSON.stringify(mappings.data);
-  const current = projectId || projects[0]?.id || '';
+  const chain = draft ?? mappings.data.default.chain;
+  const dirty =
+    draft !== null && JSON.stringify(draft) !== JSON.stringify(mappings.data.default.chain);
   const submit = () =>
-    save.mutate(value, {
-      onSuccess: () => {
-        setDraft(null);
-        toast.success('Saved your models');
+    // Projects' own models are edited on each project's Your settings page and kept as they are.
+    save.mutate(
+      { ...mappings.data, default: { ...mappings.data.default, chain } },
+      {
+        onSuccess: () => {
+          setDraft(null);
+          toast.success('Saved your models');
+        },
+        onError: (cause) => toast.error(errorMessage(cause)),
       },
-      onError: (cause) => toast.error(errorMessage(cause)),
-    });
+    );
   return (
     <SettingsCard
       title="Models"
@@ -543,102 +401,52 @@ function ModelsCard() {
         <section className="grid gap-2">
           <h4 className="text-sm font-medium">Default</h4>
           <p className="text-xs text-muted-foreground">
-            Tasks without a difficulty, and levels nothing else maps.
+            Every project uses it unless you give a project its own models (from the project’s menu:
+            Your settings).
           </p>
           <ChainEditor
             label="Default chain"
-            value={value.default.chain}
-            onChange={(chain) => setDraft({ ...value, default: { ...value.default, chain } })}
-            emptyText={`Uses ${DEFAULT_CHAIN.map((entry) => `${HARNESS_LABELS[entry.harness]} ${entry.model}`).join(', ')}`}
+            value={chain}
+            onChange={setDraft}
+            emptyText={`Uses ${chainSummary(DEFAULT_CHAIN)}`}
           />
         </section>
-        {projects.length > 0 ? (
-          <section className="grid gap-2">
-            <div className="flex flex-wrap items-center gap-2">
-              <h4 className="text-sm font-medium">By project</h4>
-              <Label htmlFor={selectId} className="sr-only">
-                Project
-              </Label>
-              <select
-                id={selectId}
-                value={current}
-                onChange={(event) => setProjectId(event.target.value)}
-                className="h-8 rounded-md border border-input bg-transparent px-2 text-sm dark:bg-input/30"
-              >
-                {projects.map((project) => (
-                  <option key={project.id} value={project.id}>
-                    {project.teamName} / {project.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-            {current ? (
-              <ProjectLevels projectId={current} value={value} onChange={setDraft} />
-            ) : null}
-          </section>
-        ) : null}
+        <ProjectsWithModels projectIds={Object.keys(mappings.data.projects)} />
       </div>
     </SettingsCard>
   );
 }
 
-function ProjectLevels({
-  projectId,
-  value,
-  onChange,
-}: {
-  projectId: string;
-  value: ModelMappings;
-  onChange: (next: ModelMappings) => void;
-}) {
-  const levels = useDifficulties(projectId);
-  if (levels.isPending) return <Skeleton className="h-16" />;
-  if (levels.isError || levels.data.length === 0) {
-    return <p className="text-sm text-muted-foreground">This project has no difficulty levels.</p>;
-  }
-  const mapping = value.projects[projectId]?.levels ?? {};
+/** "Projects with their own models", each linking to its Your settings page (BAT-29). */
+function ProjectsWithModels({ projectIds }: { projectIds: string[] }) {
+  const teams = useMe().data?.teams ?? [];
+  const projects = teams.flatMap((team) =>
+    team.projects
+      .filter((project) => projectIds.includes(project.id))
+      .map((project) => ({ ...project, team })),
+  );
   return (
-    <ul className="grid gap-3" aria-label="Models by difficulty level">
-      {levels.data.map((level) => {
-        const resolved = resolveChain({
-          levels: levels.data,
-          difficultyId: level.id,
-          project: { levels: mapping },
-          defaults: value.default,
-        });
-        return (
-          <li key={level.id} className={cn('grid gap-1.5 rounded-md border p-3')}>
-            <span className="flex items-center gap-2 text-sm font-medium">
-              <span
-                className="size-2.5 rounded-full"
-                style={{ backgroundColor: level.color }}
-                aria-hidden="true"
-              />
-              {level.name}
-            </span>
-            <ChainEditor
-              label={`${level.name} chain`}
-              value={mapping[level.id] ?? []}
-              onChange={(chain) =>
-                onChange({
-                  ...value,
-                  projects: {
-                    ...value.projects,
-                    [projectId]: { levels: { ...mapping, [level.id]: chain } },
-                  },
-                })
-              }
-              emptyText={`Uses ${resolved.source}: ${resolved.chain
-                .map(
-                  (entry) =>
-                    `${HARNESS_LABELS[entry.harness]}${entry.model ? ` ${entry.model}` : ''}`,
-                )
-                .join(' → ')}`}
-            />
-          </li>
-        );
-      })}
-    </ul>
+    <section className="grid gap-2">
+      <h4 className="text-sm font-medium">Projects with their own models</h4>
+      {projects.length === 0 ? (
+        <p className="text-xs text-muted-foreground">
+          None yet. To set models for one project, open its menu: Your settings.
+        </p>
+      ) : (
+        <ul className="grid gap-1" aria-label="Projects with their own models">
+          {projects.map((project) => (
+            <li key={project.id}>
+              <Link
+                to={`/t/${project.team.slug}/p/${project.key}/me`}
+                className="text-sm hover:underline"
+              >
+                {project.team.name} / {project.name}
+              </Link>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
   );
 }
 

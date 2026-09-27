@@ -249,6 +249,16 @@ killed | out_of_usage | failed | permission_denied }`. MCP `complete_job` / `rel
 - Model mappings: `GET/PUT /api/me/agent/models { default: { chain, levels: { levelName: chain } },
 projects: { projectId: { levels: { levelId: chain } } } }` (chains of up to 8 steps; project
   levels must be the project's; empty chains are dropped).
+- Your settings for one project (BAT-29), for anyone who can see it (a key reads and writes its
+  owner's): `GET /api/projects/:projectId/my-settings` → `{ projectId, notifications: { level:
+all | mentions | none, kinds: { replies, roleMentions, issueStatus, stages } } | null,
+agentNotifications: all | needs_me | none | null, models: { levels: { levelId: chain } },
+defaults: { notifications, agentNotifications, models } }` (null = "Use my defaults").
+  `PUT` the same path with any of `{ notifications?, agentNotifications?, models?: { levels } }`
+  replaces those parts (null or an empty chain: back to the defaults) and returns the settings.
+  `models` edits this project's entry of the model mappings above. Notifications about the
+  project are filtered by the override: `mentions` keeps mentions and assignments, `none` keeps
+  nothing, `all` drops the kinds switched off; agent sign-off requests always get through.
 - `GET /api/me/agent/stats?days=30` → `{ days, totals, byDay, byHarness, byModel, byDifficulty,
 byOutcome }` (jobs, tokens, cost, duration).
 - `GET /api/teams/:teamId/presence` also lists online runners: `runners: [{ agentUserId,

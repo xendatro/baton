@@ -26,7 +26,7 @@ function status(id: string, name: string, position: number): Status {
     projectId: 'p1',
     name,
     color: '#6b7280',
-    category: position === 0 ? 'open' : 'done',
+    icon: position === 0 ? ('circle' as const) : ('check-circle' as const),
     position,
     isDefault: position === 0,
     taskCount: 0,

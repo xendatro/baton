@@ -16,17 +16,21 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import {
+  ChevronDownIcon,
   CopyIcon,
+  CopyPlusIcon,
   GripVerticalIcon,
   KanbanSquareIcon,
+  PencilIcon,
   PlusIcon,
   Trash2Icon,
   WorkflowIcon,
+  ZapIcon,
 } from 'lucide-react';
 import { useEffect, useId, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
 import { useSearchParams } from 'react-router';
 import { toast } from 'sonner';
-import { LIMITS } from '@shared/constants';
+import { LIMITS, nextNewStageName } from '@shared/constants';
 import { DEFAULT_STAGE_RULES } from '@shared/schemas/pipelines';
 import { statusNameSchema, type Status } from '@shared/schemas/projects';
 import { EmptyState } from '@web/components/common/EmptyState';
@@ -46,6 +50,12 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@web/components/ui/dialog';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@web/components/ui/dropdown-menu';
 import { Input } from '@web/components/ui/input';
 import { Label } from '@web/components/ui/label';
 import { RadioGroup, RadioGroupItem } from '@web/components/ui/radio-group';
@@ -76,21 +86,24 @@ import {
 } from '../projects/queries';
 import { BoardBackLink, ReadOnlyNotice, SettingsCard, SettingsHeader } from './common';
 import { CopyPipelineDialog } from './CopyPipelineDialog';
+import { CreateFromExistingDialog } from './CreateFromExistingDialog';
 import { useDifficulties } from '../projects/difficultyQueries';
 import { PipelineDiagram } from './PipelineDiagram';
 import { PipelinesBar } from './PipelinesBar';
 import { usePrincipalOptions } from './pipelineQueries';
 import { StatusDialog, type StatusDialogState } from './StatusDialog';
-import { countRules } from './stageRules';
+import { countRules, suggestColor } from './stageRules';
 
 /**
  * Project settings → Pipelines (the section was "Statuses"; `settings/statuses` redirects here):
  * the project's pipelines (every task is in a stage of one), then the selected pipeline's stages,
  * the board's columns. Drag to reorder (or use the keyboard:
  * focus a handle, Space, arrows, Space), rename in place, pick an icon (shape and color), choose
- * the default for new tasks and delete (moving the tasks elsewhere). "New stage" and each row's
- * edit button open the status dialog (basics, instructions, arrival, while here, exit criteria,
- * moving on); "Copy pipeline from…" copies another project's statuses and rules.
+ * the default for new tasks and delete (moving the tasks elsewhere). "New stage" creates a plain
+ * stage at once and focuses its name; its menu also offers "Create and edit…" (the status dialog:
+ * basics, instructions, arrival, while here, exit criteria, moving on, as each row's edit button
+ * opens it) and "Create from existing…" (basics, then a stage whose settings it copies). "Copy
+ * pipeline from…" copies another project's statuses and rules.
  * `?status=<id>` (a board column's "Edit stage") scrolls to that status and highlights it;
  * `?new=pipeline` (the board's "New pipeline") opens the New pipeline dialog.
  */
@@ -142,6 +155,11 @@ function Statuses({ teamId, projectId }: { teamId: string; projectId: string }) 
   const [dialog, setDialog] = useState<StatusDialogState>(null);
   const create = useCreateStatus(projectId);
   const [copying, setCopying] = useState(false);
+  const [creatingFrom, setCreatingFrom] = useState(false);
+  /** The stage "Create" just added: its name is focused for renaming once it shows. */
+  const [renameId, setRenameId] = useState<string | null>(null);
+  // After "Create" from the menu, the new stage's name takes the focus, not the menu's trigger.
+  const keepMenuFocus = useRef(false);
   const principals = usePrincipalOptions(teamId, projectId);
   const difficulties = useDifficulties(projectId);
   const me = useMe();
@@ -172,11 +190,92 @@ function Statuses({ teamId, projectId }: { teamId: string; projectId: string }) 
       }
     />
   );
+  const items = allStatuses.filter(
+    (status) => !selected || !status.pipelineId || status.pipelineId === selected.id,
+  );
+  // "Create": a plain stage at the end, named "New stage" (2, 3…), renamed in place.
+  const createNow = () => {
+    const name = nextNewStageName(items.map((status) => status.name));
+    create.mutate(
+      {
+        name,
+        color: suggestColor(items),
+        ...(selected ? { pipelineId: selected.id } : {}),
+      },
+      {
+        onSuccess: (created) => {
+          setRenameId(created.id);
+          toast.success(`Added ${created.name}: type its name`);
+        },
+        onError: (cause) => toast.error(errorMessage(cause)),
+      },
+    );
+  };
   const newStage = canManage ? (
-    <Button size="sm" onClick={() => setDialog({ mode: 'create' })}>
-      <PlusIcon aria-hidden="true" />
-      New stage
-    </Button>
+    <div className="flex">
+      <Button
+        size="sm"
+        onClick={createNow}
+        disabled={create.isPending}
+        className="rounded-r-none"
+        title="Add a plain stage at the end and rename it here"
+      >
+        {create.isPending ? <Spinner /> : <PlusIcon aria-hidden="true" />}
+        New stage
+      </Button>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button
+            size="sm"
+            className="rounded-l-none border-l border-l-primary-foreground/25 px-2"
+            aria-label="More ways to create a stage"
+          >
+            <ChevronDownIcon aria-hidden="true" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent
+          align="end"
+          className="w-72"
+          onCloseAutoFocus={(event) => {
+            if (keepMenuFocus.current) event.preventDefault();
+            keepMenuFocus.current = false;
+          }}
+        >
+          <DropdownMenuItem
+            onSelect={() => {
+              keepMenuFocus.current = true;
+              createNow();
+            }}
+          >
+            <ZapIcon aria-hidden="true" />
+            <span className="grid">
+              <span>Create</span>
+              <span className="text-xs text-muted-foreground">
+                A plain stage at the end; name it in the list
+              </span>
+            </span>
+          </DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => setDialog({ mode: 'create' })}>
+            <PencilIcon aria-hidden="true" />
+            <span className="grid">
+              <span>Create and edit…</span>
+              <span className="text-xs text-muted-foreground">
+                Set its name and every rule step by step
+              </span>
+            </span>
+          </DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => setCreatingFrom(true)}>
+            <CopyPlusIcon aria-hidden="true" />
+            <span className="grid">
+              <span>Create from existing…</span>
+              <span className="text-xs text-muted-foreground">
+                Copy the settings of a stage here or in another pipeline
+              </span>
+            </span>
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </div>
   ) : null;
 
   if (statuses.isError) {
@@ -192,9 +291,6 @@ function Statuses({ teamId, projectId }: { teamId: string; projectId: string }) 
     );
   }
 
-  const items = allStatuses.filter(
-    (status) => !selected || !status.pipelineId || status.pipelineId === selected.id,
-  );
   const defaultId = items.find((status) => status.isDefault)?.id ?? '';
 
   const onDragEnd = ({ active, over }: DragEndEvent) => {
@@ -299,6 +395,8 @@ function Statuses({ teamId, projectId }: { teamId: string; projectId: string }) 
                       canManage={canManage}
                       isOnly={items.length === 1}
                       targeted={status.id === targetId}
+                      renaming={status.id === renameId}
+                      onRenamed={() => setRenameId(null)}
                       onDelete={() => setDeleting(status)}
                       onEditRules={() => setDialog({ mode: 'edit', status })}
                     />
@@ -334,6 +432,18 @@ function Statuses({ teamId, projectId }: { teamId: string; projectId: string }) 
         onUpdate={(id, input) => update.mutateAsync({ id, input })}
         difficulties={difficulties.data}
       />
+      <CreateFromExistingDialog
+        open={creatingFrom}
+        onOpenChange={setCreatingFrom}
+        projectId={projectId}
+        pipelineId={selected?.id}
+        pipelineName={selected?.name}
+        statuses={items}
+        teams={me.data?.teams ?? []}
+        onCreate={(input) =>
+          create.mutateAsync({ ...input, ...(selected ? { pipelineId: selected.id } : {}) })
+        }
+      />
       <CopyPipelineDialog
         open={copying}
         onOpenChange={setCopying}
@@ -352,6 +462,8 @@ function StatusRow({
   canManage,
   isOnly,
   targeted,
+  renaming = false,
+  onRenamed,
   onDelete,
   onEditRules,
 }: {
@@ -361,6 +473,9 @@ function StatusRow({
   isOnly: boolean;
   /** Linked to with `?status=`: scrolled into view, briefly highlighted, name focused. */
   targeted: boolean;
+  /** Just added by "Create": its name is focused and selected for renaming. */
+  renaming?: boolean;
+  onRenamed?: () => void;
   onDelete: () => void;
   onEditRules: () => void;
 }) {
@@ -394,6 +509,15 @@ function StatusRow({
     const timer = window.setTimeout(() => setHighlight(false), 2500);
     return () => window.clearTimeout(timer);
   }, [targeted, canManage]);
+
+  useEffect(() => {
+    if (!renaming) return;
+    const input = nameRef.current;
+    input?.scrollIntoView?.({ block: 'nearest' });
+    input?.focus({ preventScroll: true });
+    input?.select();
+    onRenamed?.();
+  }, [renaming, onRenamed]);
 
   const commitName = () => {
     const parsed = statusNameSchema.safeParse(name);

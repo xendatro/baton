@@ -147,36 +147,37 @@ test('manage stages: add, set default, pick an icon, reorder by keyboard, delete
   await expect(page).toHaveURL(new RegExp(`/t/${team.slug}/p/BRD/settings/pipelines$`));
   await expect(page.getByRole('heading', { name: 'Pipelines', level: 2 })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Stages of Main' })).toBeVisible();
-  await expect(page.getByTestId('status-row')).toHaveCount(2);
+  // A new project's five stages.
+  await expect(page.getByTestId('status-row')).toHaveCount(5);
   // The rows are items of a real list inside the radio group (UX-15).
   await expect(
     page
       .getByRole('radiogroup', { name: 'Default status for new tasks' })
       .getByRole('list')
       .getByRole('listitem'),
-  ).toHaveCount(2);
+  ).toHaveCount(5);
 
-  await page.getByRole('button', { name: 'New stage' }).click();
+  // New stage's menu → Create and edit…: the step-by-step dialog.
+  await page.getByRole('button', { name: 'More ways to create a stage' }).click();
+  await page.getByRole('menuitem', { name: /Create and edit/ }).click();
   const create = page.getByRole('dialog', { name: 'New stage' });
-  await create.getByRole('textbox', { name: 'Name' }).fill('In review');
+  await create.getByRole('textbox', { name: 'Name' }).fill('QA');
   for (let step = 0; step < 5; step += 1) {
     await create.getByRole('button', { name: 'Next' }).click();
   }
   await create.getByRole('button', { name: 'Create stage' }).click();
   await expect(create).toBeHidden();
-  await expect(page.getByTestId('status-row')).toHaveCount(3);
-  await expect(page.getByLabel('Name of status In review')).toHaveValue('In review');
+  await expect(page.getByTestId('status-row')).toHaveCount(6);
+  await expect(page.getByLabel('Name of status QA')).toHaveValue('QA');
 
-  await page.getByRole('radio', { name: 'Make In review the default status' }).click();
-  await expect(
-    page.getByRole('radio', { name: 'Make In review the default status' }),
-  ).toBeChecked();
+  await page.getByRole('radio', { name: 'Make QA the default status' }).click();
+  await expect(page.getByRole('radio', { name: 'Make QA the default status' })).toBeChecked();
   await expect
     .poll(async () => (await statusesOf(page, project.id)).find((s) => s.isDefault)?.name)
-    .toBe('In review');
+    .toBe('QA');
 
   // The icon: any shape in any color, picked independently in one popover.
-  const icon = page.getByRole('button', { name: /^In review icon: Circle/ });
+  const icon = page.getByRole('button', { name: /^QA icon: Circle/ });
   await icon.click();
   await page
     .getByRole('radiogroup', { name: 'Shape' })
@@ -185,7 +186,7 @@ test('manage stages: add, set default, pick an icon, reorder by keyboard, delete
   await page.getByRole('radio', { name: 'Violet' }).click();
   await expect
     .poll(async () => {
-      const status = (await statusesOf(page, project.id)).find((s) => s.name === 'In review');
+      const status = (await statusesOf(page, project.id)).find((s) => s.name === 'QA');
       return [status?.icon, status?.color];
     })
     .toEqual(['star', '#8b5cf6']);
@@ -194,23 +195,23 @@ test('manage stages: add, set default, pick an icon, reorder by keyboard, delete
   // saved) the rename below before Enter was pressed.
   await page.keyboard.press('Escape');
   await expect(page.getByRole('radiogroup', { name: 'Shape' })).toBeHidden();
-  await expect(page.getByRole('button', { name: /^In review icon: Star/ })).toBeFocused();
+  await expect(page.getByRole('button', { name: /^QA icon: Star/ })).toBeFocused();
 
-  // Rename in place. The field's label follows the saved name, so hold on to the row (Open is
+  // Rename in place. The field's label follows the saved name, so hold on to the row (Backlog is
   // the first) instead.
   const name = page.getByTestId('status-row').first().getByRole('textbox');
-  await expect(name).toHaveAccessibleName('Name of status Open');
-  await name.fill('To do');
+  await expect(name).toHaveAccessibleName('Name of status Backlog');
+  await name.fill('Ideas');
   await expect(name).toBeFocused();
   await name.press('Enter');
-  await expect(page.getByLabel('Name of status To do')).toHaveValue('To do');
+  await expect(page.getByLabel('Name of status Ideas')).toHaveValue('Ideas');
   await expect
     .poll(async () => (await statusesOf(page, project.id)).map((s) => s.name))
-    .toEqual(['To do', 'Done', 'In review']);
+    .toEqual(['Ideas', 'To do', 'In progress', 'In review', 'Done', 'QA']);
 
   // Keyboard reordering: pick up, move up one, drop.
   // (dnd-kit reacts to each key on the next frame, as with a person typing.)
-  const handle = page.getByRole('button', { name: 'Reorder In review' });
+  const handle = page.getByRole('button', { name: 'Reorder QA' });
   await handle.focus();
   await expect(handle).toBeFocused();
   for (const key of ['Space', 'ArrowUp', 'Space']) {
@@ -219,19 +220,22 @@ test('manage stages: add, set default, pick an icon, reorder by keyboard, delete
   }
   await expect
     .poll(async () => (await statusesOf(page, project.id)).map((s) => s.name))
-    .toEqual(['To do', 'In review', 'Done']);
+    .toEqual(['Ideas', 'To do', 'In progress', 'In review', 'QA', 'Done']);
 
   // Deleting the default status moves its tasks and passes the default on.
-  await page.getByRole('button', { name: 'Delete In review' }).click();
-  const dialog = page.getByRole('dialog', { name: 'Delete In review?' });
+  await page.getByRole('button', { name: 'Delete QA' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Delete QA?' });
   await expect(dialog.getByText(/becomes the default for new tasks/)).toBeVisible();
   await dialog.getByRole('button', { name: 'Delete status' }).click();
-  await expect(page.getByText('Deleted In review')).toBeVisible();
-  await expect(page.getByTestId('status-row')).toHaveCount(2);
+  await expect(page.getByText('Deleted QA')).toBeVisible();
+  await expect(page.getByTestId('status-row')).toHaveCount(5);
   const remaining = await statusesOf(page, project.id);
   // Its tasks and the default go to the column before it.
   expect(remaining.map((s) => [s.name, s.isDefault])).toEqual([
-    ['To do', true],
+    ['Ideas', false],
+    ['To do', false],
+    ['In progress', false],
+    ['In review', true],
     ['Done', false],
   ]);
 });

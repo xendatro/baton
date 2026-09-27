@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import type { Page } from '@playwright/test';
 import { E2E_BASE_URL } from './support/env.ts';
-import { expect, ORIGIN, signedInUser, test } from './support/fixtures.ts';
+import { expect, ORIGIN, signedInUser, test, trimToOpenAndDone } from './support/fixtures.ts';
 
 /**
  * Tasks module (SPEC §1.8, §1.9): the board and list, the New task dialog, keyboard drags, the
@@ -40,7 +40,8 @@ async function setup(page: Page): Promise<Project> {
   });
   expect(res.status(), await res.text()).toBe(201);
   const project = (await res.json()) as Omit<Project, 'teamId'>;
-  return { ...project, teamId };
+  const statuses = await trimToOpenAndDone(page.request, project.id);
+  return { ...project, teamId, statuses };
 }
 
 async function createTask(page: Page, project: Project, body: Record<string, unknown>) {

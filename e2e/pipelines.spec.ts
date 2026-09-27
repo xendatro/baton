@@ -1,6 +1,13 @@
 import { randomBytes, randomInt } from 'node:crypto';
 import type { Page } from '@playwright/test';
-import { expect, ORIGIN, signedInUser, test, withDatabase } from './support/fixtures.ts';
+import {
+  expect,
+  ORIGIN,
+  signedInUser,
+  test,
+  withDatabase,
+  trimToOpenAndDone,
+} from './support/fixtures.ts';
 
 /**
  * Pipelines (docs/design/agents-and-pipelines.md §5): a three-stage pipeline whose middle stage
@@ -37,14 +44,14 @@ test('a task moves through a pipeline stage with a criterion and an approval', a
     `/api/teams/${team.id}/projects`,
     { name: 'Pipeline', key: 'PIP' },
   );
+  const [open, done] = await trimToOpenAndDone(page.request, project.id);
   const review = await api<{ id: string }>(page, 'post', `/api/projects/${project.id}/statuses`, {
     name: 'In Review',
     // BAT-34: the test starts a task straight in it.
     rules: { allowCreate: true },
   });
-  const [open, done] = project.statuses;
   await api(page, 'put', `/api/projects/${project.id}/statuses/order`, {
-    statusIds: [open?.id, review.id, done?.id],
+    statusIds: [open.id, review.id, done.id],
   });
 
   // A reviewer joins the team.

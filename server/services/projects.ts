@@ -474,7 +474,8 @@ function projectEvent(
 
 /**
  * Creates a project (`MANAGE_PROJECTS`) with its first pipeline (`pipelineName`, else "Main") and
- * that pipeline's stages Open (default) and Done. Without a key, one is derived from the name and made unique within the team.
+ * that pipeline's stages Backlog (default), To do, In progress, In review and Done. Without a key,
+ * one is derived from the name and made unique within the team.
  */
 export function createProject(
   deps: AppDeps,

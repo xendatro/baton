@@ -1,7 +1,7 @@
 import { randomInt } from 'node:crypto';
 import type { Browser, Page } from '@playwright/test';
 import { E2E_BASE_URL } from './support/env.ts';
-import { expect, ORIGIN, signedInUser, test } from './support/fixtures.ts';
+import { expect, ORIGIN, signedInUser, test, trimToOpenAndDone } from './support/fixtures.ts';
 
 /**
  * Flows that cross module boundaries: the team home's "New project" opening the projects
@@ -223,6 +223,7 @@ test('an issue becomes a task; finishing the task resolves the issue and tells i
     headers: ORIGIN,
   });
   const { id: projectId } = (await project.json()) as { id: string };
+  await trimToOpenAndDone(page.request, projectId);
   const invite = await page.request.post(`/api/teams/${team.id}/invites`, {
     data: { expiresIn: '7d', maxUses: null },
     headers: ORIGIN,

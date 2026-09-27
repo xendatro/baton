@@ -138,7 +138,7 @@ describe('project MCP tools', () => {
       url: `${ctx.env.baseUrl}/t/acme/p/MA`,
     });
     expect(created).not.toHaveProperty('path');
-    expect(created.statuses).toHaveLength(2);
+    expect(created.statuses).toHaveLength(5);
 
     const listed = await call<{ projects: Array<{ key: string; url: string }> }>(
       client,
@@ -211,7 +211,10 @@ describe('project MCP tools', () => {
     if (!projectRow) throw new Error('missing project');
     const task = createTask(ctx.db, { project: projectRow });
 
-    await call(client, 'create_status', { project: 'API', name: 'In progress' });
+    await call(client, 'create_status', { project: 'API', name: 'QA' });
+    expect(
+      await callError(client, 'create_status', { project: 'API', name: 'In progress' }),
+    ).toMatch(/already a status/);
     await call(client, 'create_status', {
       project: 'API',
       name: 'Review',
@@ -223,27 +226,23 @@ describe('project MCP tools', () => {
       status: 'in progress',
       name: 'Doing',
     });
-    expect(renamed).toMatchObject({ name: 'Doing', icon: 'circle' });
+    expect(renamed).toMatchObject({ name: 'Doing', icon: 'half-circle' });
 
+    const order = ['Review', 'Backlog', 'To do', 'Doing', 'In review', 'QA', 'Done'];
     const reordered = await call<{ statuses: Array<{ name: string; isDefault: boolean }> }>(
       client,
       'reorder_statuses',
-      { project: 'API', statuses: ['Review', 'Open', 'Doing', 'Done'] },
+      { project: 'API', statuses: order },
     );
-    expect(reordered.statuses.map((status) => status.name)).toEqual([
-      'Review',
-      'Open',
-      'Doing',
-      'Done',
-    ]);
+    expect(reordered.statuses.map((status) => status.name)).toEqual(order);
     expect(reordered.statuses.find((status) => status.isDefault)?.name).toBe('Review');
 
     const deleted = await call(client, 'delete_status', {
       project: 'API',
-      status: 'Open',
+      status: 'Backlog',
       moveTo: 'Done',
     });
-    expect(deleted).toEqual({ ok: true, movedTasks: 1, deleted: 'Open', movedTo: 'Done' });
+    expect(deleted).toEqual({ ok: true, movedTasks: 1, deleted: 'Backlog', movedTo: 'Done' });
     const moved = ctx.db.orm.select().from(s.task).where(eq(s.task.id, task.id)).get();
     expect(moved?.completedAt).toBeInstanceOf(Date);
 
@@ -254,7 +253,10 @@ describe('project MCP tools', () => {
     );
     expect(listed.statuses.map((status) => [status.name, status.taskCount])).toEqual([
       ['Review', 0],
+      ['To do', 0],
       ['Doing', 0],
+      ['In review', 0],
+      ['QA', 0],
       ['Done', 1],
     ]);
     expect(

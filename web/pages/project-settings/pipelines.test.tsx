@@ -243,8 +243,9 @@ describe('StatusDialog', () => {
     );
     await user.keyboard('{Enter}');
     expect(screen.getByText(/2 different people must approve/)).toBeInTheDocument();
-    // New statuses let their assignees move tasks on; add whoever claimed it too.
-    expect(screen.getByRole('checkbox', { name: 'Assignees' })).toBeChecked();
+    // New statuses start plain (anyone may move tasks on); limit it to assignees and the claimer.
+    expect(screen.getByRole('checkbox', { name: 'Assignees' })).not.toBeChecked();
+    await user.click(screen.getByRole('checkbox', { name: 'Assignees' }));
     await user.click(screen.getByRole('checkbox', { name: 'Whoever claimed it' }));
     await user.click(screen.getByRole('button', { name: 'Create stage' }));
 

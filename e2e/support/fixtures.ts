@@ -127,3 +127,39 @@ export async function typeCode(page: Page, code: string): Promise<void> {
   await page.getByRole('textbox', { name: 'Digit 1 of 6' }).click();
   await page.keyboard.type(code);
 }
+
+export interface StageJson {
+  id: string;
+  name: string;
+}
+
+/**
+ * Trims a new project's default pipeline (Backlog, To do, In progress, In review, Done since
+ * 2026-09-27) to the two stages the older specs were written for: Open (Backlog renamed, the
+ * default) and Done. Specs about boards, moves and tasks rather than the seeded stages use it, so
+ * a card still reaches Done in one move. Returns `[open, done]`.
+ */
+export async function trimToOpenAndDone(
+  request: APIRequestContext,
+  projectId: string,
+): Promise<[StageJson, StageJson]> {
+  const res = await request.get(`/api/projects/${projectId}/statuses`);
+  expect(res.ok(), await res.text()).toBe(true);
+  const { items } = (await res.json()) as { items: StageJson[] };
+  const backlog = items.find((item) => item.name === 'Backlog');
+  const done = items.find((item) => item.name === 'Done');
+  if (!backlog || !done) throw new Error('A new project should have Backlog and Done');
+  for (const item of items) {
+    if (item.id === backlog.id || item.id === done.id) continue;
+    const removed = await request.delete(`/api/statuses/${item.id}?moveTo=${backlog.id}`, {
+      headers: ORIGIN,
+    });
+    expect(removed.ok(), await removed.text()).toBe(true);
+  }
+  const renamed = await request.patch(`/api/statuses/${backlog.id}`, {
+    data: { name: 'Open', icon: 'circle' },
+    headers: ORIGIN,
+  });
+  expect(renamed.ok(), await renamed.text()).toBe(true);
+  return [{ id: backlog.id, name: 'Open' }, done];
+}

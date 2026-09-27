@@ -30,7 +30,8 @@ test('adds a pipeline, shows its tab on the board and starts a task in it', asyn
   await page.getByRole('dialog').getByLabel('Name').fill('Modeling');
   await page.getByRole('button', { name: 'Add pipeline' }).click();
   await expect(bar.getByRole('tab', { name: /Modeling/ })).toHaveAttribute('aria-selected', 'true');
-  await expect(page.getByTestId('status-row')).toHaveCount(2);
+  // It starts with the five default stages.
+  await expect(page.getByTestId('status-row')).toHaveCount(5);
 
   // A task in Modeling, then the board's tabs.
   const pipelines = (await (
@@ -123,7 +124,7 @@ test('a new project names its first pipeline, shown in the sidebar, the tabs and
     `Tree ${slug}`,
     'Forest',
     'Development',
-    'Open',
+    'Backlog',
   ]);
   await location.getByRole('link', { name: 'Development' }).click();
   await expect(page).toHaveURL(new RegExp(`/t/${slug}/p/FOR/tasks\\?pipeline=\\w+$`));

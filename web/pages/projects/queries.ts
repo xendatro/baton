@@ -18,6 +18,7 @@ import {
   projectSchema,
   projectSummarySchema,
   statusListResponseSchema,
+  createdStatusSchema,
   statusSchema,
   type CreateLabelInput,
   type CreateProjectInput,
@@ -278,7 +279,9 @@ export function useCreateStatus(projectId: string) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (input: CreateStatusInput) =>
-      api.post(`/api/projects/${enc(projectId)}/statuses`, input, { schema: statusSchema }),
+      api.post(`/api/projects/${enc(projectId)}/statuses`, input, {
+        schema: createdStatusSchema,
+      }),
     onSuccess: () => refreshStatuses(queryClient, projectId),
     meta: { suppressErrorToast: true },
   });

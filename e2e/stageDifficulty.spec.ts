@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import type { Page } from '@playwright/test';
-import { expect, ORIGIN, signedInUser, test } from './support/fixtures.ts';
+import { expect, ORIGIN, signedInUser, test, trimToOpenAndDone } from './support/fixtures.ts';
 
 /**
  * Difficulty per stage (BAT-28): the ▾ beside the green button moves on with a difficulty for the
@@ -32,6 +32,7 @@ test('moves with a difficulty for the next stage and sends back with one', async
     `/api/teams/${team.id}/projects`,
     { name: 'Difficulty', key: 'DIF' },
   );
+  const [open, done] = await trimToOpenAndDone(page.request, project.id);
   const levels = (
     await api<{ items: Array<{ id: string; name: string }> }>(
       page,
@@ -47,9 +48,8 @@ test('moves with a difficulty for the next stage and sends back with one', async
   const review = await api<{ id: string }>(page, 'post', `/api/projects/${project.id}/statuses`, {
     name: 'Review',
   });
-  const [open, done] = project.statuses;
   await api(page, 'put', `/api/projects/${project.id}/statuses/order`, {
-    statusIds: [open?.id, build.id, review.id, done?.id],
+    statusIds: [open.id, build.id, review.id, done.id],
   });
   await api(page, 'patch', `/api/statuses/${review.id}`, { rules: { sendBackTo: [build.id] } });
   const task = await api<{ path: string }>(page, 'post', `/api/projects/${project.id}/tasks`, {

@@ -44,6 +44,42 @@ export function countRules(rules: StageRules | undefined): number {
   ].filter(Boolean).length;
 }
 
+const HANDOFF_WORDS: Record<HandoffMode, string> = {
+  keep: 'keeps its assignees',
+  nobody: 'assigns nobody',
+  specific: 'assigns chosen people',
+  pool: 'claim pool',
+  round_robin: 'assigns in turns',
+  least_busy: 'assigns the least busy',
+  author: 'assigns the author',
+  mover: 'assigns the mover',
+  stage_holder: 'assigns an earlier holder',
+};
+
+/**
+ * A stage's rules in a few words ("Create from existing"): "Finishing stage · 2 exit criteria ·
+ * 1 approval", or "No rules" for a plain stage.
+ */
+export function stageSummary(rules: StageRules | undefined): string {
+  if (!rules) return 'No rules';
+  const n = (count: number, word: string) => `${count} ${word}${count === 1 ? '' : 's'}`;
+  const parts = [
+    ...(!rules.blocksDependents ? ['Finishing stage'] : []),
+    ...(rules.allowCreate ? ['New tasks can start here'] : []),
+    ...(rules.handoff.mode !== 'keep' ? [HANDOFF_WORDS[rules.handoff.mode]] : []),
+    ...(rules.instructions.trim() ? ['instructions'] : []),
+    ...(rules.exitCriteria.length > 0 ? [n(rules.exitCriteria.length, 'exit criterion')] : []),
+    ...(rules.approvals ? [n(rules.approvals.count, 'approval')] : []),
+    ...(rules.moveRule || rules.moveBy.assignees || rules.moveBy.claimer
+      ? ['limits who moves on']
+      : []),
+    ...(rules.blocksDependents && !rules.claimable ? ['not claimable'] : []),
+  ].map((part) => part.replace('criterions', 'criteria'));
+  if (parts.length === 0) return 'No rules';
+  const text = parts.join(' · ');
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
 /** A color no other status uses yet (the first of the palette when all are taken). */
 export function suggestColor(existing: readonly Status[]): string {
   const used = new Set(existing.map((status) => status.color));

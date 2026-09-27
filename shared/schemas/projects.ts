@@ -430,8 +430,29 @@ export const createStatusInputSchema = z.object({
   pipelineId: idSchema.optional(),
   /** BAT-28: the difficulty of a task's first visit (a level of the project; null: none). */
   defaultDifficultyId: idSchema.nullable().optional(),
+  /**
+   * "Create from existing": start from the rules of this stage (any stage the viewer can see, in
+   * any project): everything but its name, look, position and default flag. Stages it names are
+   * matched to this pipeline's by name, people and roles to this team's; what has no match is
+   * dropped and listed in `copied.dropped`. `rules` and `defaultDifficultyId` apply on top.
+   */
+  copyRulesFrom: idSchema.optional(),
 });
 export type CreateStatusInput = z.infer<typeof createStatusInputSchema>;
+
+/** `POST /api/projects/:projectId/statuses`: the new status, and what a copy dropped. */
+export const createdStatusSchema = statusSchema.extend({
+  /** Set when it was created with `copyRulesFrom`. */
+  copied: z
+    .object({
+      /** The stage copied, as "Team / KEY / Pipeline / Stage" (shorter when closer). */
+      from: z.string(),
+      /** Rule parts this pipeline or team has no match for: "@ann (approvers)". */
+      dropped: z.array(z.string()),
+    })
+    .optional(),
+});
+export type CreatedStatus = z.infer<typeof createdStatusSchema>;
 
 export const updateStatusInputSchema = z
   .object({

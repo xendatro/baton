@@ -88,7 +88,7 @@ function principalKey(principal: Principal): string {
 }
 
 /** The principal in the target team, or null when the target has no such member or role. */
-function resolvePrincipal(
+export function resolvePrincipal(
   db: DbExecutor,
   source: Scope,
   target: Scope,
@@ -157,7 +157,7 @@ function resolvePrincipal(
 }
 
 /** How the source project names a principal. */
-function sourceLabel(db: DbExecutor, principal: Principal): string {
+export function sourceLabel(db: DbExecutor, principal: Principal): string {
   const scope = 'scope' in principal && principal.scope !== 'both' ? `, ${principal.scope}` : '';
   switch (principal.type) {
     case 'everyone':

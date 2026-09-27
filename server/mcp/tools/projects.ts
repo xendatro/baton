@@ -112,7 +112,7 @@ const createProjectTool = defineTool({
   name: 'create_project',
   title: 'Create project',
   description:
-    'Creates a project in a team (needs MANAGE_PROJECTS). Every project has at least one pipeline: it starts with one (named by `pipeline`, else "Main") whose stages are Open (default) and Done. The key is derived from the name unless given.',
+    'Creates a project in a team (needs MANAGE_PROJECTS). Every project has at least one pipeline: it starts with one (named by `pipeline`, else "Main") whose stages are Backlog (default), To do, In progress, In review and Done. The key is derived from the name unless given.',
   input: toolInput({
     team: z.string().min(1).describe('Team slug or id'),
     name: z.string().min(1).max(LIMITS.projectName.max).describe('Project name'),
@@ -369,7 +369,7 @@ const createPipelineTool = defineTool({
   name: 'create_pipeline',
   title: 'Create pipeline',
   description:
-    'Adds a pipeline to a project (needs MANAGE_STATUSES), starting with an Open and a Done stage: add its own stages with create_status { pipeline }.',
+    'Adds a pipeline to a project (needs MANAGE_STATUSES), starting with the stages Backlog (default), To do, In progress, In review and Done: rename, delete or add stages with update_status / delete_status / create_status { pipeline }.',
   input: toolInput({
     project: projectRef,
     name: z.string().min(1).max(40).describe('Pipeline name, e.g. Modeling'),
@@ -428,13 +428,21 @@ const createStatusTool = defineTool({
   name: 'create_status',
   title: 'Create status',
   description:
-    'Adds a task status (stage) at the end of the board (needs MANAGE_STATUSES). A stage is just a column unless you give it rules: e.g. a finishing stage has handoff nobody, onEnter { resolveIssues, releaseClaim, notifyAuthor, notifyPreviousHolder }, blocksDependents false and claimable false. New tasks can only start in stages with allowCreate (off unless given or isDefault).',
+    "Adds a task status (stage) at the end of the board (needs MANAGE_STATUSES). A stage is just a column unless you give it rules: e.g. a finishing stage has handoff nobody, onEnter { resolveIssues, releaseClaim, notifyAuthor, notifyPreviousHolder }, blocksDependents false and claimable false. New tasks can only start in stages with allowCreate (off unless given or isDefault). Without rules a new stage is plain: no automatic assignees, nothing to pass, it can send tasks back to every earlier stage. copyFrom starts from another stage's rules (any stage you can see, copyFromProject for another project): stages it names map by name to this pipeline, people and roles to this team; what has no match is dropped and listed in `copied.dropped`.",
   input: toolInput({
     project: projectRef,
     name: z.string().min(1).max(LIMITS.statusName.max).describe('Status name, e.g. In review'),
     color: colorField.optional(),
     isDefault: z.boolean().optional().describe('Make it the default status for new tasks'),
     pipeline: pipelineRef.optional().describe('The pipeline it joins (default: the default one)'),
+    copyFrom: statusRef
+      .optional()
+      .describe(
+        'Copy the rules of this stage (name, Pipeline/Status or id); the other fields apply on top',
+      ),
+    copyFromProject: projectRef
+      .optional()
+      .describe('The project copyFrom is in (default: this project)'),
     ...stageFields,
   }),
   annotations: { destructiveHint: false },
@@ -442,6 +450,8 @@ const createStatusTool = defineTool({
     const {
       project,
       pipeline,
+      copyFrom,
+      copyFromProject,
       handoff,
       onEnter,
       blocksDependents,
@@ -463,10 +473,19 @@ const createStatusTool = defineTool({
       allowCreate,
       sendBackTo: sendBackIds(ctx, projectId, sendBackTo, pipelineId),
     });
+    const copyRulesFrom = copyFrom
+      ? resolveStatus(
+          ctx.deps.db.orm,
+          copyFromProject ? projectContext(ctx, copyFromProject).id : projectId,
+          copyFrom,
+          { pipelineId },
+        ).id
+      : undefined;
     const parsed = parseInput(createStatusInputSchema, {
       ...fields,
       ...(rules ? { rules } : {}),
       ...(pipelineId ? { pipelineId } : {}),
+      ...(copyRulesFrom ? { copyRulesFrom } : {}),
       ...defaultDifficultyOf(ctx, projectId, defaultDifficulty),
     });
     return createStatus(ctx.deps, ctx.actor, projectId, parsed);

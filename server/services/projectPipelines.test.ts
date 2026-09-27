@@ -19,7 +19,7 @@ import {
   type TestContext,
   type UserRow,
 } from '../test/helpers';
-import { updateStatus } from './statuses';
+import { listStatuses, updateStatus } from './statuses';
 import { listMyTasks } from './myWork';
 import {
   createPipeline,
@@ -72,9 +72,20 @@ describe('pipelines (BAT-25)', () => {
     );
   });
 
-  it('adds a pipeline with its own Open and Done, names unique per pipeline', () => {
+  it('adds a pipeline with its own default stages, names unique per pipeline', () => {
     const modeling = addModeling();
-    expect(modeling).toMatchObject({ name: 'Modeling', slug: 'modeling', statusCount: 2 });
+    expect(modeling).toMatchObject({ name: 'Modeling', slug: 'modeling', statusCount: 5 });
+    expect(
+      listStatuses(ctx.deps, actorOf(owner), project.project.id, modeling.id).items.map(
+        (status) => [status.name, status.isDefault, status.rules?.allowCreate],
+      ),
+    ).toEqual([
+      ['Backlog', true, true],
+      ['To do', false, true],
+      ['In progress', false, false],
+      ['In review', false, false],
+      ['Done', false, false],
+    ]);
     // "Done" exists twice now: the task's own pipeline wins, Pipeline/Status picks one.
     const orm = ctx.deps.db.orm;
     expect(() => resolveStatus(orm, project.project.id, 'Done')).toThrow(/ambiguous/);
@@ -96,7 +107,7 @@ describe('pipelines (BAT-25)', () => {
       title: 'Model the tree',
       pipelineId: modeling.id,
     });
-    expect(task.status).toMatchObject({ name: 'Open', pipeline: { id: modeling.id } });
+    expect(task.status).toMatchObject({ name: 'Backlog', pipeline: { id: modeling.id } });
     expect(() =>
       createTask(ctx.deps, actorOf(mia), project.project.id, {
         title: 'Not mine',
@@ -161,12 +172,12 @@ describe('pipelines (BAT-25)', () => {
       rules: { exitCriteria: [{ id: 'model', text: 'Model attached' }] },
     });
     const task = createTask(ctx.deps, actorOf(mia), project.project.id, { title: 'Crate' });
-    const modelingOpen = resolveStatus(ctx.deps.db.orm, project.project.id, 'Modeling/Open');
+    const modelingOpen = resolveStatus(ctx.deps.db.orm, project.project.id, 'Modeling/Backlog');
     expect(() => moveTask(ctx.deps, actorOf(mia), task.id, { statusId: modelingOpen.id })).toThrow(
       /can’t add tasks to the Modeling pipeline/,
     );
     const moved: Task = moveTask(ctx.deps, actorOf(owner), task.id, { statusId: modelingOpen.id });
-    expect(moved.status).toMatchObject({ name: 'Open', pipeline: { name: 'Modeling' } });
+    expect(moved.status).toMatchObject({ name: 'Backlog', pipeline: { name: 'Modeling' } });
     // Within a pipeline the rules still apply.
     const back = createTask(ctx.deps, actorOf(owner), project.project.id, { title: 'Barrel' });
     expect(() =>

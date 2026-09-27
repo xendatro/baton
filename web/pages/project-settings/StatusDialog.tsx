@@ -245,12 +245,9 @@ function StatusForm({
         color: suggestColor(statuses),
         isDefault: false,
         defaultDifficultyId: null,
-        // A new stage goes last: by default it can send tasks back to every stage before it.
-        rules: {
-          ...DEFAULT_STAGE_RULES,
-          moveBy: { assignees: true, claimer: false },
-          sendBackTo: statuses.map((other) => other.id),
-        },
+        // A new stage starts plain (nothing assigned or gated) and goes last: by default it can
+        // send tasks back to every stage before it.
+        rules: { ...DEFAULT_STAGE_RULES, sendBackTo: statuses.map((other) => other.id) },
       };
     }
     const rules = status.rules ?? DEFAULT_STAGE_RULES;

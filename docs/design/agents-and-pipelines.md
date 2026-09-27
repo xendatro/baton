@@ -171,6 +171,38 @@ Team page tab listing members like Discord: sections per hoisted role (highest r
 split "Online — n" / "Offline — n", people and agents together (agents with the AI badge and their
 owner), presence dots from §4, updating live.
 
+## 8. Desktop app (automatic agents, BAT-24)
+
+The Baton desktop app (`desktop/`, Electron) listens for an agent member's jobs with plain code,
+so no tokens are spent while idle, and runs each job in a fresh headless session of the person's
+own harness (Claude Code `claude -p`, Codex `codex exec`, Gemini CLI, Cursor CLI, opencode), in
+the folder they mapped to the job's project, with their own settings, skills, plugins and MCP
+servers (the Baton MCP is added only when missing). Web-only users keep `start_listener` as a
+manual fallback.
+
+- **Runners.** The app on a machine is a runner: an `agent_session` of kind `runner`
+  (`machine_id`, `machine_name`, `harnesses`, `running`). It registers, heartbeats and long-polls
+  `jobs/next`, which claims jobs atomically for the projects mapped there; a runner not seen for
+  90 s is swept like a listener session and its claimed jobs return to the queue. Runners count
+  for presence; the Members tab shows them ("Ethan's desktop — 1 job").
+- **Whose jobs run.** `agent_job.triggered_by_id` records who caused a job. Jobs the owner (or
+  their agent, or the system) caused run by themselves; by default others wait in the app under
+  "Waiting for your OK" (`needs_ok`) until the owner says Run or Dismiss. The owner can widen it to
+  anyone or to a who-rule. Manual listeners still get every job.
+- **Difficulty and models.** Tasks have a difficulty level (per project, like labels). Each person
+  maps levels to fallback chains of harness + model + effort: per project by level, and an account
+  default (a chain, plus chains by level name). Resolution (`shared/agentChains.ts`): the level's
+  own chain, else the closest mapped level below then above, else the account default for that
+  level name, else the default chain. The app skips harnesses it doesn't have or that are out of
+  usage until their reset, falling back along the chain.
+- **Briefs and sessions.** For each job the app reads a brief: a compact prompt (task, stage
+  instructions, criteria, approvals, what's missing, the trigger and latest replies, the job and
+  the rules), the chain, and the harness session to resume for that task on that machine. One
+  process per job; a follow-up job on the same task resumes the same harness thread.
+- **Usage.** Completing, releasing or killing a job reports each harness run's usage; the stats
+  page sums it by day, harness, model, level and outcome. The global pause is the owner's agent
+  pause.
+
 ## Waves
 
 1. Wave 1 (parallel): **A** agent members (§1) · **B** project permissions + principals resolver +

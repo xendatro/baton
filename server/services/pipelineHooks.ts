@@ -58,7 +58,12 @@ export function onTaskEnteredStage(
       jobs.push(stageJob(task, status, agentUserId, 'approval', instructions));
     }
   }
-  if (jobs.length > 0) queueJobs(tx, jobs);
+  if (jobs.length > 0) {
+    queueJobs(
+      tx,
+      jobs.map((job) => ({ ...job, triggeredById: actor?.userId ?? null })),
+    );
+  }
 }
 
 /**
@@ -91,7 +96,12 @@ export function onStageApprovalsReset(
   const jobs = agentsOf(tx, task, approvals.rule, actor).map((agentUserId) =>
     stageJob(task, status, agentUserId, 'approval', instructions),
   );
-  if (jobs.length > 0) queueJobs(tx, jobs);
+  if (jobs.length > 0) {
+    queueJobs(
+      tx,
+      jobs.map((job) => ({ ...job, triggeredById: actor?.userId ?? null })),
+    );
+  }
 }
 
 /** The agent members `rule` matches in the task's project, except the actor itself. */

@@ -12,6 +12,7 @@ import type {
   AgentJobSummary,
   AgentSession,
 } from '@shared/schemas/agentJobs';
+import { DEFAULT_JOB_SOURCES, type JobSources } from '@shared/schemas/agentRunner';
 import type { Actor, AppDeps } from '../context';
 import type { DbExecutor, Tx } from '../db';
 import * as s from '../db/schema';
@@ -27,6 +28,7 @@ import { beginListening, isSessionListening, refreshPresence } from './presence'
 import { resolveProject } from './refs';
 import { getReply, type ReplyWithContext } from './replies';
 import { currentUserRow } from './taskAssignees';
+import { matchesRule } from './principals';
 import { getUserSummaries } from './users';
 
 /**
@@ -62,6 +64,11 @@ export interface QueueJobInput {
   payload?: Record<string, unknown>;
   /** Triggered by another agent's closing reply (the done handshake). */
   closing?: boolean;
+  /**
+   * Who caused it (a mention's, reply's or move's author); null for system sources. Jobs from
+   * people outside the owner's job sources wait for the owner's OK (BAT-24).
+   */
+  triggeredById?: string | null;
 }
 
 /** Kinds caused by a reply in a thread: one pending job per agent and item covers them all. */
@@ -82,7 +89,11 @@ function agentCanView(db: DbExecutor, agentId: string, projectId: string): boole
   return access !== null && canViewProject(access);
 }
 
-function jobChanged(tx: Tx, job: Pick<JobRow, 'id' | 'teamId' | 'projectId'>, ownerId: string) {
+export function jobChanged(
+  tx: Tx,
+  job: Pick<JobRow, 'id' | 'teamId' | 'projectId'>,
+  ownerId: string,
+) {
   emitAfterCommit(tx, {
     type: 'agent_job.changed',
     teamId: job.teamId,
@@ -116,6 +127,7 @@ export function queueJobs(tx: Tx, jobs: readonly QueueJobInput[]): string[] {
       continue;
     }
     const replyKind = REPLY_KINDS.includes(job.kind);
+    const accepted = acceptsJob(tx, agent, job);
     const existing = tx
       .select()
       .from(s.agentJob)
@@ -150,6 +162,10 @@ export function queueJobs(tx: Tx, jobs: readonly QueueJobInput[]): string[] {
           triggerReplyId: newTrigger ?? existing.triggerReplyId,
           closing: newTrigger ? (job.closing ?? false) : existing.closing,
           payload,
+          // A job the owner accepts makes a waiting one run.
+          ...(accepted && existing.needsOk
+            ? { needsOk: false, triggeredById: job.triggeredById ?? null }
+            : {}),
         })
         .where(eq(s.agentJob.id, existing.id))
         .run();
@@ -170,7 +186,9 @@ export function queueJobs(tx: Tx, jobs: readonly QueueJobInput[]): string[] {
         triggerReplyId: job.triggerReplyId ?? null,
         payload: job.payload ?? {},
         closing: job.closing ?? false,
+        triggeredById: job.triggeredById ?? null,
         status: 'pending',
+        needsOk: !accepted,
         createdAt: new Date(),
       })
       .returning()
@@ -179,6 +197,32 @@ export function queueJobs(tx: Tx, jobs: readonly QueueJobInput[]): string[] {
     jobChanged(tx, row, agent.ownerId);
   }
   return ids;
+}
+
+/**
+ * Does the owner run jobs from whoever caused this one without asking (BAT-24)? Jobs of system
+ * sources and of the owner or the agent itself always run; otherwise the owner's job sources
+ * decide (`me` by default, `anyone`, or a custom who-rule).
+ */
+function acceptsJob(tx: Tx, agent: { id: string; ownerId: string }, job: QueueJobInput): boolean {
+  const by = job.triggeredById ?? null;
+  if (by === null || by === agent.ownerId || by === agent.id) return true;
+  const sources = jobSourcesOf(tx, agent.ownerId);
+  if (sources.mode === 'anyone') return true;
+  if (sources.mode === 'custom' && sources.rule) {
+    return matchesRule(tx, { teamId: job.teamId, projectId: job.projectId }, by, sources.rule);
+  }
+  return false;
+}
+
+/** The owner's job sources (the default: only jobs they triggered). */
+export function jobSourcesOf(db: DbExecutor, ownerId: string): JobSources {
+  const row = db
+    .select({ jobSources: s.agentSettings.jobSources })
+    .from(s.agentSettings)
+    .where(eq(s.agentSettings.userId, ownerId))
+    .get();
+  return row?.jobSources ?? DEFAULT_JOB_SOURCES;
 }
 
 /**
@@ -362,6 +406,7 @@ export function queueMentionJobs(
       targetId: job.targetId,
       triggerReplyId: job.reply?.id ?? null,
       closing: job.reply ? closingOf(tx, job.reply) : false,
+      triggeredById: actor?.userId ?? null,
     })),
   );
 }
@@ -391,6 +436,7 @@ export function queueAssignedJobs(
       kind: 'assigned',
       targetType: 'task',
       targetId: taskId,
+      triggeredById: actor?.userId ?? null,
     })),
   );
 }
@@ -458,6 +504,7 @@ export function queueThreadReplyJobs(
       targetId: item.id,
       triggerReplyId: reply.id,
       closing,
+      triggeredById: reply.authorId,
     })),
   );
 }
@@ -493,6 +540,8 @@ interface ClaimOptions {
   needsTrigger?: boolean;
   /** Mark them done at once (the alias delivers instead of claiming). */
   deliver?: boolean;
+  /** Skip jobs waiting for the owner's OK (the desktop app's runners, BAT-24). */
+  acceptedOnly?: boolean;
 }
 
 /**
@@ -520,6 +569,7 @@ function claimJobs(
           inArray(s.agentJob.projectId, [...projectIds]),
           options.kinds ? inArray(s.agentJob.kind, [...options.kinds]) : undefined,
           options.needsTrigger ? isNotNull(s.agentJob.triggerReplyId) : undefined,
+          options.acceptedOnly ? eq(s.agentJob.needsOk, false) : undefined,
         ),
       )
       .orderBy(asc(s.agentJob.createdAt), asc(s.agentJob.id))
@@ -674,7 +724,10 @@ function upsertSession(
 }
 
 /** The agent behind a key actor, or a clear error for people and scripts without one. */
-function requireListeningAgent(deps: AppDeps, actor: Actor): { id: string; ownerId: string } {
+export function requireListeningAgent(
+  deps: AppDeps,
+  actor: Actor,
+): { id: string; ownerId: string } {
   if (!actor.key || !actor.ownerId) {
     throw errors.validation(
       'Agent jobs are collected through an API key: they belong to the key owner’s agent member',
@@ -723,6 +776,10 @@ export interface AgentJobContext {
   earlierReplyIds: string[];
   /** The stage's instructions, when a pipeline stage handed the task over. */
   stageInstructions: string | null;
+  /** Who caused the job (username), when a person or agent did. */
+  triggeredBy: string | null;
+  /** Waiting for the owner's OK before the desktop app runs it (BAT-24). */
+  needsOk: boolean;
   payload: Record<string, unknown>;
   /** What to do, and how the handshake works. */
   instructions: string;
@@ -783,7 +840,10 @@ function projectsById(db: DbExecutor, projectIds: readonly string[]): Map<string
 }
 
 /** The task or issue a job is about (a reply target's item). */
-function jobItem(db: DbExecutor, job: Pick<JobRow, 'targetType' | 'targetId'>): ItemInfo | null {
+export function jobItem(
+  db: DbExecutor,
+  job: Pick<JobRow, 'targetType' | 'targetId'>,
+): ItemInfo | null {
   if (job.targetType === 'task' || job.targetType === 'issue') {
     return findItem(db, job.targetType, job.targetId);
   }
@@ -820,10 +880,10 @@ export function jobContexts(deps: AppDeps, rows: readonly JobRow[]): AgentJobCon
           .all()
     ).map((reply) => [reply.id, reply]),
   );
-  const authors = getUserSummaries(
-    orm,
-    [...triggers.values()].map((reply) => reply.authorId),
-  );
+  const authors = getUserSummaries(orm, [
+    ...[...triggers.values()].map((reply) => reply.authorId),
+    ...rows.map((row) => row.triggeredById),
+  ]);
   return rows.map((job) => {
     const project = projects.get(job.projectId) ?? null;
     const item = jobItem(orm, job);
@@ -873,6 +933,8 @@ export function jobContexts(deps: AppDeps, rows: readonly JobRow[]): AgentJobCon
         : null,
       earlierReplyIds,
       stageInstructions: instructions,
+      triggeredBy: job.triggeredById ? (authors.get(job.triggeredById)?.username ?? null) : null,
+      needsOk: job.needsOk,
       payload: job.payload,
       instructions: jobInstructions(
         job,
@@ -903,7 +965,7 @@ export interface ListenerResult {
   jobs: AgentJobContext[];
 }
 
-interface ListenOptions extends ClaimOptions {
+export interface ListenOptions extends ClaimOptions {
   timeoutSeconds: number;
 }
 
@@ -911,7 +973,7 @@ interface ListenOptions extends ClaimOptions {
  * Claims now, or waits until a job arrives (woken by `agent_job.changed` of the owner), the
  * timeout passes or the request goes away. While it waits, the session counts as seen.
  */
-async function listen(
+export async function listen(
   deps: AppDeps,
   agent: { id: string; ownerId: string },
   sessionId: string,

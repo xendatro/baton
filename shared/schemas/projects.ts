@@ -207,6 +207,8 @@ export type ProjectSummary = z.infer<typeof projectSummarySchema>;
 export const projectSchema = projectSummarySchema.extend({
   /** Markdown. */
   readme: z.string(),
+  /** The project's code repository (optional). */
+  repoUrl: z.string().nullable().optional(),
   /** Shown instead of `readme` when set: a GitHub file or folder. */
   readmeSource: readmeSourceSchema.nullable().optional(),
   createdBy: userSummarySchema.nullable(),
@@ -247,6 +249,16 @@ export const createProjectInputSchema = z.object({
 });
 export type CreateProjectInput = z.infer<typeof createProjectInputSchema>;
 
+/** A repository URL: https (or ssh `git@host:owner/repo`), at most 300 characters. */
+export const repoUrlSchema = z
+  .string()
+  .trim()
+  .max(300, 'At most 300 characters')
+  .refine(
+    (value) => /^https?:\/\/\S+$/.test(value) || /^[\w.-]+@[\w.-]+:\S+$/.test(value),
+    'Use the repository’s https or ssh URL',
+  );
+
 export const updateProjectInputSchema = z
   .object({
     name: projectNameSchema.optional(),
@@ -264,6 +276,8 @@ export const updateProjectInputSchema = z
     attachmentIds: z.array(idSchema).max(LIMITS.attachmentsPerItem).optional(),
     /** Pause (true) or resume (false) every agent member's writes in the project. */
     agentsPaused: z.boolean().optional(),
+    /** The project's code repository (null clears it); the desktop app checks folders against it. */
+    repoUrl: repoUrlSchema.nullable().optional(),
   })
   .refine((value) => Object.values(value).some((field) => field !== undefined), {
     message: 'Nothing to update',

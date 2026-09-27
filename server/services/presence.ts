@@ -1,4 +1,4 @@
-import { and, gt, inArray } from 'drizzle-orm';
+import { and, eq, gt, inArray } from 'drizzle-orm';
 import { AGENT_LISTENER, PERSON_PRESENCE_TIMEOUT_MS } from '@shared/constants';
 import type { TeamPresence } from '@shared/schemas/agentJobs';
 import type { Actor, AppDeps } from '../context';
@@ -232,5 +232,26 @@ export function getTeamPresence(deps: AppDeps, actor: Actor, teamId: string): Te
   requireMember(deps.db.orm, actor, teamId);
   const members = teamMemberIds(deps.db.orm, teamId);
   const online = onlineUserIds(deps, members);
-  return { online: members.filter((id) => online.has(id)) };
+  const now = Date.now();
+  const runners =
+    members.length === 0
+      ? []
+      : deps.db.orm
+          .select()
+          .from(s.agentSession)
+          .where(
+            and(inArray(s.agentSession.agentUserId, members), eq(s.agentSession.kind, 'runner')),
+          )
+          .all()
+          .filter(
+            (row) =>
+              now - row.lastSeenAt.getTime() < AGENT_LISTENER.sessionTimeoutMs ||
+              isSessionListening(deps, row.id),
+          )
+          .map((row) => ({
+            agentUserId: row.agentUserId,
+            machineName: row.machineName ?? 'Desktop',
+            running: row.running,
+          }));
+  return { online: members.filter((id) => online.has(id)), runners };
 }

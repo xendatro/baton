@@ -63,5 +63,17 @@ export const agentActivitySchema = z.object({
 export type AgentActivity = z.infer<typeof agentActivitySchema>;
 
 /** `GET /api/teams/:teamId/presence`: ids of the team's members who are online now. */
-export const teamPresenceSchema = z.object({ online: z.array(z.string()) });
+export const teamPresenceSchema = z.object({
+  online: z.array(z.string()),
+  /** The desktop app running for members' agents right now (BAT-24). Optional for older fixtures. */
+  runners: z
+    .array(
+      z.object({
+        agentUserId: z.string(),
+        machineName: z.string(),
+        running: z.number().int().nonnegative(),
+      }),
+    )
+    .optional(),
+});
 export type TeamPresence = z.infer<typeof teamPresenceSchema>;

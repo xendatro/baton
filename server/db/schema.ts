@@ -56,6 +56,12 @@ import type {
   OnEnterRules,
 } from '../../shared/schemas/pipelines';
 import type { ReadmeSource } from '../../shared/schemas/github';
+import type {
+  DefaultMapping,
+  HarnessInfo,
+  JobSources,
+  ProjectMapping,
+} from '../../shared/schemas/agentRunner';
 import type { FieldChange } from '../../shared/schemas/core';
 import { newId } from '../lib/ids';
 
@@ -390,6 +396,8 @@ export const project = sqliteTable(
     description: text('description').notNull().default(''),
     /** Markdown. */
     readme: text('readme').notNull().default(''),
+    /** The project's code repository (optional): the desktop app checks mapped folders against it. */
+    repoUrl: text('repo_url'),
     /** Show a GitHub file or folder instead of `readme` (null: `readme`). */
     readmeSource: text('readme_source', { mode: 'json' }).$type<ReadmeSource>(),
     icon: text('icon'),
@@ -1098,7 +1106,16 @@ export const agentJob = sqliteTable(
       .default(sql`'{}'`),
     /** Triggered by another agent's closing reply (the done handshake). */
     closing: bool('closing').notNull().default(false),
+    /** Who caused it (the mention's, reply's or move's author); null for system sources. */
+    triggeredById: text('triggered_by_id').references((): AnySQLiteColumn => user.id, {
+      onDelete: 'set null',
+    }),
     status: text('status', { enum: AGENT_JOB_STATUSES }).notNull().default('pending'),
+    /**
+     * Caused by someone outside the owner's job sources (BAT-24): the desktop app runs it only
+     * after the owner's OK ("Waiting for your OK"). Manual listeners still get it.
+     */
+    needsOk: bool('needs_ok').notNull().default(false),
     /** The listener session holding a claimed job. */
     sessionId: text('session_id').references(() => agentSession.id, { onDelete: 'set null' }),
     createdAt: createdAtColumn(),
@@ -1132,6 +1149,20 @@ export const agentSession = sqliteTable(
       .$type<string[]>()
       .notNull()
       .default(sql`'[]'`),
+    /** `runner`: the desktop app on a machine (BAT-24); `listener`: an MCP `start_listener`. */
+    kind: text('kind', { enum: ['listener', 'runner'] })
+      .notNull()
+      .default('listener'),
+    /** Runners: the app's stable id for the machine, and its name. */
+    machineId: text('machine_id'),
+    machineName: text('machine_name'),
+    /** Runners: harnesses installed there. */
+    harnesses: text('harnesses', { mode: 'json' })
+      .$type<HarnessInfo[]>()
+      .notNull()
+      .default(sql`'[]'`),
+    /** Runners: jobs running now (from the last heartbeat). */
+    running: integer('running').notNull().default(0),
     startedAt: createdAtColumn(),
     lastSeenAt: timestamp('last_seen_at').notNull(),
   },
@@ -1467,3 +1498,95 @@ export const attachmentRelations = relations(attachment, ({ one }) => ({
 export const notificationRelations = relations(notification, ({ one }) => ({
   actor: one(user, { fields: [notification.actorId], references: [user.id] }),
 }));
+
+// =============================================================================================
+// Automatic agents (BAT-24): settings, model mappings, harness sessions, usage
+// =============================================================================================
+
+/** A person's automatic-agent settings: whose jobs run, and the default model mapping. */
+export const agentSettings = sqliteTable('agent_settings', {
+  userId: text('user_id')
+    .primaryKey()
+    .references(() => user.id, { onDelete: 'cascade' }),
+  jobSources: text('job_sources', { mode: 'json' }).$type<JobSources>(),
+  defaultMapping: text('default_mapping', { mode: 'json' }).$type<DefaultMapping>(),
+  updatedAt: updatedAtColumn(),
+});
+
+/** A person's model mapping for one project: difficulty level id → chain. */
+export const agentProjectMapping = sqliteTable(
+  'agent_project_mapping',
+  {
+    userId: text('user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    projectId: text('project_id')
+      .notNull()
+      .references(() => project.id, { onDelete: 'cascade' }),
+    levels: text('levels', { mode: 'json' })
+      .$type<ProjectMapping['levels']>()
+      .notNull()
+      .default(sql`'{}'`),
+    updatedAt: updatedAtColumn(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.userId, t.projectId] }),
+    index('agent_project_mapping_project_idx').on(t.projectId),
+  ],
+);
+
+/** The harness session a task ran in on a machine, so the next job there resumes it. */
+export const agentHarnessSession = sqliteTable(
+  'agent_harness_session',
+  {
+    agentUserId: text('agent_user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    taskId: text('task_id')
+      .notNull()
+      .references(() => task.id, { onDelete: 'cascade' }),
+    machineId: text('machine_id').notNull(),
+    harness: text('harness').notNull(),
+    sessionId: text('session_id').notNull(),
+    updatedAt: updatedAtColumn(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.agentUserId, t.taskId, t.machineId, t.harness] }),
+    index('agent_harness_session_task_idx').on(t.taskId),
+  ],
+);
+
+/** What one harness run of a job cost (reported by the desktop app). */
+export const agentUsage = sqliteTable(
+  'agent_usage',
+  {
+    id: idColumn(),
+    /** The human whose agent ran it. */
+    ownerId: text('owner_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    agentUserId: text('agent_user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    jobId: text('job_id').references(() => agentJob.id, { onDelete: 'set null' }),
+    projectId: text('project_id').references(() => project.id, { onDelete: 'set null' }),
+    /** The task's level when it ran (name, kept if the level is renamed or deleted). */
+    difficulty: text('difficulty'),
+    harness: text('harness').notNull(),
+    model: text('model').notNull().default(''),
+    effort: text('effort').notNull().default(''),
+    tokensIn: integer('tokens_in').notNull().default(0),
+    tokensOut: integer('tokens_out').notNull().default(0),
+    /** Micro-dollars (integer). */
+    costMicros: integer('cost_micros').notNull().default(0),
+    durationMs: integer('duration_ms').notNull().default(0),
+    outcome: text('outcome').notNull(),
+    createdAt: createdAtColumn(),
+  },
+  (t) => [
+    index('agent_usage_owner_created_idx').on(t.ownerId, t.createdAt),
+    index('agent_usage_job_idx').on(t.jobId),
+    index('agent_usage_agent_idx').on(t.agentUserId),
+    index('agent_usage_project_idx').on(t.projectId),
+  ],
+);

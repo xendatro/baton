@@ -632,7 +632,7 @@ describe('presence', () => {
       headers: web(ctx, cookie),
     });
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ online: [caden.id] });
+    expect(await res.json()).toEqual({ online: [caden.id], runners: [] });
 
     const outsider = createUser(ctx.db, { username: 'mallory' });
     const other = await signIn(ctx, outsider);

@@ -1,6 +1,8 @@
 import { z } from 'zod';
 import { AGENT_JOB_STATUSES, AGENT_LISTENER } from '@shared/constants';
+import { HARNESS_IDS, JOB_OUTCOMES } from '@shared/schemas/agentRunner';
 import { completeJob, listJobs, releaseJob, startListener } from '../../services/agentJobs';
+import { recordJobUsage } from '../../services/agentRunner';
 import { defineTool, toolInput, type McpTool } from './define';
 
 /**
@@ -12,14 +14,31 @@ import { defineTool, toolInput, type McpTool } from './define';
 
 const jobId = z.string().min(1).describe('Job id (jobId from start_listener or list_jobs)');
 
+const usageField = z
+  .array(
+    toolInput({
+      harness: z.enum(HARNESS_IDS).describe('Harness that ran it'),
+      model: z.string().max(100).optional().describe('Model (alias or id)'),
+      effort: z.string().max(40).optional().describe('Effort level'),
+      tokensIn: z.number().int().nonnegative().optional().describe('Input tokens'),
+      tokensOut: z.number().int().nonnegative().optional().describe('Output tokens'),
+      costUsd: z.number().nonnegative().optional().describe('Cost in US dollars'),
+      durationMs: z.number().int().nonnegative().optional().describe('Run time in milliseconds'),
+      outcome: z.enum(JOB_OUTCOMES).describe('How the run ended'),
+    }),
+  )
+  .max(8)
+  .optional()
+  .describe('What running the job cost, per harness run (shown in your agent stats); optional');
+
 const startListenerTool = defineTool({
   name: 'start_listener',
   title: 'Start listener',
   description: [
-    'Listens for work for your agent member in the given projects and returns jobs: someone @mentioned you, assigned you a task, replied in a thread you take part in, handed you a task from a pipeline stage (pool), asked for your approval, or decided on an action you requested.',
+    'Manual listener for your agent member (the Baton desktop app does this automatically, with no tokens spent while idle). Returns jobs in the given projects: someone @mentioned you, assigned you a task, replied in a thread you take part in, handed you a task from a pipeline stage (pool), asked for your approval, or decided on an action you requested.',
     'Returns at once with the pending jobs (claimed by this session, at most 10), or waits up to timeoutSeconds for the first one. Pass the returned sessionId back on every call.',
-    "Loop: call start_listener; for each job spawn a subagent that follows the job's instructions and calls complete_job (or release_job); call start_listener again right away (an empty result just means nothing happened yet).",
-    "Claimed jobs stay yours until you complete or release them; if your listener stops calling for 90 s, they go back to the queue for another session. Projects you don't listen to keep their jobs until a listener for them runs.",
+    "Protocol, exactly: (1) call start_listener; (2) for EACH job, spawn one subagent and give it the job (never do the work inline in the listening session, which must stay free to listen); the subagent follows the job's instructions and ends with complete_job { jobId } (or release_job { jobId } when it cannot do it); (3) call start_listener again right away with the same sessionId (an empty result only means nothing happened yet); repeat.",
+    "Claimed jobs stay yours until you complete or release them; if your listener stops calling for 90 s, they go back to the queue. Projects you don't listen to keep their jobs until a listener or the desktop app for them runs.",
     'Done handshake: a reply with add_reply { closing: true } means "no further discussion needed". A job from another agent\'s closing reply has closing: true; if you agree, call complete_job { agreeDone: true } without replying.',
   ].join(' '),
   input: toolInput({
@@ -57,9 +76,16 @@ const completeJobTool = defineTool({
       .boolean()
       .optional()
       .describe('Only for closing jobs: agree that nothing more is needed (instead of replying)'),
+    usage: usageField,
   }),
   annotations: { destructiveHint: false, idempotentHint: true },
-  handler: (ctx, input) => completeJob(ctx.deps, ctx.actor, input),
+  handler: (ctx, input) => {
+    recordJobUsage(ctx.deps, ctx.actor, input.jobId, input.usage);
+    return completeJob(ctx.deps, ctx.actor, {
+      jobId: input.jobId,
+      ...(input.agreeDone !== undefined ? { agreeDone: input.agreeDone } : {}),
+    });
+  },
 });
 
 const releaseJobTool = defineTool({
@@ -67,9 +93,12 @@ const releaseJobTool = defineTool({
   title: 'Release job',
   description:
     'Hands a claimed job back to the queue without doing it, so another listener session of yours can take it (for example when you are shutting down).',
-  input: toolInput({ jobId }),
+  input: toolInput({ jobId, usage: usageField }),
   annotations: { destructiveHint: false, idempotentHint: true },
-  handler: (ctx, input) => releaseJob(ctx.deps, ctx.actor, input),
+  handler: (ctx, input) => {
+    recordJobUsage(ctx.deps, ctx.actor, input.jobId, input.usage);
+    return releaseJob(ctx.deps, ctx.actor, { jobId: input.jobId });
+  },
 });
 
 const listJobsTool = defineTool({

@@ -211,6 +211,49 @@ createdAt } | null, earlierReplyIds, stageInstructions, payload, instructions }`
   `complete_job { agreeDone: true }` (only on such jobs) records `<type>.agents_agreed_done` (meta
   `agents`, `with`) and stops jobs from agent replies on that item until a person replies.
 
+### Automatic agents: the desktop app (BAT-24, docs/design/agents-and-pipelines.md §8)
+
+Schemas in `shared/schemas/agentRunner.ts`, chain resolution in `shared/agentChains.ts`. Runner
+endpoints need an API key (they act as the key owner's agent member); the owner endpoints under
+`/api/me/agent/*` accept the web session or the owner's key.
+
+- `POST /api/agent/runners { machineId, machineName, harnesses: [{ id, version }], projectIds }`
+  → `RunnerState { runner: { id, machineId, machineName, harnesses, projectIds, running,
+lastSeenAt, online }, paused, pausedReason, waitingCount }`. One runner per (agent, machine):
+  re-registering updates it. Only projects the agent can see are kept. `GET /api/agent/runners`
+  → `{ runners }` (the owner's).
+- `POST /api/agent/runners/:runnerId/heartbeat { harnesses?, projectIds?, running }` →
+  `RunnerState` (send at least every 30 s; a runner not seen for 90 s is offline and its claimed
+  jobs go back to the queue, like listener sessions).
+- `POST /api/agent/runners/:runnerId/jobs/next?wait=50` (≤ 110) → `{ jobs: AgentJobContext[] }`:
+  claims up to 10 pending jobs of the runner's projects atomically, or waits for the first. Jobs
+  waiting for the owner's OK are skipped. `agents_paused` while the agent is paused. Job contexts
+  also carry `triggeredBy` (username) and `needsOk`.
+- `GET /api/agent/jobs/:jobId/brief?runner=` → `{ jobId, kind, project, target, difficulty, chain:
+[{ harness, model, effort }], chainSource, resume: { harness: sessionId }, prompt }`. The chain
+  comes from the owner's mappings for the task's difficulty (its level, else the closest mapped
+  level below, then above, else the account default for a level of that name, else the default
+  chain); `resume` lists the harness sessions of that task on the runner's machine.
+- `PUT /api/agent/jobs/:jobId/session { runnerId, harness, sessionId }` stores the harness session
+  a task's job ran in (per agent, task, machine and harness).
+- `POST /api/agent/jobs/:jobId/complete { usage: JobUsage[], agreeDone? }` and `…/release { usage }`
+  complete or release the job (release of a finished job returns it unchanged), recording usage
+  `{ harness, model, effort, tokensIn, tokensOut, costUsd, durationMs, outcome: done | released |
+killed | out_of_usage | failed | permission_denied }`. MCP `complete_job` / `release_job` take
+  the same optional `usage`.
+- Whose jobs run: `GET/PUT /api/me/agent/job-sources { mode: me | anyone | custom, rule }` (default
+  `me`: jobs the owner or their agent caused; system jobs always run). Jobs caused by others get
+  `needsOk: true`: runners skip them until `POST /api/me/agent/jobs/:jobId/approve` (Run);
+  `…/dismiss` cancels. `GET /api/me/agent/waiting` → `{ jobs }`. Manual `start_listener` sessions
+  still get every job.
+- Model mappings: `GET/PUT /api/me/agent/models { default: { chain, levels: { levelName: chain } },
+projects: { projectId: { levels: { levelId: chain } } } }` (chains of up to 8 steps; project
+  levels must be the project's; empty chains are dropped).
+- `GET /api/me/agent/stats?days=30` → `{ days, totals, byDay, byHarness, byModel, byDifficulty,
+byOutcome }` (jobs, tokens, cost, duration).
+- `GET /api/teams/:teamId/presence` also lists online runners: `runners: [{ agentUserId,
+machineName, running }]`. Projects have an optional `repoUrl` (`PATCH` the project).
+
 ### Auth (`/api/auth/*`, Better Auth)
 
 The web app talks to Better Auth directly (its client or plain `fetch`). Endpoints in use:

@@ -1,0 +1,258 @@
+import { z } from 'zod';
+import { principalRuleSchema } from '../principals';
+import { idSchema, timestampSchema } from './common';
+
+/**
+ * The desktop app's automatic agents (BAT-24, docs/design/agents-and-pipelines.md §8): runners
+ * that listen for an agent member's jobs with plain code and run each job in a headless session
+ * of the person's own harness; the job brief; model mappings by difficulty with fallback chains;
+ * whose jobs run automatically; harness sessions; usage and stats.
+ */
+
+export const AGENT_RUNNER_LIMITS = {
+  machineName: 100,
+  harnesses: 20,
+  projects: 100,
+  chain: 8,
+  model: 100,
+  effort: 40,
+  sessionId: 300,
+  /** Replies included in a job brief. */
+  briefReplies: 12,
+  statsDays: 365,
+} as const;
+
+/** Harnesses with a headless mode the desktop app has adapters for. */
+export const HARNESS_IDS = ['claude', 'codex', 'gemini', 'cursor', 'opencode'] as const;
+export type HarnessId = (typeof HARNESS_IDS)[number];
+
+export const HARNESS_LABELS: Record<HarnessId, string> = {
+  claude: 'Claude Code',
+  codex: 'Codex',
+  gemini: 'Gemini CLI',
+  cursor: 'Cursor CLI',
+  opencode: 'opencode',
+};
+
+export const harnessIdSchema = z.enum(HARNESS_IDS);
+
+// ---------------------------------------------------------------------------------------------
+// Model mappings (personal: each person's harness, each person's usage)
+// ---------------------------------------------------------------------------------------------
+
+/** One step of a fallback chain: a harness, a model (alias or id; empty = its default) and an effort. */
+export const chainEntrySchema = z.object({
+  harness: harnessIdSchema,
+  model: z.string().trim().max(AGENT_RUNNER_LIMITS.model).default(''),
+  effort: z.string().trim().max(AGENT_RUNNER_LIMITS.effort).default(''),
+});
+export type ChainEntry = z.infer<typeof chainEntrySchema>;
+
+/** Tried in order: the next entry runs when a harness is out of usage or not installed. */
+export const chainSchema = z.array(chainEntrySchema).max(AGENT_RUNNER_LIMITS.chain);
+export type Chain = z.infer<typeof chainSchema>;
+
+/**
+ * The account default: a chain for tasks without a level (and levels nothing else maps), plus
+ * chains by level name (case-insensitive), which apply in every project with a level of that name.
+ */
+export const defaultMappingSchema = z.object({
+  chain: chainSchema,
+  levels: z.record(z.string().trim().min(1).max(40), chainSchema).default({}),
+});
+export type DefaultMapping = z.infer<typeof defaultMappingSchema>;
+
+/** A project's mapping: chains by difficulty level id. */
+export const projectMappingSchema = z.object({
+  levels: z.record(idSchema, chainSchema).default({}),
+});
+export type ProjectMapping = z.infer<typeof projectMappingSchema>;
+
+/** `GET/PUT /api/me/agent/models`. */
+export const modelMappingsSchema = z.object({
+  default: defaultMappingSchema,
+  /** Project id → mapping. */
+  projects: z.record(idSchema, projectMappingSchema).default({}),
+});
+export type ModelMappings = z.infer<typeof modelMappingsSchema>;
+
+/** A new account's default chain (Claude Code's latest Opus, high effort). */
+export const DEFAULT_CHAIN: Chain = [{ harness: 'claude', model: 'opus', effort: 'high' }];
+
+// ---------------------------------------------------------------------------------------------
+// Whose jobs run on my machine
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * `me`: only jobs I triggered (my mentions, assignments and moves of my agent); `anyone`: anyone
+ * who can mention or assign my agent; `custom`: people and agents matching `rule`. Other jobs wait
+ * for my OK (`waiting_approval`).
+ */
+export const JOB_SOURCE_MODES = ['me', 'anyone', 'custom'] as const;
+export type JobSourceMode = (typeof JOB_SOURCE_MODES)[number];
+
+export const jobSourcesSchema = z
+  .object({
+    mode: z.enum(JOB_SOURCE_MODES),
+    rule: principalRuleSchema.nullable().default(null),
+  })
+  .refine((value) => value.mode !== 'custom' || (value.rule?.allow.length ?? 0) > 0, {
+    message: 'Choose whose jobs run',
+    path: ['rule'],
+  });
+export type JobSources = z.infer<typeof jobSourcesSchema>;
+
+export const DEFAULT_JOB_SOURCES: JobSources = { mode: 'me', rule: null };
+
+// ---------------------------------------------------------------------------------------------
+// Runners
+// ---------------------------------------------------------------------------------------------
+
+export const harnessInfoSchema = z.object({
+  id: harnessIdSchema,
+  version: z.string().trim().max(100).nullable().default(null),
+});
+export type HarnessInfo = z.infer<typeof harnessInfoSchema>;
+
+/** `POST /api/agent/runners`: the desktop app starts (or restarts) on a machine. */
+export const registerRunnerInputSchema = z.object({
+  /** Stable id the app keeps for this machine (harness sessions are per machine). */
+  machineId: z.string().trim().min(8).max(100),
+  machineName: z.string().trim().min(1).max(AGENT_RUNNER_LIMITS.machineName),
+  harnesses: z.array(harnessInfoSchema).max(AGENT_RUNNER_LIMITS.harnesses),
+  /** Projects mapped to a folder on this machine: only their jobs come here. */
+  projectIds: z.array(idSchema).max(AGENT_RUNNER_LIMITS.projects),
+});
+export type RegisterRunnerInput = z.infer<typeof registerRunnerInputSchema>;
+
+/** `POST /api/agent/runners/:runnerId/heartbeat` (every 30 s at least). */
+export const runnerHeartbeatInputSchema = z.object({
+  harnesses: z.array(harnessInfoSchema).max(AGENT_RUNNER_LIMITS.harnesses).optional(),
+  projectIds: z.array(idSchema).max(AGENT_RUNNER_LIMITS.projects).optional(),
+  /** Jobs running now. */
+  running: z.number().int().nonnegative().max(10_000).default(0),
+});
+export type RunnerHeartbeatInput = z.infer<typeof runnerHeartbeatInputSchema>;
+
+export const runnerSchema = z.object({
+  id: z.string(),
+  machineId: z.string(),
+  machineName: z.string(),
+  harnesses: z.array(harnessInfoSchema),
+  projectIds: z.array(z.string()),
+  running: z.number().int().nonnegative(),
+  lastSeenAt: timestampSchema,
+  online: z.boolean(),
+});
+export type Runner = z.infer<typeof runnerSchema>;
+
+/** What a heartbeat answers: whether the owner paused agents (the app stops taking jobs). */
+export const runnerStateSchema = z.object({
+  runner: runnerSchema,
+  paused: z.boolean(),
+  pausedReason: z.string().nullable(),
+  /** Jobs from people outside my job sources, waiting for my OK. */
+  waitingCount: z.number().int().nonnegative(),
+});
+export type RunnerState = z.infer<typeof runnerStateSchema>;
+
+/** `POST /api/agent/runners/:runnerId/jobs/next?wait=`: jobs claimed for this runner. */
+export const runnerNextQuerySchema = z.object({
+  wait: z.coerce.number().int().min(0).max(110).default(50),
+});
+
+// ---------------------------------------------------------------------------------------------
+// Job brief, harness sessions, usage
+// ---------------------------------------------------------------------------------------------
+
+/** `GET /api/agent/jobs/:jobId/brief?runner=`. */
+export const jobBriefQuerySchema = z.object({ runner: idSchema.optional() });
+
+export const jobBriefSchema = z.object({
+  jobId: z.string(),
+  kind: z.string(),
+  project: z.object({ id: z.string(), ref: z.string(), name: z.string() }).nullable(),
+  target: z.object({
+    type: z.string(),
+    ref: z.string().nullable(),
+    title: z.string().nullable(),
+    url: z.string().nullable(),
+  }),
+  difficulty: z.object({ id: z.string(), name: z.string() }).nullable(),
+  /** Chain to run, from the owner's mappings (the app skips harnesses it doesn't have). */
+  chain: chainSchema,
+  /** Where the chain came from, in words ("Hard in API", "account default"). */
+  chainSource: z.string(),
+  /** Harness → session id to resume on this machine (the same task, harness and machine). */
+  resume: z.record(z.string(), z.string()),
+  /** The prompt: task, stage, what's missing, replies, the job and the rules. */
+  prompt: z.string(),
+});
+export type JobBrief = z.infer<typeof jobBriefSchema>;
+
+/** `PUT /api/agent/jobs/:jobId/session`: the harness session a job ran in (resumed next time). */
+export const harnessSessionInputSchema = z.object({
+  runnerId: idSchema,
+  harness: harnessIdSchema,
+  sessionId: z.string().trim().min(1).max(AGENT_RUNNER_LIMITS.sessionId),
+});
+export type HarnessSessionInput = z.infer<typeof harnessSessionInputSchema>;
+
+export const JOB_OUTCOMES = [
+  'done',
+  'released',
+  'killed',
+  'out_of_usage',
+  'failed',
+  'permission_denied',
+] as const;
+export type JobOutcome = (typeof JOB_OUTCOMES)[number];
+
+/** What a run cost, reported when a job completes, is released or killed. */
+export const jobUsageSchema = z.object({
+  harness: harnessIdSchema,
+  model: z.string().trim().max(AGENT_RUNNER_LIMITS.model).default(''),
+  effort: z.string().trim().max(AGENT_RUNNER_LIMITS.effort).default(''),
+  tokensIn: z.number().int().nonnegative().default(0),
+  tokensOut: z.number().int().nonnegative().default(0),
+  costUsd: z.number().nonnegative().default(0),
+  durationMs: z.number().int().nonnegative().default(0),
+  outcome: z.enum(JOB_OUTCOMES),
+});
+export type JobUsage = z.input<typeof jobUsageSchema>;
+
+/** `POST /api/agent/jobs/:jobId/complete` and `/release` from the app. */
+export const finishJobInputSchema = z.object({
+  usage: z.array(jobUsageSchema).max(AGENT_RUNNER_LIMITS.chain).default([]),
+  agreeDone: z.boolean().optional(),
+});
+export type FinishJobInput = z.input<typeof finishJobInputSchema>;
+
+// ---------------------------------------------------------------------------------------------
+// Stats
+// ---------------------------------------------------------------------------------------------
+
+export const agentStatsQuerySchema = z.object({
+  days: z.coerce.number().int().min(1).max(AGENT_RUNNER_LIMITS.statsDays).default(30),
+});
+
+const totalsSchema = z.object({
+  jobs: z.number().int().nonnegative(),
+  tokensIn: z.number().int().nonnegative(),
+  tokensOut: z.number().int().nonnegative(),
+  costUsd: z.number().nonnegative(),
+  durationMs: z.number().int().nonnegative(),
+});
+export type AgentUsageTotals = z.infer<typeof totalsSchema>;
+
+/** `GET /api/me/agent/stats?days=`. */
+export const agentStatsSchema = z.object({
+  days: z.number().int().positive(),
+  totals: totalsSchema,
+  byDay: z.array(totalsSchema.extend({ day: z.string() })),
+  byHarness: z.array(totalsSchema.extend({ harness: z.string() })),
+  byModel: z.array(totalsSchema.extend({ harness: z.string(), model: z.string() })),
+  byDifficulty: z.array(totalsSchema.extend({ difficulty: z.string() })),
+  byOutcome: z.array(z.object({ outcome: z.string(), jobs: z.number().int().nonnegative() })),
+});
+export type AgentStats = z.infer<typeof agentStatsSchema>;

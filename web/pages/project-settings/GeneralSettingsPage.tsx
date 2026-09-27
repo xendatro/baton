@@ -57,12 +57,13 @@ export default function GeneralSettingsPage() {
   return <GeneralSettings team={team} project={details.data} />;
 }
 
-type Field = 'name' | 'key' | 'description';
+type Field = 'name' | 'key' | 'description' | 'repoUrl';
 
 interface Values {
   name: string;
   key: string;
   description: string;
+  repoUrl: string;
   icon: string | null;
   color: string;
 }
@@ -72,6 +73,7 @@ function valuesOf(project: Project): Values {
     name: project.name,
     key: project.key,
     description: project.description,
+    repoUrl: project.repoUrl ?? '',
     icon: project.icon,
     color: project.color,
   };
@@ -114,6 +116,7 @@ function GeneralSettings({ team, project }: { team: MeTeam; project: Project }) 
     if (changed.includes('name')) input.name = values.name;
     if (changed.includes('key')) input.key = values.key;
     if (changed.includes('description')) input.description = values.description;
+    if (changed.includes('repoUrl')) input.repoUrl = values.repoUrl.trim() || null;
     if (changed.includes('icon')) input.icon = values.icon;
     if (changed.includes('color')) input.color = values.color;
     const parsed = updateProjectInputSchema.safeParse(input);
@@ -247,6 +250,22 @@ function GeneralSettings({ team, project }: { team: MeTeam; project: Project }) 
                   rows={3}
                   placeholder="What is this project about?"
                   className="max-h-40 resize-none"
+                />
+              )}
+            </FormField>
+
+            <FormField
+              label="Repository"
+              error={errors.repoUrl}
+              hint="Optional. The Baton desktop app warns when the folder you map to this project is a different repository."
+            >
+              {(field) => (
+                <Input
+                  {...field}
+                  value={values.repoUrl}
+                  onChange={(event) => set('repoUrl', event.target.value)}
+                  placeholder="https://github.com/owner/repo"
+                  autoComplete="off"
                 />
               )}
             </FormField>

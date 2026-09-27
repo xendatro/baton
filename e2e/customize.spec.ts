@@ -56,7 +56,6 @@ test('Customize → Edit statuses opens the statuses settings, and ← Board com
   // A column's "…" menu goes to that status, highlighted and ready to rename.
   const done = project.statuses.find((status) => status.name === 'Done');
   expect(done).toBeDefined();
-  await page.getByRole('heading', { name: 'Done', level: 2 }).hover();
   await page.getByRole('button', { name: 'Done column actions' }).click();
   await page.getByRole('menuitem', { name: 'Edit statuses' }).click();
   await expect(page).toHaveURL(new RegExp(`/settings/statuses\\?status=${done!.id}$`));

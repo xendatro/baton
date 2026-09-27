@@ -132,6 +132,14 @@
     @apply bg-background text-foreground antialiased;
     font-feature-settings: 'cv11', 'ss01';
   }
+
+  /* A native <select>'s option list is drawn by the browser: with a translucent select (our
+     inputs use bg-input/30) Chrome on Windows paints it white under light text. Solid colours. */
+  select option,
+  select optgroup {
+    background-color: var(--popover);
+    color: var(--popover-foreground);
+  }
 }
 
 /*

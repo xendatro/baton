@@ -11,7 +11,7 @@ import {
   hueFromString,
   initials,
 } from './format';
-import { findMentions, formatMention, mentionAtStart } from './mentions';
+import { findMentions, formatMention, mentionAtStart, nextMentionStart } from './mentions';
 import { formatTitle } from './title';
 
 describe('mentions', () => {
@@ -45,6 +45,11 @@ describe('mentions', () => {
       id: `${'a'.repeat(32)}-ai`,
     });
     expect(findMentions('@ab-ai')).toEqual([]);
+  });
+
+  it('finds every mention after nextMentionStart used the shared pattern', () => {
+    expect(nextMentionStart('Please look @ada-ai')).toBe(12);
+    expect(findMentions('Please look @ada-ai').map(({ id }) => id)).toEqual(['ada-ai']);
   });
 
   it('matches at the start of a markdown source and formats back', () => {

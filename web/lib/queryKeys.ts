@@ -155,6 +155,14 @@ export const queryKeys = {
     agentJobSources: () => ['account', 'agent', 'job-sources'] as const,
     agentModels: () => ['account', 'agent', 'models'] as const,
     agentStats: (days: number) => ['account', 'agent', 'stats', days] as const,
+    /**
+     * Is your agent connected to a project (a runner's folder or a listener)? Without
+     * `projectId`: the prefix of every project's.
+     */
+    agentConnection: (projectId?: string, taskId?: string | null) =>
+      projectId === undefined
+        ? (['account', 'agent', 'connection'] as const)
+        : (['account', 'agent', 'connection', projectId, taskId ?? null] as const),
     /** Without `params`: every list of your agent's sign-off requests (design §6). */
     agentActions: (params?: KeyParams) =>
       params === undefined

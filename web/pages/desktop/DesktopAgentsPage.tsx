@@ -5,6 +5,7 @@ import { toast } from 'sonner';
 import { HARNESS_LABELS } from '@shared/schemas/agentRunner';
 import type { DesktopJob, DesktopState } from '@shared/desktopBridge';
 import { desktopVersionText } from '@shared/desktopVersion';
+import { AgentConnectionNotice } from '@web/components/common/AgentConnectionNotice';
 import { EmptyState } from '@web/components/common/EmptyState';
 import { PageContainer } from '@web/components/common/PageContainer';
 import { PageHeader } from '@web/components/common/PageHeader';
@@ -15,6 +16,7 @@ import { Label } from '@web/components/ui/label';
 import { Skeleton } from '@web/components/ui/skeleton';
 import { Switch } from '@web/components/ui/switch';
 import { errorMessage } from '@web/lib/api';
+import { useMe } from '@web/lib/auth';
 import { desktopBridge, elapsed, useDesktopState } from '@web/lib/desktop';
 import { useDocumentTitle } from '@web/lib/title';
 import { useDecideWaitingJob, useWaitingJobs } from '../settings/automaticAgentsQueries';
@@ -93,6 +95,7 @@ function Agents() {
       ) : (
         <div className="grid gap-4">
           <PauseSwitches state={state} />
+          <UncoveredProjects state={state} />
           <WaitingHere />
           {runner?.jobs.length ? (
             <ul className="grid gap-4" aria-label="Running jobs">
@@ -111,6 +114,29 @@ function Agents() {
         </div>
       )}
     </PageContainer>
+  );
+}
+
+/**
+ * Projects with jobs waiting for your agent that no folder here covers (and no other computer or
+ * listener takes): each with Connect now, which picks a folder for it on this computer.
+ */
+function UncoveredProjects({ state }: { state: DesktopState }) {
+  const me = useMe();
+  const projectIds = (me.data?.teams ?? [])
+    .flatMap((team) => team.projects.map((project) => project.id))
+    .filter((projectId) => !state.folders[projectId]);
+  if (projectIds.length === 0) return null;
+  return (
+    <div className="grid gap-2 empty:hidden" aria-label="Projects your agent isn’t connected to">
+      {projectIds.map((projectId) => (
+        <AgentConnectionNotice
+          key={projectId}
+          projectId={projectId}
+          when={(connection) => connection.pendingJobs > 0 && !connection.paused}
+        />
+      ))}
+    </div>
   );
 }
 

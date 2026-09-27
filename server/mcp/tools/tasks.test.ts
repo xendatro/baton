@@ -315,6 +315,8 @@ describe('task MCP tools', () => {
       .run();
     const issue = createIssue(ctx.db, { project: project.project, authorId: owner.id });
     const client = await connect(mia);
+    // Done accepts new tasks here, so creating one straight in it gets as far as the link.
+    ctx.db.orm.update(s.status).set({ allowCreate: true }).where(eq(s.status.name, 'Done')).run();
 
     expect(
       await callError(client, 'create_task', {

@@ -63,8 +63,14 @@ beforeEach(() => {
   const [open, closed] = project.statuses;
   if (!open || !closed) throw new Error('statuses');
   const o = web(owner);
-  const inProgress = createStatus(ctx.deps, o, project.project.id, { name: 'Implementation' });
-  const inReview = createStatus(ctx.deps, o, project.project.id, { name: 'Human Review' });
+  const inProgress = createStatus(ctx.deps, o, project.project.id, {
+    name: 'Implementation',
+    rules: { allowCreate: true },
+  });
+  const inReview = createStatus(ctx.deps, o, project.project.id, {
+    name: 'Human Review',
+    rules: { allowCreate: true },
+  });
   [todo, doing, review, done] = reorderStatuses(ctx.deps, o, project.project.id, {
     statusIds: [open.id, inProgress.id, inReview.id, closed.id],
   }).items as [Status, Status, Status, Status];

@@ -347,21 +347,38 @@ export function statusOfProject(db: DbExecutor, projectId: string, statusId: str
   return status;
 }
 
-/** The default status of a pipeline (its first when none is marked). */
-function defaultStatus(db: DbExecutor, pipelineId: string): StatusRow {
-  const status =
-    db
-      .select()
-      .from(s.status)
-      .where(and(eq(s.status.pipelineId, pipelineId), eq(s.status.isDefault, true)))
-      .get() ??
-    db
-      .select()
-      .from(s.status)
-      .where(eq(s.status.pipelineId, pipelineId))
-      .orderBy(asc(s.status.position))
-      .get();
-  if (!status) throw errors.conflict('This pipeline has no statuses');
+/**
+ * The stage a new task of a pipeline starts in (BAT-34): the one asked for, which must accept new
+ * tasks (`allowCreate`); else the pipeline's default stage when it does, else its first stage that
+ * does.
+ */
+function startStatus(
+  db: DbExecutor,
+  projectId: string,
+  pipeline: { id: string; name: string },
+  statusId: string | undefined,
+): StatusRow {
+  if (statusId) {
+    const status = statusOfProject(db, projectId, statusId);
+    if (!status.allowCreate) {
+      throw errors.validation(
+        `New tasks can't start in "${status.name}"; turn on "New tasks can start here" in its settings or pick another stage`,
+      );
+    }
+    return status;
+  }
+  const stages = db
+    .select()
+    .from(s.status)
+    .where(and(eq(s.status.pipelineId, pipeline.id), eq(s.status.allowCreate, true)))
+    .orderBy(asc(s.status.position), asc(s.status.createdAt))
+    .all();
+  const status = stages.find((row) => row.isDefault) ?? stages[0];
+  if (!status) {
+    throw errors.validation(
+      `No stage of ${pipeline.name} accepts new tasks; turn on "New tasks can start here" on one in its settings`,
+    );
+  }
   return status;
 }
 
@@ -569,9 +586,7 @@ export function createTask(
       throw errors.notFound('Pipeline');
     }
     requireCreateIn(tx, membership, pipeline);
-    const status = input.statusId
-      ? statusOfProject(tx, projectId, input.statusId)
-      : defaultStatus(tx, pipeline.id);
+    const status = startStatus(tx, projectId, pipeline, input.statusId);
     const users = memberRefs(tx, team.id, [...new Set(input.assigneeUserIds ?? [])]);
     const roles = roleRefs(tx, team.id, [...new Set(input.assigneeRoleIds ?? [])]);
     const labels = labelRefs(tx, projectId, [...new Set(input.labelIds ?? [])]);

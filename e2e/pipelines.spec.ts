@@ -39,6 +39,8 @@ test('a task moves through a pipeline stage with a criterion and an approval', a
   );
   const review = await api<{ id: string }>(page, 'post', `/api/projects/${project.id}/statuses`, {
     name: 'In Review',
+    // BAT-34: the test starts a task straight in it.
+    rules: { allowCreate: true },
   });
   const [open, done] = project.statuses;
   await api(page, 'put', `/api/projects/${project.id}/statuses/order`, {

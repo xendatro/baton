@@ -69,6 +69,8 @@ beforeEach(() => {
   addMember(ctx.db, { teamId: team.team.id, userId: mia.id });
   addMember(ctx.db, { teamId: team.team.id, userId: bob.id });
   project = createProject(ctx.db, { teamId: team.team.id, key: 'API', createdById: owner.id });
+  // BAT-34: tasks may start straight in every stage here (Done too); see 'starting stage'.
+  ctx.db.orm.update(s.status).set({ allowCreate: true }).run();
   events = [];
   ctx.deps.events.subscribe((event) => events.push(event));
 });

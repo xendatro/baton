@@ -94,6 +94,7 @@ export function rulesOf(row: StatusRow): StageRules {
     },
     blocksDependents: row.blocksDependents,
     claimable: row.claimable,
+    allowCreate: row.allowCreate,
     exitCriteria: row.exitCriteria,
     moveBy: row.moveBy ?? { assignees: false, claimer: false },
     moveRule: row.moveRule ?? null,
@@ -132,6 +133,7 @@ export function ruleColumns(rules: StageRules) {
       : null,
     blocksDependents: rules.blocksDependents,
     claimable: rules.claimable,
+    allowCreate: rules.allowCreate,
     exitCriteria: rules.exitCriteria,
     moveBy: rules.moveBy.assignees || rules.moveBy.claimer ? rules.moveBy : null,
     moveRule: rules.moveRule,
@@ -155,7 +157,8 @@ export function seedStatusColumns(seed: {
     color: seed.color,
     icon: seed.icon,
     isDefault: seed.isDefault,
-    ...ruleColumns({ ...DEFAULT_STAGE_RULES, ...seed.rules }),
+    // BAT-34: new tasks start in the seeded default stage (Open), not in the others (Done).
+    ...ruleColumns({ ...DEFAULT_STAGE_RULES, allowCreate: seed.isDefault, ...seed.rules }),
   };
 }
 
@@ -341,6 +344,7 @@ function ruleSummaries(db: DbExecutor, rules: StageRules): Record<keyof StageRul
     onEnter: onEnter.length > 0 ? onEnter.join(', ') : null,
     blocksDependents: rules.blocksDependents,
     claimable: rules.claimable,
+    allowCreate: rules.allowCreate,
     exitCriteria: rules.exitCriteria.map((criterion) => criterion.text),
     moveBy: moveByWords(rules.moveBy) || null,
     moveRule: rules.moveRule ? ruleText(rules.moveRule, book) : null,

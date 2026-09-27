@@ -148,6 +148,13 @@
       "when": 1790508673288,
       "tag": "0020_stage_difficulty",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "6",
+      "when": 1790509918252,
+      "tag": "0021_stage_allow_create",
+      "breakpoints": true
     }
   ]
 }

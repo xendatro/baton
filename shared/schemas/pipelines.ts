@@ -141,6 +141,12 @@ export const stageRulesSchema = z.object({
   blocksDependents: z.boolean(),
   /** `claim_next_task` may pick tasks in this stage, and `claim_task` works here (default). */
   claimable: z.boolean(),
+  /**
+   * New tasks can start here (BAT-34; default off, on for a new pipeline's Open). Creating a task
+   * without a stage starts it in the pipeline's default stage when that allows it, else in the
+   * first stage that does.
+   */
+  allowCreate: z.boolean(),
   /** To leave forward: each needs evidence text. */
   exitCriteria: criteriaListSchema,
   /**
@@ -180,6 +186,7 @@ export const DEFAULT_STAGE_RULES: StageRules = {
   },
   blocksDependents: true,
   claimable: true,
+  allowCreate: false,
   exitCriteria: [],
   moveBy: { assignees: false, claimer: false },
   moveRule: null,
@@ -207,6 +214,8 @@ export const stageRulesPatchSchema = z.object({
     .optional(),
   blocksDependents: z.boolean().optional(),
   claimable: z.boolean().optional(),
+  /** New tasks can start here (BAT-34). */
+  allowCreate: z.boolean().optional(),
   exitCriteria: criteriaListSchema.optional(),
   moveBy: moveBySchema.optional(),
   moveRule: principalRuleSchema.nullable().optional(),

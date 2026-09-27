@@ -156,7 +156,8 @@ function sameSection(section: SectionId, a: Draft, b: Draft): boolean {
       a.icon === b.icon &&
       a.color === b.color &&
       a.isDefault === b.isDefault &&
-      a.defaultDifficultyId === b.defaultDifficultyId
+      a.defaultDifficultyId === b.defaultDifficultyId &&
+      a.rules.allowCreate === b.rules.allowCreate
     );
   }
   return (
@@ -173,6 +174,8 @@ function withSection(section: SectionId, base: Draft, from: Draft): Draft {
       color: from.color,
       isDefault: from.isDefault,
       defaultDifficultyId: from.defaultDifficultyId,
+      // BAT-34: "New tasks can start here" sits with the basics.
+      rules: { ...base.rules, allowCreate: from.rules.allowCreate },
     };
   }
   return { ...base, rules: { ...base.rules, ...pickRules(section, from.rules) } as StageRules };
@@ -349,6 +352,9 @@ function StatusForm({
         ...(draft.isDefault && !saved.isDefault ? { isDefault: true as const } : {}),
         ...(draft.defaultDifficultyId !== saved.defaultDifficultyId
           ? { defaultDifficultyId: draft.defaultDifficultyId }
+          : {}),
+        ...(draft.rules.allowCreate !== saved.rules.allowCreate
+          ? { rules: { allowCreate: draft.rules.allowCreate } }
           : {}),
       };
     } else {
@@ -683,15 +689,35 @@ function BasicsSection({
         </div>
       ) : null}
       <CheckRow
+        label="New tasks can start here"
+        help={
+          draft.isDefault && !wasDefault
+            ? 'The default status always accepts new tasks when you make it the default.'
+            : 'People and agents can create tasks straight in this status (the + on its column, the status picker of New task). Off: tasks only get here by moving.'
+        }
+        checked={draft.rules.allowCreate}
+        disabled={!canManage || (draft.isDefault && !wasDefault)}
+        onChange={(allowCreate) =>
+          setDraft((current) => ({ ...current, rules: { ...current.rules, allowCreate } }))
+        }
+      />
+      <CheckRow
         label="Default for new tasks"
         help={
           wasDefault
-            ? 'New tasks start here. To change that, make another status the default.'
-            : 'New tasks start in this status.'
+            ? 'New tasks start here when it accepts them, else in the first status that does. To change that, make another status the default.'
+            : 'New tasks start in this status. Making it the default lets new tasks start here.'
         }
         checked={draft.isDefault}
         disabled={wasDefault}
-        onChange={(isDefault) => setDraft((current) => ({ ...current, isDefault }))}
+        onChange={(isDefault) =>
+          setDraft((current) => ({
+            ...current,
+            isDefault,
+            // BAT-34: the server turns it on for a new default too.
+            rules: isDefault ? { ...current.rules, allowCreate: true } : current.rules,
+          }))
+        }
       />
       <div className="grid gap-1.5 rounded-lg border border-dashed p-3">
         <div className="flex items-center gap-1.5">

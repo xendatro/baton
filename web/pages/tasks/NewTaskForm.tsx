@@ -17,6 +17,7 @@ import { LabelPicker } from '@web/components/pickers/LabelPicker';
 import { DifficultyPicker } from '@web/components/pickers/DifficultyPicker';
 import { PriorityPicker } from '@web/components/pickers/PriorityPicker';
 import { StatusPicker } from '@web/components/pickers/StatusPicker';
+import { NoStartStageNotice } from '@web/components/common/NewTaskStages';
 import { Button } from '@web/components/ui/button';
 import {
   DialogDescription,
@@ -36,6 +37,7 @@ import {
 import { Switch } from '@web/components/ui/switch';
 import { errorMessage, isApiError } from '@web/lib/api';
 import { useMe } from '@web/lib/auth';
+import { acceptsNewTasks } from '@web/lib/newTaskStages';
 import { useDifficulties } from '../projects/difficultyQueries';
 import { useCreateLabel, useLabels, usePipelines, useStatuses } from '../projects/queries';
 import { useAssignables, useCreateTask } from './queries';
@@ -192,9 +194,13 @@ function TaskFields({
     ) ??
     creatable.find((pipeline) => pipeline.isDefault) ??
     creatable[0];
+  // BAT-34: only the stages new tasks can start in.
   const statusList = allStatuses.filter(
-    (status) => !chosenPipeline || !status.pipelineId || status.pipelineId === chosenPipeline.id,
+    (status) =>
+      (!chosenPipeline || !status.pipelineId || status.pipelineId === chosenPipeline.id) &&
+      acceptsNewTasks(status),
   );
+  const noStartStage = statuses.isSuccess && statusList.length === 0;
   const effectiveStatus =
     (statusList.some((status) => status.id === statusId) ? statusId : null) ??
     statusList.find((status) => status.isDefault)?.id ??
@@ -360,6 +366,11 @@ function TaskFields({
           onUploaded={(attachment) => setAttachments((current) => [...current, attachment])}
         />
       </div>
+      {noStartStage ? (
+        <NoStartStageNotice
+          pipelineName={creatable.length > 1 ? chosenPipeline?.name : undefined}
+        />
+      ) : null}
       <FormError message={formError} />
       <div className="flex flex-wrap items-center justify-between gap-3">
         <label className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -373,7 +384,7 @@ function TaskFields({
           <Button type="button" variant="outline" onClick={onDone} disabled={create.isPending}>
             Cancel
           </Button>
-          <Button type="submit" disabled={create.isPending || !title.trim()}>
+          <Button type="submit" disabled={create.isPending || !title.trim() || noStartStage}>
             {create.isPending ? <Spinner /> : null}
             Create task
           </Button>

@@ -26,6 +26,7 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { PlusIcon } from 'lucide-react';
+import { acceptsNewTasks } from '@web/lib/newTaskStages';
 import {
   useEffect,
   useLayoutEffect,
@@ -486,6 +487,8 @@ function Column({
   forbidden = false,
 }: ColumnProps) {
   const { status } = column;
+  // BAT-34: the + only on stages new tasks can start in.
+  const canAdd = canCreate && acceptsNewTasks(status);
   const { setNodeRef, isOver } = useDroppable({
     id: `${COLUMN_PREFIX}${status.id}`,
     disabled: forbidden,
@@ -517,7 +520,7 @@ function Column({
         >
           {column.count}
         </span>
-        {canCreate ? (
+        {canAdd ? (
           <Button
             variant="ghost"
             size="icon"
@@ -533,7 +536,7 @@ function Column({
           <ColumnMenu
             statusName={status.name}
             editHref={editStatusHref(status.id)}
-            className={canCreate ? '-ml-1' : 'ml-auto'}
+            className={canAdd ? '-ml-1' : 'ml-auto'}
           />
         ) : null}
       </header>

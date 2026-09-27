@@ -117,7 +117,8 @@ test('a task moves through a pipeline stage with a criterion and an approval', a
   await details.getByRole('button', { name: 'Status: In Review' }).click();
   await reviewerPage.getByRole('option', { name: /Done/ }).click();
   await expect(details.getByRole('button', { name: 'Status: Done' })).toBeVisible();
-  const history = reviewerPage.getByRole('list', { name: 'Replies and history' });
+  await reviewerPage.getByRole('button', { name: /^Activity/ }).click();
+  const history = reviewerPage.getByRole('list', { name: 'History' });
   await expect(history.getByText(/approved this in/)).toBeVisible();
   await expect(history.getByText(/moved from In Review to Done/)).toBeVisible();
   await context.close();

@@ -53,7 +53,7 @@ test('answer a reply in its thread, then collapse and reopen the thread', async 
   await expect(answers.getByRole('article')).toContainText('SQLite: one file, no server.');
   await expect(answerBox).toHaveCount(0);
   await page
-    .getByRole('list', { name: 'Replies and history' })
+    .getByRole('list', { name: 'Conversation' })
     .screenshot({ path: 'test-results/bat-13-thread.png' });
 
   // The answer is stored as an answer to the question.

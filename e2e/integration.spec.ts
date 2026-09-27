@@ -107,7 +107,7 @@ test('an issue deleted from its page shows in Trash and the audit log, and resto
 
   await page.goto(`/t/${team.slug}/p/HD/issues/1`);
   await page.getByRole('button', { name: 'Resolve' }).click();
-  await expect(page.getByText('resolved this issue')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Reopen' })).toBeVisible();
   await page.getByRole('button', { name: 'More actions' }).click();
   await page.getByRole('menuitem', { name: 'Delete issue' }).click();
   await page.getByRole('alertdialog').getByRole('button', { name: 'Delete issue' }).click();

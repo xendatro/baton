@@ -52,6 +52,7 @@ import { DifficultyPicker } from '@web/components/pickers/DifficultyPicker';
 import { PriorityPicker } from '@web/components/pickers/PriorityPicker';
 import { StatusPicker } from '@web/components/pickers/StatusPicker';
 import { useDeleteAttachment } from '@web/components/replies/queries';
+import { ActivitySheet } from '@web/components/replies/ActivitySheet';
 import { ReplyComposer } from '@web/components/replies/ReplyComposer';
 import { Timeline } from '@web/components/replies/Timeline';
 import { Button } from '@web/components/ui/button';
@@ -467,6 +468,13 @@ function TaskView({ task, team, project }: { task: Task; team: MeTeam; project: 
                 </h1>
               )}
             </div>
+            <ActivitySheet
+              parentType="task"
+              parentId={task.id}
+              itemRef={task.ref}
+              group="Task"
+              className="mt-4"
+            />
             {canDelete ? <DeleteTaskButton onDelete={() => setConfirmDelete(true)} /> : null}
             <TaskMenu
               task={task}
@@ -869,9 +877,9 @@ function TaskView({ task, team, project }: { task: Task; team: MeTeam; project: 
             )}
           </section>
 
-          <section aria-labelledby="activity-heading" className="mt-8">
-            <h2 id="activity-heading" className="mb-3 text-sm font-semibold">
-              Activity
+          <section aria-labelledby="conversation-heading" className="mt-8">
+            <h2 id="conversation-heading" className="mb-3 text-sm font-semibold">
+              Conversation
             </h2>
             <Timeline parentType="task" parentId={task.id} />
             <div className="mt-4">

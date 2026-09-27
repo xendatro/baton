@@ -228,7 +228,13 @@ test('edit, label, reply to, resolve and reopen an issue', async ({ page }) => {
   await page.getByRole('button', { name: 'Resolve' }).click();
   await expect(page.locator('[data-sonner-toast]').getByText('API#1 resolved')).toBeVisible();
   await expect(page.getByText('Resolved', { exact: true })).toBeVisible();
-  await expect(page.getByText('resolved this issue')).toBeVisible();
+  // The history is in the Activity drawer.
+  await page.getByRole('button', { name: /^Activity/ }).click();
+  await expect(
+    page.getByRole('list', { name: 'History' }).getByText('resolved this issue'),
+  ).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('list', { name: 'History' })).toBeHidden();
 
   // Reopen from the command palette.
   await page.keyboard.press('Control+k');

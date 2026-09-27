@@ -80,8 +80,17 @@ test('the task page moves on with the green button and sends back with a reason'
   await dialog.getByRole('button', { name: 'Send back to Build' }).click();
   await expect(details.getByRole('button', { name: 'Status: Build' })).toBeVisible();
   await expect(page.getByTestId('return-reason')).toContainText('The demo crashes on start');
-  const history = page.getByRole('list', { name: 'Replies and history' });
-  await expect(history.getByText('Sent back from Review: The demo crashes on start')).toBeVisible();
+  // The reason is a reply in the conversation; the move itself is in the Activity drawer.
+  await expect(
+    page
+      .getByRole('list', { name: 'Conversation' })
+      .getByText('Sent back from Review: The demo crashes on start'),
+  ).toBeVisible();
+  await page.getByRole('button', { name: /^Activity/ }).click();
+  const history = page.getByRole('list', { name: 'History' });
+  await expect(history.getByText(/moved from Review to Build/)).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(history).toBeHidden();
 
   // Forward again with the green button.
   await stage.getByRole('button', { name: 'Move to Review' }).click();

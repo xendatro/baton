@@ -1,5 +1,6 @@
 import { Cron } from 'croner';
 import type { AppDeps } from '../context';
+import { agentActionJobs } from './agentActions';
 import { backupJobs } from './backups';
 import { claimJobs } from './claims';
 import { purgeJobs } from './purge';
@@ -8,7 +9,12 @@ import type { JobDefinition } from './types';
 export type { JobDefinition } from './types';
 
 /** Every scheduled job (SPEC §5 Jobs). */
-export const allJobs: readonly JobDefinition[] = [...claimJobs, ...purgeJobs, ...backupJobs];
+export const allJobs: readonly JobDefinition[] = [
+  ...claimJobs,
+  ...purgeJobs,
+  ...backupJobs,
+  ...agentActionJobs,
+];
 
 export interface JobScheduler {
   stop(): void;

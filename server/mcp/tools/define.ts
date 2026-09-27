@@ -2,7 +2,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CallToolResult, ToolAnnotations } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import type { Actor, AppDeps } from '../../context';
-import { isAppError } from '../../lib/errors';
+import { isAppError, isPendingApproval } from '../../lib/errors';
 import { assertAgentsNotPaused } from '../../services/agents';
 
 /** Per-request context every tool handler receives (the MCP server is stateless). */
@@ -196,6 +196,14 @@ export async function toToolResult(
       structuredContent,
     };
   } catch (error) {
+    // Not a failure: the destructive action waits for the owner's sign-off (design §6).
+    if (isPendingApproval(error)) {
+      log('pending_approval');
+      return {
+        content: [{ type: 'text', text: JSON.stringify(error.body) }],
+        structuredContent: error.body,
+      };
+    }
     if (isAppError(error)) {
       log(error.code);
       return {

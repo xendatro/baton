@@ -19,6 +19,7 @@ import { excerpt, markdownToPlainText } from '../lib/markdown';
 import { appPaths } from '../lib/urls';
 import {
   canRestoreContent,
+  isOwnContent,
   requireCanDeleteContent,
   requireCanEditContent,
   requireProjectAccess,
@@ -39,6 +40,7 @@ import {
 import { reactionsByTarget } from './reactions';
 import { ReplyTree } from './replyTree';
 import { indexSearch } from './search';
+import { requireSignoff } from './signoff';
 import { autoSubscribe } from './subscriptions';
 import { getUserSummaries, getViaKeys } from './users';
 
@@ -532,6 +534,20 @@ export function deleteReply(deps: AppDeps, actor: Actor, id: string): { ok: true
   const { row, item, membership } = requireReply(deps, actor, id);
   requireCanDeleteContent(membership, row.authorId);
   const bodyExcerpt = excerpt(row.body, EXCERPT_LENGTH);
+  // An agent deleting its own (or its owner's) reply needs no sign-off; someone else's does.
+  if (!isOwnContent(membership, row.authorId)) {
+    const author = row.authorId
+      ? getUserSummaries(deps.db.orm, [row.authorId]).get(row.authorId)
+      : undefined;
+    requireSignoff(deps, actor, {
+      action: 'delete_reply',
+      teamId: item.teamId,
+      projectId: item.projectId,
+      input: { replyId: id },
+      summary: `delete ${author ? `${author.name}’s` : 'a'} reply on ${item.ref} “${excerpt(row.body, 60)}”`,
+      url: appPaths.reply(item.path, id),
+    });
+  }
   deps.db.write((tx) => {
     tx.update(s.reply)
       .set({

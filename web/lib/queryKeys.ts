@@ -130,5 +130,10 @@ export const queryKeys = {
     deletedTeams: () => ['account', 'deleted-teams'] as const,
     /** Your agent member and its settings (`GET /api/me/agent`). */
     agent: () => ['account', 'agent'] as const,
+    /** Without `params`: every list of your agent's sign-off requests (design §6). */
+    agentActions: (params?: KeyParams) =>
+      params === undefined
+        ? (['account', 'agent-actions'] as const)
+        : (['account', 'agent-actions', params] as const),
   },
 };

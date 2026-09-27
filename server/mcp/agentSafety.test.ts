@@ -42,7 +42,8 @@ beforeEach(() => {
   ctx = createTestContext();
   ethan = createUser(ctx.db, { username: 'ethan' });
   leo = createUser(ctx.db, { username: 'leo' });
-  teamId = createTeam(ctx.db, { ownerId: ethan.id, slug: 'northwind' }).team.id;
+  teamId = createTeam(ctx.db, { ownerId: ethan.id, slug: 'northwind', agentSignoff: false }).team
+    .id;
   frontendRoleId = createRole(ctx.db, { teamId, name: 'Frontend', slug: 'frontend' }).id;
   addMember(ctx.db, { teamId, userId: leo.id });
   web = createProject(ctx.db, {

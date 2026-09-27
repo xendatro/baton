@@ -20,6 +20,7 @@ import { change, diffFields, hasChanges } from '../lib/diff';
 import { errors } from '../lib/errors';
 import { newId } from '../lib/ids';
 import { likePrefix } from '../lib/sql';
+import { appPaths } from '../lib/urls';
 import {
   getMembership,
   listMemberships,
@@ -31,6 +32,7 @@ import {
 import { recordActivity } from './activity';
 import { addAgentMembership, agentOwnerOf } from './agents';
 import { emitAfterCommit } from './events';
+import { requireSignoff } from './signoff';
 import { getUserSummaries } from './users';
 
 /**
@@ -53,6 +55,7 @@ export function toTeam(row: TeamRow): Team {
     color: row.color,
     ownerId: row.ownerId,
     agentsPausedAt: row.agentsPausedAt?.toISOString() ?? null,
+    agentSignoff: row.agentSignoff,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
@@ -268,7 +271,8 @@ export function listDeletedTeams(
     .from(s.team)
     .where(
       and(
-        eq(s.team.ownerId, actor.userId),
+        // An agent sees its owner's (it may ask the owner to restore one, design §6).
+        eq(s.team.ownerId, actor.ownerId ?? actor.userId),
         isNotNull(s.team.deletedAt),
         gt(s.team.deletedAt, cutoff),
       ),
@@ -399,12 +403,21 @@ export function updateTeam(
   const { orm } = deps.db;
   const { team, membership } = requireTeam(orm, actor, teamId);
   requirePermission(membership, 'MANAGE_TEAM', "You don't have permission to edit this team");
-  const { agentsPaused, ...fields } = input;
+  const { agentsPaused, agentSignoff, ...fields } = input;
   const changes = diffFields(team, fields);
   // "Pause all agents" (agents A).
   const pauseChanged =
     agentsPaused !== undefined && agentsPaused !== (team.agentsPausedAt !== null);
   if (pauseChanged) changes.agentsPaused = change(!agentsPaused, agentsPaused);
+  // "Agents need human sign-off for destructive actions" (design §6).
+  const signoffChanged = agentSignoff !== undefined && agentSignoff !== team.agentSignoff;
+  if (signoffChanged) {
+    // An agent must not be able to switch off the check on itself.
+    if (actor.ownerId) {
+      throw errors.forbidden('Only people can change whether agents need sign-off, in the web app');
+    }
+    changes.agentSignoff = change(team.agentSignoff, agentSignoff);
+  }
   if (!hasChanges(changes)) return toTeamDetail(orm, team);
 
   const row = deps.db.write((tx) => {
@@ -424,6 +437,7 @@ export function updateTeam(
         ...(input.icon !== undefined ? { icon: input.icon } : {}),
         ...(input.color !== undefined ? { color: input.color } : {}),
         ...(pauseChanged ? { agentsPausedAt: agentsPaused ? new Date() : null } : {}),
+        ...(signoffChanged ? { agentSignoff } : {}),
         updatedAt: new Date(),
       })
       .where(eq(s.team.id, teamId))
@@ -455,6 +469,16 @@ export function updateTeam(
  */
 export function deleteTeam(deps: AppDeps, actor: Actor, teamId: string): { ok: true } {
   const { team, membership } = requireTeam(deps.db.orm, actor, teamId);
+  // Agents never own teams: the owner's agent asks the owner, who runs it on approval (§6).
+  if (actor.ownerId && team.ownerId === actor.ownerId) {
+    requireSignoff(deps, actor, {
+      action: 'delete_team',
+      teamId,
+      input: { teamId },
+      summary: `delete the team ${team.name} with all its projects, issues and tasks`,
+      url: appPaths.team(team.slug),
+    });
+  }
   requireOwner(membership, 'Only the team owner can delete the team');
   deps.db.write((tx) => {
     tx.update(s.team)
@@ -490,9 +514,17 @@ export function deleteTeam(deps: AppDeps, actor: Actor, teamId: string): { ok: t
 export function restoreTeam(deps: AppDeps, actor: Actor, teamId: string): TeamDetail {
   const { orm } = deps.db;
   const existing = orm.select().from(s.team).where(eq(s.team.id, teamId)).get();
-  if (!existing?.deletedAt || existing.ownerId !== actor.userId) {
+  // An agent finds its owner's deleted teams, and asks the owner to restore one (§6).
+  if (!existing?.deletedAt || existing.ownerId !== (actor.ownerId ?? actor.userId)) {
     throw errors.notFound('Deleted team');
   }
+  requireSignoff(deps, actor, {
+    action: 'restore_team',
+    teamId,
+    input: { teamId },
+    summary: `restore the team ${existing.name} from Trash`,
+    url: null,
+  });
   const row = deps.db.write((tx) => {
     const slug = uniqueTeamSlug(tx, existing.slug, teamId);
     const next = tx
@@ -545,14 +577,26 @@ export function transferOwnership(
   input: TransferOwnershipInput,
 ): TeamDetail {
   const { orm } = deps.db;
-  const { membership } = requireTeam(orm, actor, teamId);
-  requireOwner(membership, 'Only the team owner can transfer ownership');
-  if (input.userId === actor.userId) throw errors.validation('You already own this team');
+  const { team, membership } = requireTeam(orm, actor, teamId);
+  // Agents never own teams: the owner's agent asks the owner, who runs it on approval (§6).
+  const ownersAgent = actor.ownerId !== undefined && team.ownerId === actor.ownerId;
+  if (!ownersAgent) requireOwner(membership, 'Only the team owner can transfer ownership');
+  if (input.userId === team.ownerId) throw errors.validation('You already own this team');
   if (!getMembership(orm, teamId, input.userId)) throw errors.notFound('Member');
   if (agentOwnerOf(orm, input.userId) !== null) {
     throw errors.validation('Agents can’t own teams: pick a person');
   }
   const names = getUserSummaries(orm, [actor.userId, input.userId]);
+  if (ownersAgent) {
+    const target = names.get(input.userId);
+    requireSignoff(deps, actor, {
+      action: 'transfer_team_ownership',
+      teamId,
+      input: { teamId, userId: input.userId },
+      summary: `make ${target?.name ?? 'another member'}${target?.username ? ` (@${target.username})` : ''} the owner of ${team.name}`,
+      url: appPaths.teamSettings(team.slug, 'general'),
+    });
+  }
 
   const row = deps.db.write((tx) => {
     const next = tx

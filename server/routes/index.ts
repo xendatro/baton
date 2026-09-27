@@ -10,6 +10,7 @@ import { csrfMiddleware } from '../middleware/csrf';
 import { byClientIp, byUser, rateLimit } from '../middleware/rateLimit';
 import { accountRoutes } from './account';
 import { activityRoutes } from './activity';
+import { agentActionRoutes } from './agentActions';
 import { apiKeyRoutes } from './apiKeys';
 import { attachmentRoutes } from './attachments';
 import { auditLogRoutes } from './auditLog';
@@ -80,6 +81,8 @@ const routers: ReadonlyArray<Hono<AppEnv>> = [
   searchRoutes,
   // account
   accountRoutes,
+  // agents (design §6)
+  agentActionRoutes,
 ];
 
 /** Better Auth serves /api/auth/* itself (sessions, CSRF/origin checks, its own rate limits). */

@@ -68,6 +68,11 @@ const NEEDS_ME_TYPES: ReadonlySet<NotificationType> = new Set([
 export interface NotifyOptions {
   /** The notification answers the recipients directly (a reply to their reply). */
   direct?: boolean;
+  /**
+   * The owner hears about it whatever their `agent_notifications` level: their agent asks for
+   * their sign-off (`agent_action_request`, design §6).
+   */
+  always?: boolean;
 }
 
 /** The `agent_notifications` level of an agent actor's owner, or null for people. */
@@ -102,6 +107,7 @@ export function notifyUsers(
   const level = ownerLevel(tx, actor);
   const ownerId = actor?.ownerId;
   const ownerWanted =
+    options.always === true ||
     level === 'all' ||
     (level === 'needs_me' && (NEEDS_ME_TYPES.has(type) || options.direct === true));
   const candidates = [...new Set(userIds)].filter(
@@ -395,7 +401,20 @@ function visibleCondition(db: DbExecutor, actor: Actor) {
   const teamIds = memberTeamIds(db, actor.userId);
   return and(
     eq(s.notification.userId, actor.userId),
-    inArray(s.notification.teamId, teamIds),
+    or(
+      inArray(s.notification.teamId, teamIds),
+      // An agent's sign-off request can be about a team in Trash (restoring it, design §6).
+      and(
+        eq(s.notification.type, 'agent_action_request'),
+        inArray(
+          s.notification.teamId,
+          db
+            .select({ teamId: s.teamMember.teamId })
+            .from(s.teamMember)
+            .where(eq(s.teamMember.userId, actor.userId)),
+        ),
+      ),
+    ),
     liveSubjectCondition,
     // Notifications about projects the actor can no longer see are hidden with the project.
     or(

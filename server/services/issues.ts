@@ -49,6 +49,7 @@ import {
 import { requireProject } from './projects';
 import { reactionsOf } from './reactions';
 import { buildFtsQuery, indexSearch } from './search';
+import { requireSignoff } from './signoff';
 import { autoSubscribe, subscriberIds } from './subscriptions';
 import { getUserSummaries, getViaKeys } from './users';
 
@@ -813,6 +814,14 @@ export function deleteIssue(deps: AppDeps, actor: Actor, issueId: string): { ok:
   const access = requireIssue(orm, actor, issueId);
   const { issue, membership } = access;
   requireCanDeleteContent(membership, issue.authorId);
+  requireSignoff(deps, actor, {
+    action: 'delete_issue',
+    teamId: issue.teamId,
+    projectId: issue.projectId,
+    input: { issueId },
+    summary: `delete ${access.project.key}#${issue.number} “${issue.title}”`,
+    url: appPaths.issue(access.team.slug, access.project.key, issue.number),
+  });
   deps.db.write((tx) => {
     tx.update(s.issue)
       .set({

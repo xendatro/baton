@@ -238,13 +238,16 @@ describe('deleting and restoring', () => {
     addMember(ctx.db, { teamId: team.id, userId: mia.id, roleIds: [adminRole.id] });
     expect(() => deleteTeam(ctx.deps, actorOf(mia), team.id)).toThrow(/owner/);
 
-    // Owner-only, so never through a key: keys act as the owner's agent (agents A).
+    // Owner-only, so never directly through a key: keys act as the owner's agent (agents A),
+    // which asks the owner for sign-off instead (design §6).
     const { key: agentKey } = createApiKey(ctx.db, { userId: ethan.id });
-    const refused = await ctx.app.request(`/api/teams/${team.id}`, {
+    const asked = await ctx.app.request(`/api/teams/${team.id}`, {
       method: 'DELETE',
       headers: bearer(agentKey),
     });
-    expect(refused.status).toBe(403);
+    expect(asked.status).toBe(202);
+    expect(await asked.json()).toMatchObject({ pendingApproval: true });
+    expect(activity('team.deleted')).toHaveLength(0);
     const session = web(ctx, await signIn(ctx, ethan));
     const res = await ctx.app.request(`/api/teams/${team.id}`, {
       method: 'DELETE',
@@ -333,7 +336,8 @@ describe('transferOwnership', () => {
       `/api/teams/${team.id}/transfer`,
       json('POST', { userId: mia.id }, bearer(key)),
     );
-    expect(byAgent.status).toBe(403);
+    // It becomes a request for the owner's sign-off (design §6); nothing changes yet.
+    expect(byAgent.status).toBe(202);
 
     const cookie = await signIn(ctx, ethan);
     const res = await ctx.app.request(

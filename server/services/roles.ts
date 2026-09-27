@@ -20,10 +20,12 @@ import * as s from '../db/schema';
 import { change, diffFields, hasChanges, type Changes } from '../lib/diff';
 import { errors } from '../lib/errors';
 import { newId } from '../lib/ids';
+import { appPaths } from '../lib/urls';
 import { canManageRole, hasPermission, requirePermission, type Membership } from './access';
 import { recordActivity } from './activity';
 import { emitAfterCommit } from './events';
 import { deleteOverridesOf } from './projectAccess';
+import { requireSignoff } from './signoff';
 import { unassignFromTasks } from './taskAssignees';
 import { memberCounts, requireTeam } from './teams';
 
@@ -326,11 +328,18 @@ export function deleteRole(
   roleId: string,
 ): { ok: true } {
   const { orm } = deps.db;
-  const { membership } = requireTeam(orm, actor, teamId);
+  const { team, membership } = requireTeam(orm, actor, teamId);
   const role = requireRole(orm, teamId, roleId);
   if (role.isEveryone) throw errors.validation('@everyone can’t be deleted');
   requireManageRole(membership, normalizePermissions(role.permissions));
   const holders = roleMemberCounts(orm, teamId).get(roleId) ?? 0;
+  requireSignoff(deps, actor, {
+    action: 'delete_role',
+    teamId,
+    input: { teamId, roleId },
+    summary: `delete the role @${role.name} in ${team.name} (held by ${holders} member${holders === 1 ? '' : 's'})`,
+    url: appPaths.role(team.slug, roleId),
+  });
 
   deps.db.write((tx) => {
     const unassignedTasks = unassignFromTasks(tx, actor, teamId, { roleId }, 'role_deleted');

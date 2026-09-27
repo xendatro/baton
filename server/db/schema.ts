@@ -24,6 +24,8 @@ import {
 } from 'drizzle-orm/sqlite-core';
 import {
   ACTIVITY_ENTITY_TYPES,
+  AGENT_ACTION_STATUSES,
+  AGENT_ACTIONS,
   AGENT_NOTIFICATION_LEVELS,
   ACTOR_SOURCES,
   ATTACHMENT_PARENT_TYPES,
@@ -38,6 +40,7 @@ import {
   type PriorityValue,
 } from '../../shared/constants';
 import type { Permission } from '../../shared/permissions';
+import type { AgentActionPayload } from '../../shared/schemas/agentActions';
 import type { FieldChange } from '../../shared/schemas/core';
 import { newId } from '../lib/ids';
 
@@ -212,6 +215,11 @@ export const team = sqliteTable(
       .references(() => user.id, { onDelete: 'restrict' }),
     /** "Pause all agents": agent members' writes in the team are refused while set. */
     agentsPausedAt: timestamp('agents_paused_at'),
+    /**
+     * "Agents need human sign-off for destructive actions" (design §6): an agent member's
+     * destructive operation becomes an `agent_action_request` its owner approves or denies.
+     */
+    agentSignoff: bool('agent_signoff').notNull().default(true),
     createdAt: createdAtColumn(),
     updatedAt: updatedAtColumn(),
     ...softDeleteColumns(),
@@ -858,6 +866,57 @@ export const agentMention = sqliteTable(
   (t) => [
     index('agent_mention_key_idx').on(t.keyId, t.deliveredAt),
     uniqueIndex('agent_mention_key_reply_unique').on(t.keyId, t.replyId),
+  ],
+);
+
+/**
+ * A destructive action an agent member asked for, waiting for its owner's sign-off (design §6).
+ * On approval the server runs it again from `payload.input` (as the agent, re-checking its
+ * permissions; owner-only actions as the owner) and stores the outcome in `result` / `error`.
+ * Pending requests expire after 7 days.
+ */
+export const agentActionRequest = sqliteTable(
+  'agent_action_request',
+  {
+    id: idColumn(),
+    teamId: text('team_id')
+      .notNull()
+      .references(() => team.id, { onDelete: 'cascade' }),
+    projectId: text('project_id').references(() => project.id, { onDelete: 'cascade' }),
+    agentUserId: text('agent_user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    /** The agent's owner: the only one who may approve or deny. */
+    ownerId: text('owner_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    action: text('action', { enum: AGENT_ACTIONS }).notNull(),
+    payload: text('payload', { mode: 'json' }).$type<AgentActionPayload>().notNull(),
+    /**
+     * How the agent asked (`mcp` or `api`) and through which key, for the action's audit row. No
+     * foreign key on the key, like `activity.via_key_id`: a snapshot for attribution only.
+     */
+    source: text('source', { enum: ACTOR_SOURCES }).notNull(),
+    viaKeyId: text('via_key_id'),
+    viaKeyName: text('via_key_name'),
+    viaAgentName: text('via_agent_name'),
+    status: text('status', { enum: AGENT_ACTION_STATUSES }).notNull().default('pending'),
+    /** What the action returned (approved), as JSON. */
+    result: text('result', { mode: 'json' }).$type<unknown>(),
+    /** Why the approved action failed: `{ code, message }`. */
+    error: text('error', { mode: 'json' }).$type<{ code: string; message: string }>(),
+    createdAt: createdAtColumn(),
+    decidedAt: timestamp('decided_at'),
+    decidedById: text('decided_by_id').references(() => user.id, { onDelete: 'set null' }),
+  },
+  (t) => [
+    index('agent_action_request_owner_idx').on(t.ownerId, t.createdAt),
+    index('agent_action_request_status_idx').on(t.status, t.createdAt),
+    index('agent_action_request_agent_idx').on(t.agentUserId),
+    index('agent_action_request_team_idx').on(t.teamId),
+    index('agent_action_request_project_idx').on(t.projectId),
+    index('agent_action_request_key_idx').on(t.viaKeyId),
+    index('agent_action_request_decided_by_idx').on(t.decidedById),
   ],
 );
 

@@ -89,6 +89,19 @@ export interface CreateTeamOptions {
   slug?: string;
   icon?: string | null;
   color?: string;
+  /**
+   * "Agents need human sign-off for destructive actions" (design §6; on by default, like real
+   * teams). Tests of what an agent's key deletes, rather than of sign-off, pass false.
+   */
+  agentSignoff?: boolean;
+}
+
+/**
+ * Switches a team's agent sign-off (design §6) on or off, for tests of what an agent's key does
+ * with destructive actions rather than of the sign-off itself.
+ */
+export function setAgentSignoff(db: Database, teamId: string, enabled: boolean): void {
+  db.orm.update(s.team).set({ agentSignoff: enabled }).where(eq(s.team.id, teamId)).run();
 }
 
 /** A team with the seeded `@everyone` and Admin roles; the owner is a member. */
@@ -103,6 +116,7 @@ export function createTeam(db: Database, options: CreateTeamOptions): CreatedTea
         icon: options.icon ?? null,
         color: options.color ?? DEFAULT_TEAM_COLOR,
         ownerId: options.ownerId,
+        ...(options.agentSignoff === undefined ? {} : { agentSignoff: options.agentSignoff }),
       })
       .returning()
       .get();

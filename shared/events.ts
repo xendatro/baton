@@ -43,6 +43,8 @@ export const LIVE_EVENT_TYPES = [
   'notification.created',
   'notification.read',
   'me.updated',
+  /** Personal: an agent sign-off request was made, approved, denied or expired (design §6). */
+  'agent_action.changed',
 ] as const;
 
 export type LiveEventType = (typeof LIVE_EVENT_TYPES)[number];
@@ -52,6 +54,7 @@ export const PERSONAL_EVENT_TYPES = [
   'notification.created',
   'notification.read',
   'me.updated',
+  'agent_action.changed',
 ] as const satisfies readonly LiveEventType[];
 
 export type PersonalEventType = (typeof PERSONAL_EVENT_TYPES)[number];
@@ -71,6 +74,7 @@ export const LIVE_ENTITY_TYPES = [
   'attachment',
   'activity',
   'notification',
+  'agent_action',
 ] as const;
 
 export type LiveEntityType = (typeof LIVE_ENTITY_TYPES)[number];

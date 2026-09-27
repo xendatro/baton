@@ -156,6 +156,50 @@ export type Theme = (typeof THEMES)[number];
 export const AGENT_NOTIFICATION_LEVELS = ['all', 'needs_me', 'none'] as const;
 export type AgentNotificationLevel = (typeof AGENT_NOTIFICATION_LEVELS)[number];
 
+/**
+ * Destructive actions an agent member must get its owner's sign-off for (`agent_action_request`,
+ * docs/design/agents-and-pipelines.md §6) while its team's "Agents need human sign-off" is on.
+ * Deleting a reply or attachment needs it only when someone else wrote it.
+ */
+export const AGENT_ACTIONS = [
+  'delete_task',
+  'delete_issue',
+  'delete_project',
+  'delete_status',
+  'delete_label',
+  'delete_reply',
+  'delete_attachment',
+  'delete_role',
+  'remove_member',
+  'revoke_invite',
+  'delete_team',
+  'restore_team',
+  'transfer_team_ownership',
+] as const;
+export type AgentAction = (typeof AGENT_ACTIONS)[number];
+
+/**
+ * Actions only a team's owner may take. Agents never own teams, so these always need the sign-off
+ * of an owner who owns the team (whatever the team setting) and run as the owner once approved.
+ */
+export const OWNER_ONLY_AGENT_ACTIONS: ReadonlySet<AgentAction> = new Set([
+  'delete_team',
+  'restore_team',
+  'transfer_team_ownership',
+]);
+
+export const AGENT_ACTION_STATUSES = [
+  'pending',
+  'approved',
+  'denied',
+  'expired',
+  'failed',
+] as const;
+export type AgentActionStatus = (typeof AGENT_ACTION_STATUSES)[number];
+
+/** Pending sign-off requests expire after this many days. */
+export const AGENT_ACTION_REQUEST_TTL_DAYS = 7;
+
 /** Kinds of users: people, and the agent member every person has. */
 export const USER_KINDS = ['human', 'agent'] as const;
 export type UserKind = (typeof USER_KINDS)[number];
@@ -247,6 +291,8 @@ export const NOTIFICATION_TYPES = [
   'issue_resolved',
   'issue_reopened',
   'task_done',
+  /** An agent asks its owner to sign off a destructive action (design §6); always delivered. */
+  'agent_action_request',
 ] as const;
 export type NotificationType = (typeof NOTIFICATION_TYPES)[number];
 

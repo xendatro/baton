@@ -1,4 +1,5 @@
 import type { ContentfulStatusCode } from 'hono/utils/http-status';
+import type { PendingApprovalResponse } from '@shared/schemas/agentActions';
 import type { ApiError, ErrorCode } from '@shared/schemas/common';
 
 export type { ErrorCode };
@@ -71,4 +72,22 @@ export const errors = {
 
 export function isAppError(error: unknown): error is AppError {
   return error instanceof AppError;
+}
+
+/**
+ * Not a failure: an agent member's destructive action now waits for its owner's sign-off
+ * (design §6). Thrown by `requireSignoff` once the request is stored, so every caller (REST route,
+ * MCP tool, trash handler) stops alike; the REST error handler answers `202` with `body` and MCP
+ * tools return `body` as a normal result.
+ */
+export class PendingApproval extends Error {
+  override name = 'PendingApproval';
+
+  constructor(readonly body: PendingApprovalResponse) {
+    super(body.message);
+  }
+}
+
+export function isPendingApproval(error: unknown): error is PendingApproval {
+  return error instanceof PendingApproval;
 }

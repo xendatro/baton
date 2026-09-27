@@ -37,6 +37,7 @@ import { attachToParent, referencedPendingUploads } from './attachments';
 import { emitAfterCommit } from './events';
 import { labelsOf } from './labels';
 import { notifyMentions, refreshNotificationText } from './notifications';
+import { requireSignoff } from './signoff';
 import { statusesOf } from './statuses';
 import { getUserSummaries } from './users';
 
@@ -620,8 +621,16 @@ export function updateProject(
  */
 export function deleteProject(deps: AppDeps, actor: Actor, projectId: string): { ok: true } {
   const { orm } = deps.db;
-  const { project, membership } = requireProject(orm, actor, projectId);
+  const { project, team, membership } = requireProject(orm, actor, projectId);
   requirePermission(membership, 'MANAGE_PROJECTS', "You don't have permission to delete projects");
+  requireSignoff(deps, actor, {
+    action: 'delete_project',
+    teamId: project.teamId,
+    projectId: project.id,
+    input: { projectId: project.id },
+    summary: `delete the project ${project.key} “${project.name}” with all its issues and tasks`,
+    url: appPaths.project(team.slug, project.key),
+  });
   deps.db.write((tx) => {
     tx.update(s.project)
       .set({

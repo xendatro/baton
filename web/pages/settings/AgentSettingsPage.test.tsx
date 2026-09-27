@@ -2,6 +2,7 @@ import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AgentSettings, UpdateAgentSettingsInput } from '@shared/schemas/account';
+import type { AgentActionRequest } from '@shared/schemas/agentActions';
 import { jsonResponse, mockApi } from '@web/test/mockApi';
 import AgentSettingsPage from './AgentSettingsPage';
 import { jsonBody, renderSettingsPage } from './testing';
@@ -105,5 +106,69 @@ describe('Agent settings', () => {
     expect(
       await screen.findByText('Couldn’t load your agent', {}, { timeout: 10_000 }),
     ).toBeInTheDocument();
+  });
+});
+
+describe('Pending agent actions', () => {
+  const agent = settings().agent;
+  const pending: AgentActionRequest = {
+    id: 'ar1',
+    team: { id: 't1', name: 'Acme', slug: 'acme' },
+    projectId: null,
+    action: 'remove_member',
+    status: 'pending',
+    summary: 'remove Zoe (@zoe) from Acme',
+    url: '/t/acme/settings/members',
+    agent,
+    owner: agent.agentOwner ?? null,
+    via: { keyId: 'k1', keyName: 'MSI', agentName: 'Claude' },
+    runsAsOwner: false,
+    result: null,
+    error: null,
+    createdAt: new Date().toISOString(),
+    expiresAt: new Date(Date.now() + 7 * 86_400_000).toISOString(),
+    decidedAt: null,
+    decidedBy: null,
+  };
+
+  it('lists what waits for your sign-off and approves it', async () => {
+    let items = [pending];
+    const fetchMock = mockApi({
+      'GET /api/me/agent': settings(),
+      'GET /api/agent-actions': () => jsonResponse({ items }),
+      'POST /api/agent-actions/ar1/approve': () => {
+        items = [];
+        return jsonResponse({ ...pending, status: 'approved', result: { ok: true } });
+      },
+    });
+    const user = userEvent.setup();
+    renderSettingsPage(<AgentSettingsPage />);
+    const row = await screen.findByTestId('pending-agent-action', {}, LAZY);
+    expect(row).toHaveTextContent('Ada Lovelace AI wants to remove Zoe (@zoe) from Acme');
+    expect(row).toHaveTextContent('Acme · via MSI');
+    expect(
+      fetchMock.mock.calls.some(
+        ([input]) =>
+          typeof input === 'string' && input.includes('/api/agent-actions?status=pending'),
+      ),
+    ).toBe(true);
+
+    await user.click(
+      screen.getByRole('button', {
+        name: 'Approve: Ada Lovelace AI wants to remove Zoe (@zoe) from Acme',
+      }),
+    );
+    expect(await screen.findByText('Approved: remove Zoe (@zoe) from Acme')).toBeInTheDocument();
+    expect(await screen.findByText('Nothing waiting for you')).toBeInTheDocument();
+  });
+
+  it('says when nothing waits', async () => {
+    mockApi({
+      'GET /api/me/agent': settings(),
+      'GET /api/agent-actions': { items: [] },
+    });
+    renderSettingsPage(<AgentSettingsPage />);
+    expect(await screen.findByText('Nothing waiting for you', {}, LAZY)).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Open your inbox' })).toHaveAttribute('href', '/inbox');
   });
 });

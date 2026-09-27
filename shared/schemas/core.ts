@@ -5,6 +5,7 @@ import {
   ATTACHMENT_PARENT_TYPES,
   LIMITS,
   NOTIFICATION_TYPES,
+  REACTION_TARGET_TYPES,
   REPLY_PARENT_TYPES,
   SEARCH_ENTITY_TYPES,
   SUBSCRIBABLE_TYPES,
@@ -12,7 +13,13 @@ import {
   TRASHABLE_TYPES,
 } from '../constants';
 import { PERMISSIONS } from '../permissions';
-import { cursorPaginationSchema, idSchema, paginatedSchema, timestampSchema } from './common';
+import {
+  cursorPaginationSchema,
+  idSchema,
+  paginatedSchema,
+  reactionEmojiSchema,
+  timestampSchema,
+} from './common';
 
 /**
  * Wire contracts of the core API (docs/API.md). Request schemas validate input on the server and
@@ -79,6 +86,21 @@ export const attachmentSchema = z.object({
 });
 export type Attachment = z.infer<typeof attachmentSchema>;
 
+/** Someone who reacted, and the API key they reacted through ("Claude via Ethan's MSI"). */
+export const reactorSchema = userSummarySchema.extend({ via: viaKeySchema.nullable() });
+export type Reactor = z.infer<typeof reactorSchema>;
+
+/** One emoji on a reply, task or issue, with everyone who reacted with it (BAT-14). */
+export const reactionSummarySchema = z.object({
+  emoji: z.string(),
+  count: z.number().int().positive(),
+  /** Did the viewer react with this emoji? */
+  reactedByMe: z.boolean(),
+  /** Oldest reaction first. */
+  users: z.array(reactorSchema),
+});
+export type ReactionSummary = z.infer<typeof reactionSummarySchema>;
+
 export const replySchema = z.object({
   id: z.string(),
   teamId: z.string(),
@@ -90,6 +112,8 @@ export const replySchema = z.object({
   author: userSummarySchema.nullable(),
   via: viaKeySchema.nullable(),
   attachments: z.array(attachmentSchema),
+  /** In order of each emoji's first reaction. */
+  reactions: z.array(reactionSummarySchema),
   createdAt: timestampSchema,
   updatedAt: timestampSchema,
   editedAt: timestampSchema.nullable(),
@@ -343,6 +367,26 @@ export const updateReplyInputSchema = z.object({
   body: z.string().trim().min(LIMITS.replyBody.min, 'Required').max(LIMITS.replyBody.max),
 });
 export type UpdateReplyInput = z.infer<typeof updateReplyInputSchema>;
+
+// ---------------------------------------------------------------------------------------------
+// Reactions: /api/reactions (BAT-14)
+// ---------------------------------------------------------------------------------------------
+
+/** `PUT /api/reactions` (body) and `DELETE /api/reactions` (query string). */
+export const reactionInputSchema = z.object({
+  targetType: z.enum(REACTION_TARGET_TYPES),
+  targetId: idSchema,
+  emoji: reactionEmojiSchema,
+});
+export type ReactionInput = z.infer<typeof reactionInputSchema>;
+
+/** The target's reactions after the change. */
+export const reactionListResponseSchema = z.object({
+  targetType: z.enum(REACTION_TARGET_TYPES),
+  targetId: z.string(),
+  reactions: z.array(reactionSummarySchema),
+});
+export type ReactionListResponse = z.infer<typeof reactionListResponseSchema>;
 
 // ---------------------------------------------------------------------------------------------
 // Activity & audit log

@@ -1,1 +1,0 @@
-ALTER TABLE `activity` ADD `via_agent_name` text;

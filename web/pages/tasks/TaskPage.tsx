@@ -39,6 +39,7 @@ import { UserAvatar } from '@web/components/common/UserAvatar';
 import { UserName } from '@web/components/common/UserName';
 import { RichTextEditor } from '@web/components/editor/RichTextEditor';
 import { MarkdownView } from '@web/components/markdown/MarkdownView';
+import { ReactionBar } from '@web/components/reactions/ReactionBar';
 import { usePaletteCommands, type PaletteCommand } from '@web/components/palette/registry';
 import { AssigneePicker } from '@web/components/pickers/AssigneePicker';
 import { DatePicker } from '@web/components/pickers/DatePicker';
@@ -683,6 +684,16 @@ function TaskView({ task, team, project }: { task: Task; team: MeTeam; project: 
                 No description.
                 {canEditText ? ' Add one to give agents and teammates the full context.' : ''}
               </p>
+            )}
+            {editingDescription ? null : (
+              <ReactionBar
+                targetType="task"
+                targetId={task.id}
+                teamId={team.id}
+                reactions={task.reactions}
+                queryKey={queryKeys.tasks.detail(task.projectId, task.number)}
+                className="mt-3"
+              />
             )}
           </section>
 

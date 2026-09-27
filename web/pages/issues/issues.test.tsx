@@ -78,6 +78,7 @@ const issue: Issue = {
   ...summary,
   body: 'Exports time out after **30 seconds**.',
   attachments: [],
+  reactions: [],
   resolvedBy: null,
   linkedTasks: [
     {

@@ -33,6 +33,7 @@ import {
   refreshNotificationText,
   type NotificationTarget,
 } from './notifications';
+import { reactionsByTarget } from './reactions';
 import { indexSearch } from './search';
 import { autoSubscribe } from './subscriptions';
 import { getUserSummaries, getViaKeys } from './users';
@@ -44,7 +45,8 @@ import { getUserSummaries, getViaKeys } from './users';
 
 export type ReplyRow = typeof s.reply.$inferSelect;
 
-export function toReplies(db: DbExecutor, rows: readonly ReplyRow[]): Reply[] {
+/** Replies as `viewerId` sees them (`reactedByMe`). */
+export function toReplies(db: DbExecutor, rows: readonly ReplyRow[], viewerId: string): Reply[] {
   const authors = getUserSummaries(
     db,
     rows.map((row) => row.authorId),
@@ -58,6 +60,12 @@ export function toReplies(db: DbExecutor, rows: readonly ReplyRow[]): Reply[] {
     'reply',
     rows.map((row) => row.id),
   );
+  const reactions = reactionsByTarget(
+    db,
+    'reply',
+    rows.map((row) => row.id),
+    viewerId,
+  );
   return rows.map((row) => ({
     id: row.id,
     teamId: row.teamId,
@@ -68,14 +76,15 @@ export function toReplies(db: DbExecutor, rows: readonly ReplyRow[]): Reply[] {
     author: row.authorId ? (authors.get(row.authorId) ?? null) : null,
     via: row.viaKeyId ? (keys.get(row.viaKeyId) ?? null) : null,
     attachments: attachments.get(row.id) ?? [],
+    reactions: reactions.get(row.id) ?? [],
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
     editedAt: row.editedAt?.toISOString() ?? null,
   }));
 }
 
-function toReply(db: DbExecutor, row: ReplyRow): Reply {
-  const [reply] = toReplies(db, [row]);
+function toReply(db: DbExecutor, row: ReplyRow, viewerId: string): Reply {
+  const [reply] = toReplies(db, [row], viewerId);
   if (!reply) throw errors.internal();
   return reply;
 }
@@ -115,7 +124,7 @@ export function listReplies(
     )
     .orderBy(asc(s.reply.createdAt), asc(s.reply.id))
     .all();
-  return { items: toReplies(orm, rows) };
+  return { items: toReplies(orm, rows, actor.userId) };
 }
 
 export interface ReplyPageQuery extends ListRepliesQuery {
@@ -168,7 +177,7 @@ export function listReplyPage(deps: AppDeps, actor: Actor, query: ReplyPageQuery
   const last = page.at(-1);
   const total = orm.select({ value: count() }).from(s.reply).where(thread).get()?.value ?? 0;
   return {
-    items: toReplies(orm, page),
+    items: toReplies(orm, page, actor.userId),
     total,
     nextCursor:
       rows.length > query.limit && last ? encodeCursor([last.createdAt.getTime(), last.id]) : null,
@@ -192,7 +201,7 @@ function requireReply(deps: AppDeps, actor: Actor, id: string) {
 
 export function getReply(deps: AppDeps, actor: Actor, id: string): ReplyWithContext {
   const { row, item } = requireReply(deps, actor, id);
-  return withContext(deps, toReply(deps.db.orm, row), item);
+  return withContext(deps, toReply(deps.db.orm, row, actor.userId), item);
 }
 
 function notificationTarget(item: ItemInfo, replyId: string, body: string): NotificationTarget {
@@ -328,7 +337,7 @@ export function createReply(
 ): ReplyWithContext {
   const prepared = prepareReply(deps, actor, input);
   const row = deps.db.write((tx) => insertReply(tx, actor, prepared));
-  return withContext(deps, toReply(deps.db.orm, row), prepared.item);
+  return withContext(deps, toReply(deps.db.orm, row, actor.userId), prepared.item);
 }
 
 /** Edits a reply (author, or `EDIT_ANY_CONTENT`). Newly added mentions notify. */
@@ -341,7 +350,7 @@ export function editReply(
   const { orm } = deps.db;
   const { row, item, membership } = requireReply(deps, actor, id);
   requireCanEditContent(membership, row.authorId);
-  if (row.body === input.body) return withContext(deps, toReply(orm, row), item);
+  if (row.body === input.body) return withContext(deps, toReply(orm, row, actor.userId), item);
   const previousExcerpt = excerpt(row.body, EXCERPT_LENGTH);
   const text = derivedText(input.body);
 
@@ -398,7 +407,7 @@ export function editReply(
     });
     return next;
   });
-  return withContext(deps, toReply(orm, updated), item);
+  return withContext(deps, toReply(orm, updated, actor.userId), item);
 }
 
 /** Moves a reply to Trash (author, or `DELETE_ANY_CONTENT`). */

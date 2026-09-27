@@ -46,6 +46,7 @@ import {
   type NotificationTarget,
 } from './notifications';
 import { requireProject } from './projects';
+import { reactionsOf } from './reactions';
 import { buildFtsQuery, indexSearch } from './search';
 import { autoSubscribe, subscriberIds } from './subscriptions';
 import { getUserSummaries, getViaKeys } from './users';
@@ -244,6 +245,7 @@ function toIssue(db: DbExecutor, actor: Actor, row: IssueRow, context: ProjectCo
     attachments: attachmentsByParent(db, 'issue', [row.id]).get(row.id) ?? [],
     resolvedBy: row.resolvedById ? (resolver?.get(row.resolvedById) ?? null) : null,
     linkedTasks: linkedTasksOf(db, row.id),
+    reactions: reactionsOf(db, 'issue', row.id, actor.userId),
     subscribed: isSubscribed(db, actor.userId, row.id),
   };
 }

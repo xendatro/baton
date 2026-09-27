@@ -9,6 +9,7 @@ import { RelativeTime } from '@web/components/common/RelativeTime';
 import { UserName } from '@web/components/common/UserName';
 import { RichTextEditor } from '@web/components/editor/RichTextEditor';
 import { MarkdownView } from '@web/components/markdown/MarkdownView';
+import { ReactionBar } from '@web/components/reactions/ReactionBar';
 import { Button } from '@web/components/ui/button';
 import {
   DropdownMenu,
@@ -20,6 +21,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@web/components/ui/tool
 import { errorMessage } from '@web/lib/api';
 import { formatDateTime } from '@web/lib/format';
 import { useTeamAccess } from '@web/lib/permissions';
+import { queryKeys } from '@web/lib/queryKeys';
 import { useDeleteAttachment, useDeleteReply, useUpdateReply } from './queries';
 
 export interface ReplyItemProps {
@@ -152,6 +154,13 @@ export function ReplyItem({ reply }: ReplyItemProps) {
             await deleteAttachment.mutateAsync(attachment.id);
             toast.success('Attachment moved to Trash');
           }}
+        />
+        <ReactionBar
+          targetType="reply"
+          targetId={reply.id}
+          teamId={reply.teamId}
+          reactions={reply.reactions}
+          queryKey={queryKeys.replies.list(reply.parentType, reply.parentId)}
         />
       </div>
       <ConfirmDialog

@@ -30,6 +30,7 @@ describe('mergeTimeline', () => {
     author: null,
     via: null,
     attachments: [],
+    reactions: [],
     createdAt,
     updatedAt: createdAt,
     editedAt: null,

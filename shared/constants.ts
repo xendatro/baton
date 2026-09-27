@@ -206,6 +206,20 @@ export const ATTACHMENT_PARENT_TYPES = [
 ] as const;
 export type AttachmentParentType = (typeof ATTACHMENT_PARENT_TYPES)[number];
 
+/** What people can react to with an emoji (BAT-14). */
+export const REACTION_TARGET_TYPES = ['task', 'issue', 'reply'] as const;
+export type ReactionTargetType = (typeof REACTION_TARGET_TYPES)[number];
+
+/** One-click reactions under every reply, task and issue; the picker offers the rest. */
+export const QUICK_REACTIONS = ['👍', '👎', '😄', '❤️', '🔥', '🎉', '👀'] as const;
+
+export const REACTION_LIMITS = {
+  /** UTF-8 bytes of one reaction emoji (long ZWJ sequences and tag flags need ~28). */
+  emojiBytes: 32,
+  /** Different emojis on one reply, task or issue. */
+  emojisPerTarget: 50,
+} as const;
+
 /** Entities a user can subscribe to for reply notifications. */
 export const SUBSCRIBABLE_TYPES = ['issue', 'task'] as const;
 export type SubscribableType = (typeof SUBSCRIBABLE_TYPES)[number];

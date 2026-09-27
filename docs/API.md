@@ -34,17 +34,18 @@ and response below. If this file and a schema disagree, the schema is right; fix
 
 ## Shared types (`shared/schemas/core.ts`)
 
-| Type            | Shape                                                                                                                          |
-| --------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| `UserSummary`   | `{ id, username, name, image }`                                                                                                |
-| `ViaKey`        | `{ keyId, keyName, agentName? }` (the key's agent, e.g. "Claude", when known)                                                  |
-| `ActorRef`      | `{ user: UserSummary \| null, via: ViaKey \| null, source: 'web'\|'mcp'\|'api'\|'system' }`                                    |
-| `RoleSummary`   | `{ id, slug, name, color }`                                                                                                    |
-| `Attachment`    | `{ id, teamId, parentType, parentId, filename, mimeType, size, isImage, url, uploader, via, createdAt }`                       |
-| `Reply`         | `{ id, teamId, projectId, parentType, parentId, body, author, via, attachments, createdAt, updatedAt, editedAt }`              |
-| `Notification`  | `{ id, teamId, type, entityType, entityId, actor, viaKeyName, title, snippet, url, readAt, createdAt }`                        |
-| `ActivityEntry` | `{ id, teamId, projectId, actor: ActorRef, entityType, entityId, action, changes: {field: {from, to}}, meta, url, createdAt }` |
-| `SearchResult`  | `{ entityType: 'task'\|'issue'\|'reply', entityId, teamId, projectId, ref, title, snippet, url }`                              |
+| Type              | Shape                                                                                                                          |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `UserSummary`     | `{ id, username, name, image }`                                                                                                |
+| `ViaKey`          | `{ keyId, keyName, agentName? }` (the key's agent, e.g. "Claude", when known)                                                  |
+| `ActorRef`        | `{ user: UserSummary \| null, via: ViaKey \| null, source: 'web'\|'mcp'\|'api'\|'system' }`                                    |
+| `RoleSummary`     | `{ id, slug, name, color }`                                                                                                    |
+| `Attachment`      | `{ id, teamId, parentType, parentId, filename, mimeType, size, isImage, url, uploader, via, createdAt }`                       |
+| `Reply`           | `{ id, teamId, projectId, parentType, parentId, body, author, via, attachments, reactions, createdAt, updatedAt, editedAt }`   |
+| `ReactionSummary` | `{ emoji, count, reactedByMe, users: [UserSummary + { via: ViaKey \| null }] }` (BAT-14)                                       |
+| `Notification`    | `{ id, teamId, type, entityType, entityId, actor, viaKeyName, title, snippet, url, readAt, createdAt }`                        |
+| `ActivityEntry`   | `{ id, teamId, projectId, actor: ActorRef, entityType, entityId, action, changes: {field: {from, to}}, meta, url, createdAt }` |
+| `SearchResult`    | `{ entityType: 'task'\|'issue'\|'reply', entityId, teamId, projectId, ref, title, snippet, url }`                              |
 
 ## Core endpoints
 
@@ -72,6 +73,8 @@ search and the audit log use core services, but their routes belong to admin.
 | `POST /api/replies`                   | `{ parentType, parentId, body, attachmentIds? }`                                                                                                       | `Reply`                                                                                                                                                                                                                               | core                          |
 | `PATCH /api/replies/:id`              | `{ body }`                                                                                                                                             | `Reply`                                                                                                                                                                                                                               | core                          |
 | `DELETE /api/replies/:id`             | –                                                                                                                                                      | `{ ok: true }` (to Trash)                                                                                                                                                                                                             | core                          |
+| `PUT /api/reactions`                  | `{ targetType: 'task'\|'issue'\|'reply', targetId, emoji }`                                                                                            | `{ targetType, targetId, reactions: ReactionSummary[] }`: adds the caller's reaction (idempotent); needs `REPLY`                                                                                                                      | core                          |
+| `DELETE /api/reactions`               | `?targetType&targetId&emoji`                                                                                                                           | `{ targetType, targetId, reactions: ReactionSummary[] }`: removes the caller's own reaction (idempotent; any member who can see the target)                                                                                           | core                          |
 | `GET /api/activity`                   | `?entityType&entityId`                                                                                                                                 | `{ items: ActivityEntry[] }`: the newest 1000 rows, oldest first. Issue/task/reply/attachment history: any member (Trash items: author or `MANAGE_TRASH`); other team entities: `VIEW_AUDIT_LOG`; `user`/`api_key`: own rows only     | core                          |
 | `GET /api/teams/:teamId/audit-log`    | `?cursor&limit&actorId&keyId&source&entityType&action&projectId&from&to` (`action` exact, or a prefix ending in `.`; `from` inclusive, `to` exclusive) | `{ items: ActivityEntry[], nextCursor }` newest first; needs `VIEW_AUDIT_LOG`                                                                                                                                                         | admin (route), core (service) |
 | `GET /api/teams/:teamId/mentionables` | `?q` (autocomplete), or `?usernames&roles` (comma-separated exact lookup; any role, mentionable or not)                                                | `{ users: UserSummary[], roles: RoleSummary[] }` (only roles the caller may mention)                                                                                                                                                  | core                          |
@@ -98,6 +101,13 @@ affected project (`projectId`; with `item`, also `parentType`/`parentId` = the i
 other tabs refresh the inbox, the unread count and the item badges. `notification.created` events
 carry the notification's `projectId` and, as `parentType`/`parentId`, the task or issue it is about
 (a reply's item).
+
+Reactions (BAT-14): `emoji` is exactly one emoji grapheme (skin tones, ZWJ sequences, flags and
+keycaps included) of at most 32 UTF-8 bytes, else `400`. A target has at most 50 different emojis
+(a new one beyond that is `409`). Tasks (`Task.reactions`), issues (`Issue.reactions`) and replies
+(`Reply.reactions`) carry their reactions, one entry per emoji in order of its first reaction,
+reactors oldest first. Missing, deleted and other teams' targets are `404`. Reactions notify nobody
+and write no activity; each change emits `reaction.changed`.
 
 ### Uploads and downloads
 
@@ -131,6 +141,8 @@ max-age=31536000, immutable`, an `ETag` (`If-None-Match` → 304) and `X-Content
   type to the TanStack Query keys it invalidates).
 - `parentType`/`parentId` name the parent item for `reply.*` and `attachment.changed`, and the
   entity the row is about for `activity.created`.
+- `reaction.changed` names the task, issue or reply in `entityType`/`entityId`; for a reply,
+  `parentType`/`parentId` name its task or issue.
 - Right after the `retry` hint the server sends one `ready` event (`event: ready`, `data: {}`). The
   web app waits up to 8 s after opening the stream for it; some proxies (Cloudflare quick tunnels)
   pass the headers through but hold the body back, and then it long-polls instead (below).
@@ -173,7 +185,8 @@ Streamable HTTP, stateless: `POST /mcp` with `Authorization: Bearer bat_…` (40
 attributed to the key's owner with `source: 'mcp'` and the key name. Core tools: `whoami`, `search`,
 `list_notifications`, `mark_notifications_read`, `list_replies`, `add_reply`, `edit_reply`,
 `delete_reply`, `upload_attachment`, `list_attachments`, `get_attachment`, `delete_attachment`,
-`get_activity`, `subscribe`, `unsubscribe`.
+`get_activity`, `subscribe`, `unsubscribe`, plus the documented additions `wait_for_mentions`,
+`add_reaction` and `remove_reaction`.
 
 Conventions shared by every tool:
 
@@ -207,6 +220,9 @@ replies }`); `get_activity` with `item` or `entityType` + `entityId` pages the h
   animations keep their first frame). `image` in the JSON gives `{ mimeType, width, height,
 resized }` (null for other files). Its `downloadUrl` works with the same
   `Authorization: Bearer bat_…` key.
+- `add_reaction` / `remove_reaction` (`{ target, emoji }`; `target` is a task ref, an issue ref or a
+  reply id) return `{ targetType, targetId, ref, url, reactions }`, where `ref` is the team-qualified
+  task or issue (for a reply, the one it is on) and `url` the target's absolute URL.
 
 ## Feature endpoints
 
@@ -302,7 +318,7 @@ by name or id within a project ref).
 Schemas: `shared/schemas/issues.ts`. `IssueSummary` = `{ id, teamId, projectId, number, ref, title, resolved, resolvedAt, labels: [{ id, name, color, description }], author, via, replyCount, lastActivityAt, createdAt, updatedAt, editedAt, path }`;
 The issue list adds `unreadCount` to each `IssueSummary`: the viewer's unread notifications about
 the issue and its replies (BAT-16).
-`Issue` = `IssueSummary` + `{ body, attachments: Attachment[], resolvedBy, linkedTasks: [{ id, number, ref, title, kind: 'fixes'|'relates', status: { id, name, color, category }, path }], subscribed }`.
+`Issue` = `IssueSummary` + `{ body, attachments: Attachment[], resolvedBy, linkedTasks: [{ id, number, ref, title, kind: 'fixes'|'relates', status: { id, name, color, category }, path }], reactions: ReactionSummary[], subscribed }`.
 Reads need team membership (404 otherwise, also for deleted issues and issues of deleted projects).
 
 | Method & path                                 | Request                                                                                                                                                                              | Response                                                                                                                                                                                                                                                             | Permission                                                                           |
@@ -338,7 +354,7 @@ sort, limit, cursor), `get_issue` (with the latest 20 replies, each with its `ur
 Schemas: `shared/schemas/tasks.ts`. `TaskSummary` = `{ id, ref, number, title, projectId, teamId, status: { id, name, color, category }, priority (0 none … 4 urgent), dueDate, labels: [{ id, name, color }], assignees: { users: UserSummary[], roles: RoleSummary[] }, claim: { user, via, claimedAt, expiresAt } | null, blocked, replyCount, updatedAt }` (the shape other modules show);
 `TaskCard` = `TaskSummary` + `{ position, blockers (refs of open blockers), createdAt, completedAt, path, unreadCount? }`
 (`unreadCount`, sent by the board and the list: the viewer's unread notifications about the task and its replies, BAT-16);
-`Task` = `TaskCard` + `{ description, teamSlug, projectKey, author, via, editedAt, lastActivityAt, blockedBy: RelatedTask[], blocking: RelatedTask[], issues: LinkedIssue[], attachments, subscribed }`,
+`Task` = `TaskCard` + `{ description, teamSlug, projectKey, author, via, editedAt, lastActivityAt, blockedBy: RelatedTask[], blocking: RelatedTask[], issues: LinkedIssue[], attachments, reactions: ReactionSummary[], subscribed }`,
 where `RelatedTask` = `{ id, ref, number, title, status, path }` and `LinkedIssue` = `{ id, ref, number, title, resolved, kind: 'fixes'|'relates', projectId, path }`.
 `claim` is null unless a lease is running. Reads need team membership (404 otherwise).
 

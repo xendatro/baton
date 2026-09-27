@@ -290,8 +290,8 @@ const PURGE_ORDER = ['attachment', 'reply', 'task', 'issue', 'project', 'team'] 
 /**
  * Hard-deletes items that have been in Trash longer than 30 days (writing a system
  * `<type>.purged` audit row for each), then everything that hung off them: replies and
- * attachments of purged items, subscriptions, notifications and search-index rows. Returns the
- * stored files to remove, which the caller deletes after the commit.
+ * attachments of purged items, subscriptions, reactions, notifications and search-index rows.
+ * Returns the stored files to remove, which the caller deletes after the commit.
  */
 export function purgeTrash(deps: Pick<AppDeps, 'db'>, now: Date = new Date()): PurgeResult {
   const cutoff = new Date(now.getTime() - TRASH_RETENTION_DAYS * DAY_MS);
@@ -372,6 +372,13 @@ export function purgeTrash(deps: Pick<AppDeps, 'db'>, now: Date = new Date()): P
       .where(
         sql`(${s.subscription.entityType} = 'issue' and ${s.subscription.entityId} not in (select id from issue))
           or (${s.subscription.entityType} = 'task' and ${s.subscription.entityId} not in (select id from task))`,
+      )
+      .run();
+    tx.delete(s.reaction)
+      .where(
+        sql`(${s.reaction.targetType} = 'issue' and ${s.reaction.targetId} not in (select id from issue))
+          or (${s.reaction.targetType} = 'task' and ${s.reaction.targetId} not in (select id from task))
+          or (${s.reaction.targetType} = 'reply' and ${s.reaction.targetId} not in (select id from reply))`,
       )
       .run();
     tx.delete(s.notification)

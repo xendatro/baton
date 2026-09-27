@@ -42,6 +42,8 @@ export function PipelinesBar({
   canAdd,
   statuses,
   options,
+  startCreating = false,
+  onCreatingChange,
 }: {
   projectId: string;
   pipelines: readonly Pipeline[];
@@ -51,8 +53,15 @@ export function PipelinesBar({
   canAdd: boolean;
   statuses: readonly Status[];
   options: PrincipalOptions;
+  /** Open "New pipeline" right away (the board's "New pipeline" link). */
+  startCreating?: boolean;
+  onCreatingChange?: (creating: boolean) => void;
 }) {
-  const [creating, setCreating] = useState(false);
+  const [creating, setCreatingState] = useState(startCreating);
+  const setCreating = (next: boolean) => {
+    setCreatingState(next);
+    onCreatingChange?.(next);
+  };
   const [editing, setEditing] = useState<Pipeline | null>(null);
   const selected = pipelines.find((pipeline) => pipeline.id === selectedId);
   return (

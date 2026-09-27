@@ -473,8 +473,8 @@ function projectEvent(
 }
 
 /**
- * Creates a project (`MANAGE_PROJECTS`) with the default statuses Open (open, default) and Done.
- * Without a key, one is derived from the name and made unique within the team.
+ * Creates a project (`MANAGE_PROJECTS`) with its first pipeline (`pipelineName`, else "Main") and
+ * that pipeline's stages Open (default) and Done. Without a key, one is derived from the name and made unique within the team.
  */
 export function createProject(
   deps: AppDeps,
@@ -511,7 +511,7 @@ export function createProject(
       })
       .returning()
       .get();
-    seedDefaultPipeline(tx, id, now);
+    seedDefaultPipeline(tx, id, now, input.pipelineName);
     seedDifficulties(tx, id);
     if (readme) {
       attachToParent(tx, actor, referencedPendingUploads(tx, actor, teamId, readme), {

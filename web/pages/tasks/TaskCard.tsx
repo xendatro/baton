@@ -16,7 +16,14 @@ import { cn } from '@web/lib/utils';
  * Body of a board card: key, unread badge (BAT-16), priority and blocked state, title, labels,
  * claim, due date, replies and assignees. The card wrapper (link, drag handle) is the board's.
  */
-export function TaskCardBody({ task }: { task: TaskCardData }) {
+export function TaskCardBody({
+  task,
+  showPipeline = false,
+}: {
+  task: TaskCardData;
+  /** The "All" view of several pipelines: which one the card is in. */
+  showPipeline?: boolean;
+}) {
   const done = task.completedAt !== null;
   const { users, roles } = task.assignees;
   const hasFooter =
@@ -29,8 +36,8 @@ export function TaskCardBody({ task }: { task: TaskCardData }) {
     <div className="flex flex-col gap-2">
       <div className="flex items-center gap-2">
         <span className="font-mono text-xs text-muted-foreground tabular-nums">{task.ref}</span>
-        {/* BAT-25: a task outside the default pipeline says which one it is in. */}
-        {task.status.pipeline && !task.status.pipeline.isDefault ? (
+        {/* BAT-25: with several pipelines on one board, a card says which one it is in. */}
+        {showPipeline && task.status.pipeline ? (
           <span
             className="max-w-24 truncate rounded-sm border px-1 text-[11px] leading-4 text-muted-foreground"
             title={`Pipeline: ${task.status.pipeline.name}`}

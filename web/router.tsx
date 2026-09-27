@@ -1,5 +1,6 @@
 import type { ComponentType } from 'react';
 import { createBrowserRouter, Navigate, type RouteObject } from 'react-router';
+import { KeepQueryRedirect } from './components/common/KeepQueryRedirect';
 import { RouteError } from './components/common/RouteError';
 import { LoadingScreen } from './components/common/Spinner';
 
@@ -84,10 +85,12 @@ const shellRoutes: RouteObject[] = [
             path: 'general',
             ...page(() => import('./pages/project-settings/GeneralSettingsPage')),
           },
+          // Pipelines and their stages; the section was "Statuses" before pipelines were shown.
           {
-            path: 'statuses',
+            path: 'pipelines',
             ...page(() => import('./pages/project-settings/StatusesSettingsPage')),
           },
+          { path: 'statuses', element: <KeepQueryRedirect to="../pipelines" /> },
           {
             path: 'labels',
             ...page(() => import('./pages/project-settings/LabelsSettingsPage')),

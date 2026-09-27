@@ -94,7 +94,7 @@ export default function NewProjectDialog() {
   );
 }
 
-type Field = 'teamId' | 'name' | 'key' | 'description';
+type Field = 'teamId' | 'name' | 'key' | 'description' | 'pipelineName';
 
 function NewProjectForm({
   teams,
@@ -115,6 +115,8 @@ function NewProjectForm({
   const [key, setKey] = useState('');
   const [keyEdited, setKeyEdited] = useState(false);
   const [description, setDescription] = useState('');
+  // Pipelines are mandatory: a project starts with one, named here.
+  const [pipelineName, setPipelineName] = useState('');
   const [icon, setIcon] = useState<string | null>(null);
   const [color, setColor] = useState<string>(DEFAULT_PROJECT_COLOR);
   const [errors, setErrors] = useState<Partial<Record<Field, string>>>({});
@@ -161,9 +163,11 @@ function NewProjectForm({
       description,
       icon,
       color,
+      pipelineName,
     };
     const parsed = createProjectInputSchema.safeParse(input);
     if (!parsed.success) Object.assign(nextErrors, fieldErrors<Field>(parsed.error));
+    if (!pipelineName.trim()) nextErrors.pipelineName = 'Name the project’s first pipeline';
     if (availability.state === 'taken' && keyEdited) nextErrors.key = availability.message;
     setErrors(nextErrors);
     if (!teamId || !parsed.success || Object.keys(nextErrors).length > 0) return;
@@ -195,7 +199,7 @@ function NewProjectForm({
       <DialogHeader>
         <DialogTitle>New project</DialogTitle>
         <DialogDescription>
-          {requested ? `In ${requested.name}. ` : ''}Projects hold a board of tasks and a forum of
+          {requested ? `In ${requested.name}. ` : ''}Projects hold pipelines of tasks and a forum of
           issues. You can change everything later.
         </DialogDescription>
       </DialogHeader>
@@ -278,6 +282,24 @@ function NewProjectForm({
               setKey(value);
               setKeyEdited(true);
             }}
+          />
+        )}
+      </FormField>
+
+      <FormField
+        label="Name your first pipeline"
+        error={errors.pipelineName}
+        hint="Every task sits in a stage of a pipeline. It starts with Open and Done; add stages and more pipelines later."
+      >
+        {(field) => (
+          <Input
+            {...field}
+            value={pipelineName}
+            onChange={(event) => setPipelineName(event.target.value)}
+            placeholder="e.g. Development"
+            maxLength={40}
+            autoComplete="off"
+            required
           />
         )}
       </FormField>

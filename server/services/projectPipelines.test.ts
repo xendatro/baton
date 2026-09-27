@@ -66,7 +66,7 @@ describe('pipelines (BAT-25)', () => {
   it('gives every project a default pipeline holding its statuses', () => {
     const { items } = listPipelines(ctx.deps, actorOf(mia), project.project.id);
     expect(items).toHaveLength(1);
-    expect(items[0]).toMatchObject({ name: 'Default', isDefault: true, statusCount: 2 });
+    expect(items[0]).toMatchObject({ name: 'Main', isDefault: true, statusCount: 2 });
     expect(project.statuses.every((status) => status.pipelineId === project.pipeline.id)).toBe(
       true,
     );
@@ -122,7 +122,7 @@ describe('pipelines (BAT-25)', () => {
     });
     const miaActor = actorOf(mia);
     expect(listPipelines(ctx.deps, miaActor, project.project.id).items.map((p) => p.name)).toEqual([
-      'Default',
+      'Main',
     ]);
     const board = getBoard(ctx.deps, miaActor, project.project.id, boardQuerySchema.parse({}));
     expect(board.columns.map((column) => column.status.pipelineId)).toEqual([
@@ -201,7 +201,7 @@ describe('pipelines (BAT-25)', () => {
     const { items } = reorderPipelines(ctx.deps, actorOf(owner), project.project.id, {
       pipelineIds: [modeling.id, project.pipeline.id],
     });
-    expect(items.map((item) => item.name)).toEqual(['Art', 'Default']);
+    expect(items.map((item) => item.name)).toEqual(['Art', 'Main']);
     const managed = addModeling({ manageRule: only(mia) });
     expect(updatePipeline(ctx.deps, actorOf(mia), managed.id, { name: 'Sculpting' }).name).toBe(
       'Sculpting',
@@ -223,7 +223,7 @@ describe('pipelines (BAT-25)', () => {
       headers: bearer(key),
     });
     expect(pipelineListResponseSchema.parse(await list.json()).items.map((p) => p.name)).toEqual([
-      'Default',
+      'Main',
       'Audio',
     ]);
   });

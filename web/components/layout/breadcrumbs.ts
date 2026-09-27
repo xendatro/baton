@@ -20,7 +20,8 @@ const SETTINGS_LABELS: Record<string, string> = {
   invites: 'Invites',
   'audit-log': 'Audit log',
   trash: 'Trash',
-  statuses: 'Statuses',
+  statuses: 'Pipelines',
+  pipelines: 'Pipelines',
   labels: 'Labels',
   profile: 'Profile',
   account: 'Account',
@@ -35,7 +36,12 @@ function settingsLabel(section: string | undefined): string {
   return SETTINGS_LABELS[section] ?? section;
 }
 
-export function buildCrumbs(pathname: string, me: MeResponse | undefined): Crumb[] {
+export function buildCrumbs(
+  pathname: string,
+  me: MeResponse | undefined,
+  /** The board's pipeline (Team / Project / Pipeline); "Tasks" while unknown. */
+  board?: { pipelineName?: string | undefined },
+): Crumb[] {
   if (pathname === '/') return [{ label: 'Dashboard' }];
   if (pathname === '/inbox') return [{ label: 'Inbox' }];
   if (pathname === '/my-tasks') return [{ label: 'My tasks' }];
@@ -83,7 +89,7 @@ export function buildCrumbs(pathname: string, me: MeResponse | undefined): Crumb
   const rest = pathname.slice(projectMatch.pathnameBase.length).split('/').filter(Boolean);
   const [area, detail, extra] = rest;
   if (area === 'tasks') {
-    crumbs.push({ label: 'Tasks', to: `${projectBase}/tasks` });
+    crumbs.push({ label: (!detail && board?.pipelineName) || 'Tasks', to: `${projectBase}/tasks` });
     if (detail) crumbs.push({ label: `${key}-${detail}` });
   } else if (area === 'issues') {
     crumbs.push({ label: 'Issues', to: `${projectBase}/issues` });

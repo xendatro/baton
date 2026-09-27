@@ -372,8 +372,21 @@ test('task page: edit the title, change status, claim, release, delete and undo'
   ).toBeVisible();
 });
 
+/** The signed-in user's agent member (agents A): what their API keys act as. */
+async function agentOf(page: Page): Promise<{ name: string; username: string; owner: string }> {
+  const me = (await (await page.request.get('/api/me')).json()) as {
+    user: { name: string; username: string };
+  };
+  return {
+    name: `${me.user.name} AI`,
+    username: `${me.user.username}-ai`,
+    owner: me.user.username,
+  };
+}
+
 test("shows an agent's claim with its key, live", async ({ page, playwright }) => {
   const project = await setup(page);
+  const agentMember = await agentOf(page);
   const task = await createTask(page, project, { title: 'Refactor the parser' });
   const created = await page.request.post('/api/me/api-keys', {
     data: { name: 'Claude on laptop' },
@@ -395,10 +408,11 @@ test("shows an agent's claim with its key, live", async ({ page, playwright }) =
       data: { leaseMinutes: 60 },
     });
     expect(claim.status(), await claim.text()).toBe(200);
-    // The board updates through the live event stream.
-    await expect(card.getByText('via Claude on laptop', { exact: true })).toBeVisible();
+    // The board updates through the live event stream: the holder is the owner's agent member.
+    await expect(card.getByText(agentMember.name, { exact: true })).toBeVisible();
     await card.click();
     const details = page.getByRole('complementary', { name: 'Task details' });
+    await expect(details.getByText(agentMember.name, { exact: true })).toBeVisible();
     await expect(details.getByText('Claude on laptop')).toBeVisible();
     await expect(details.getByText(/min left/)).toBeVisible();
     await expect(details.getByRole('button', { name: 'Release' })).toBeVisible();
@@ -434,9 +448,11 @@ test('updates live by long-polling when the event stream is held back', async ({
   await expect(page.getByText('Arrived without a refresh')).toBeVisible();
 });
 
-// BAT-6: an agent's reply reads "Claude via <owner>'s <key>" and lands in the owner's inbox.
-test("shows an agent's reply as the agent via its owner's key", async ({ page, playwright }) => {
+// Agents A: a reply through a key is the owner's agent member's ("Ethan AI", AI badge), with the
+// harness's logo and the owner's picture; mentioning the owner reaches the owner's inbox.
+test("shows an agent's reply as the owner's agent member", async ({ page, playwright }) => {
   const project = await setup(page);
+  const agentMember = await agentOf(page);
   const task = await createTask(page, project, { title: 'Agent identity' });
   const created = await page.request.post('/api/me/api-keys', {
     data: { name: 'MSI' },
@@ -465,7 +481,11 @@ test("shows an agent's reply as the agent via its owner's key", async ({ page, p
     });
     expect(hello.status(), await hello.text()).toBe(200);
     const reply = await agent.post('/api/replies', {
-      data: { parentType: 'task', parentId: task.id, body: 'Found the cause in the tunnel.' },
+      data: {
+        parentType: 'task',
+        parentId: task.id,
+        body: `Found the cause in the tunnel, @${agentMember.owner}.`,
+      },
     });
     expect(reply.status(), await reply.text()).toBe(201);
   } finally {
@@ -474,14 +494,15 @@ test("shows an agent's reply as the agent via its owner's key", async ({ page, p
 
   await page.goto(task.path);
   const item = page.getByRole('article', { name: /^Reply by / });
-  await expect(item.getByText('Found the cause in the tunnel.')).toBeVisible();
-  await expect(item.getByText('Claude', { exact: true })).toBeVisible();
-  await expect(item.getByText('’s MSI')).toBeVisible();
-  await item.screenshot({ path: 'test-results/bat-6-agent-reply.png' });
+  await expect(item.getByText(/Found the cause in the tunnel/)).toBeVisible();
+  await expect(item.getByText(agentMember.name, { exact: true }).first()).toBeVisible();
+  await expect(item.getByText('AI', { exact: true }).first()).toBeVisible();
+  await expect(item.locator('[data-agent-logo="Claude"]').first()).toBeVisible();
+  await item.screenshot({ path: 'test-results/agents-a-agent-reply.png' });
 
   await page.goto('/inbox');
-  await expect(page.getByText(/via .*’s MSI/)).toBeVisible();
-  await page.screenshot({ path: 'test-results/bat-6-inbox.png' });
+  await expect(page.getByText(agentMember.name).first()).toBeVisible();
+  await page.screenshot({ path: 'test-results/agents-a-inbox.png' });
 });
 
 // BAT-7: after a mouse drop in another column, a ghost of the card flew back to its old column

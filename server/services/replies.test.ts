@@ -12,6 +12,7 @@ import * as s from '../db/schema';
 import {
   addMember,
   bearer,
+  createAgent,
   createApiKey,
   createProject,
   createRole,
@@ -21,6 +22,8 @@ import {
   createTestContext,
   createUser,
   json,
+  signIn,
+  web,
   type CreatedProject,
   type CreatedTeam,
   type TestContext,
@@ -66,6 +69,9 @@ describe('replies over REST', () => {
       title: 'Fix login',
     });
     const { key, apiKey } = createApiKey(ctx.db, { userId: member.id, name: 'Claude on laptop' });
+    // The key acts as Mia's agent member (agents A).
+    const agent = createAgent(ctx.db, member.id);
+    events.length = 0;
 
     const res = await ctx.app.request(
       '/api/replies',
@@ -80,7 +86,7 @@ describe('replies over REST', () => {
     expect(reply).toMatchObject({
       parentType: 'task',
       parentId: task.id,
-      author: { id: member.id, username: 'mia' },
+      author: { id: agent.id, username: 'mia-ai', kind: 'agent', agentOwner: { id: member.id } },
       via: { keyId: apiKey.id, keyName: 'Claude on laptop' },
       editedAt: null,
       attachments: [],
@@ -93,7 +99,7 @@ describe('replies over REST', () => {
     const subscription = ctx.db.orm
       .select()
       .from(s.subscription)
-      .where(and(eq(s.subscription.userId, member.id), eq(s.subscription.entityId, task.id)))
+      .where(and(eq(s.subscription.userId, agent.id), eq(s.subscription.entityId, task.id)))
       .get();
     expect(subscription?.subscribed).toBe(true);
 
@@ -112,16 +118,13 @@ describe('replies over REST', () => {
     });
     expect(activity?.meta).toMatchObject({ parentRef: 'API-1', parentTitle: 'Fix login' });
 
-    // BAT-6: the key's owner didn't write it, so the reply reaches their inbox too.
-    expect(events.map((event) => event.type).sort()).toEqual([
-      'activity.created',
-      'notification.created',
-      'reply.created',
-    ]);
+    // Nobody else follows the task, and a plain reply by Mia's agent is nothing Mia needs to hear
+    // about (`needs_me`, agents A).
+    expect(events.map((event) => event.type).sort()).toEqual(['activity.created', 'reply.created']);
     expect(events.find((event) => event.type === 'reply.created')).toMatchObject({
       parentType: 'task',
       parentId: task.id,
-      actorId: member.id,
+      actorId: agent.id,
     });
 
     const search = await ctx.app.request('/api/search?q=looking', { headers: bearer(key) });
@@ -314,11 +317,12 @@ describe('notifications', () => {
 
   it('honours explicit unsubscribe, even after replying again', async () => {
     const issue = createIssue(ctx.db, { project: project.project, authorId: owner.id });
-    const { key } = createApiKey(ctx.db, { userId: member.id });
+    // Mia's own inbox and subscriptions: her keys act as her agent member (agents A).
+    const session = web(ctx, await signIn(ctx, member));
     createReply(ctx.deps, actorOf(member), { parentType: 'issue', parentId: issue.id, body: 'a' });
     const off = await ctx.app.request(
       '/api/subscriptions',
-      json('POST', { entityType: 'issue', entityId: issue.id, subscribed: false }, bearer(key)),
+      json('POST', { entityType: 'issue', entityId: issue.id, subscribed: false }, session),
     );
     expect(await off.json()).toEqual({ subscribed: false });
     createReply(ctx.deps, actorOf(member), { parentType: 'issue', parentId: issue.id, body: 'b' });
@@ -326,7 +330,7 @@ describe('notifications', () => {
     expect(notificationsOf(member)).toEqual([]);
     const state = await ctx.app.request(
       `/api/subscriptions?entityType=issue&entityId=${issue.id}`,
-      { headers: bearer(key) },
+      { headers: session },
     );
     expect(await state.json()).toEqual({ subscribed: false });
   });
@@ -436,18 +440,19 @@ describe('notifications', () => {
         body: `@mia ${i}`,
       });
     }
-    const { key } = createApiKey(ctx.db, { userId: member.id });
+    // Mia's own inbox and subscriptions: her keys act as her agent member (agents A).
+    const session = web(ctx, await signIn(ctx, member));
     expect(unreadNotificationCount(ctx.deps, actorOf(member))).toBe(3);
 
     const page1 = notificationListResponseSchema.parse(
-      await (await ctx.app.request('/api/notifications?limit=2', { headers: bearer(key) })).json(),
+      await (await ctx.app.request('/api/notifications?limit=2', { headers: session })).json(),
     );
     expect(page1.items).toHaveLength(2);
     expect(page1.items[0]?.actor?.username).toBe('owner');
     const page2 = notificationListResponseSchema.parse(
       await (
         await ctx.app.request(`/api/notifications?limit=2&cursor=${page1.nextCursor ?? ''}`, {
-          headers: bearer(key),
+          headers: session,
         })
       ).json(),
     );
@@ -457,15 +462,13 @@ describe('notifications', () => {
     const firstId = page1.items[0]?.id ?? '';
     const marked = await ctx.app.request(
       '/api/notifications/read',
-      json('POST', { ids: [firstId] }, bearer(key)),
+      json('POST', { ids: [firstId] }, session),
     );
     expect(await marked.json()).toEqual({ updated: 1 });
-    const unread = await ctx.app.request('/api/notifications?unread=1', { headers: bearer(key) });
+    const unread = await ctx.app.request('/api/notifications?unread=1', { headers: session });
     expect(notificationListResponseSchema.parse(await unread.json()).items).toHaveLength(2);
     expect(
-      await (
-        await ctx.app.request('/api/notifications/unread-count', { headers: bearer(key) })
-      ).json(),
+      await (await ctx.app.request('/api/notifications/unread-count', { headers: session })).json(),
     ).toEqual({
       count: 2,
     });

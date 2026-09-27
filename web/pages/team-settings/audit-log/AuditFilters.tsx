@@ -11,6 +11,7 @@ import type { ActivityEntityType, ActorSource } from '@shared/constants';
 import type { AuditLogFacets } from '@shared/schemas/admin';
 import { UserAvatar } from '@web/components/common/UserAvatar';
 import { Button } from '@web/components/ui/button';
+import { agentOwnerLabel, isAgentUser } from '@web/lib/agentMembers';
 import { DateRangeFilter } from './DateRangeFilter';
 import { FilterMenu, type FilterOption } from './FilterMenu';
 import { actionOptions, ENTITY_LABELS, SOURCE_LABELS } from './labels';
@@ -32,9 +33,11 @@ export function AuditFilterBar({ filters, facets, loading, onChange }: AuditFilt
   const actorOptions: FilterOption[] = (facets?.actors ?? []).map((user) => ({
     value: user.id,
     label: user.name,
-    description: `@${user.username}`,
+    description: isAgentUser(user)
+      ? `@${user.username} · ${agentOwnerLabel(user)}`
+      : `@${user.username}`,
     leading: <UserAvatar user={user} size="sm" />,
-    keywords: [user.username],
+    keywords: isAgentUser(user) ? [user.username, 'agent', 'ai'] : [user.username],
   }));
   const keyOptions: FilterOption[] = (facets?.keys ?? []).map((key) => ({
     value: key.keyId,

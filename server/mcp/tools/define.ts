@@ -3,11 +3,15 @@ import type { CallToolResult, ToolAnnotations } from '@modelcontextprotocol/sdk/
 import { z } from 'zod';
 import type { Actor, AppDeps } from '../../context';
 import { isAppError } from '../../lib/errors';
+import { assertAgentsNotPaused } from '../../services/agents';
 
 /** Per-request context every tool handler receives (the MCP server is stateless). */
 export interface ToolContext {
   deps: AppDeps;
-  /** Always `{ source: 'mcp', key }` — MCP requires an API key. */
+  /**
+   * Always `{ source: 'mcp', key }` — MCP requires an API key — acting as the key owner's agent
+   * member (`userId` the agent, `ownerId` the person).
+   */
   actor: Actor;
   /** Aborted when the HTTP request goes away (for tools that wait, like `wait_for_mentions`). */
   signal?: AbortSignal;
@@ -221,9 +225,11 @@ export function defineTool<Input extends z.ZodObject>(definition: ToolDefinition
         { title: definition.title, description: definition.description, inputSchema, annotations },
         // The SDK validated the arguments against `definition.input`, so they are its output.
         (input) =>
-          toToolResult(ctx, definition.name, () =>
-            definition.handler(ctx, input as z.output<Input>),
-          ),
+          toToolResult(ctx, definition.name, () => {
+            // A paused agent can still read (team and project pauses: recordActivity).
+            if (!annotations.readOnlyHint) assertAgentsNotPaused(ctx.deps.db.orm, ctx.actor, null);
+            return definition.handler(ctx, input as z.output<Input>);
+          }),
       );
     },
   };

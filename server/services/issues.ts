@@ -27,6 +27,7 @@ import { appPaths } from '../lib/urls';
 import {
   canRestoreContent,
   hasPermission,
+  isOwnContent,
   requireCanDeleteContent,
   requireCanEditContent,
   requireMember,
@@ -96,7 +97,7 @@ export function requireIssue(db: DbExecutor, actor: Actor, issueId: string): Iss
 
 /** May the member resolve, reopen and label this issue? Authors always may. */
 export function canTriageIssue(membership: Membership, authorId: string | null): boolean {
-  return authorId === membership.userId || hasPermission(membership, 'RESOLVE_ISSUES');
+  return isOwnContent(membership, authorId) || hasPermission(membership, 'RESOLVE_ISSUES');
 }
 
 function requireCanTriage(membership: Membership, authorId: string | null, what: string): void {

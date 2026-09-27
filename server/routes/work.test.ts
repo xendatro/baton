@@ -4,6 +4,7 @@ import * as s from '../db/schema';
 import {
   addMember,
   bearer,
+  createAgent,
   createApiKey,
   createProject,
   createTask,
@@ -32,17 +33,21 @@ beforeEach(() => {
   const { project } = createProject(ctx.db, { teamId, key: 'WEB' });
   const task = createTask(ctx.db, { project, title: 'Ship it' });
   ctx.db.orm.insert(s.taskAssigneeUser).values({ taskId: task.id, userId: ada.id }).run();
+  // The key acts as Ada's agent (agents A): its work is what is assigned to the agent.
+  const agentTask = createTask(ctx.db, { project, title: 'Write the tests' });
+  const agent = createAgent(ctx.db, ada.id);
+  ctx.db.orm.insert(s.taskAssigneeUser).values({ taskId: agentTask.id, userId: agent.id }).run();
 });
 
 afterEach(() => ctx.close());
 
 describe('GET /api/me/tasks', () => {
-  it('returns my open tasks for an API key and a web session', async () => {
+  it('returns my open tasks for an API key (the agent’s) and a web session (the person’s)', async () => {
     const res = await ctx.app.request('/api/me/tasks?sort=due&due=none', { headers: bearer(key) });
     expect(res.status).toBe(200);
     const body = myTasksResponseSchema.parse(await res.json());
     expect(body.total).toBe(1);
-    expect(body.items[0]).toMatchObject({ title: 'Ship it', ref: 'WEB-1' });
+    expect(body.items[0]).toMatchObject({ title: 'Write the tests', ref: 'WEB-2' });
 
     const cookie = await signIn(ctx, ada);
     const viaWeb = await ctx.app.request(`/api/me/tasks?teamId=${teamId}&priority=none,low`, {

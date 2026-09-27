@@ -1,4 +1,4 @@
-import { and, desc, eq, gt, isNull, lt, or, sql } from 'drizzle-orm';
+import { and, desc, eq, gt, inArray, isNull, lt, or, sql } from 'drizzle-orm';
 import {
   INVITE_EXPIRY_MS,
   type AcceptInviteResponse,
@@ -15,11 +15,12 @@ import * as s from '../db/schema';
 import { AppError, errors } from '../lib/errors';
 import { newId } from '../lib/ids';
 import { generateInviteCode, inviteCodeHint } from '../lib/security';
-import { getMembership, hasPermission, requirePermission } from './access';
+import { getMembership, hasPermission, isOwnContent, requirePermission } from './access';
 import { recordActivity } from './activity';
 import { emitAfterCommit } from './events';
 import { memberCounts, requireTeam } from './teams';
-import { getUserSummaries, toUserSummary } from './users';
+import { addAgentMembership, selfIdsOf } from './agents';
+import { getUserSummaries } from './users';
 
 /**
  * Invite links (SPEC §1.3): `/join/<code>` with an optional expiry and use limit. Creating needs
@@ -142,7 +143,8 @@ export function listInvites(
       and(
         eq(s.invite.teamId, teamId),
         isNull(s.invite.revokedAt),
-        seeAll ? undefined : eq(s.invite.createdById, actor.userId),
+        // Your own: yours and your agent member's (or, for an agent, its owner's).
+        seeAll ? undefined : inArray(s.invite.createdById, selfIdsOf(orm, actor)),
       ),
     )
     .orderBy(desc(s.invite.createdAt), desc(s.invite.id))
@@ -239,7 +241,7 @@ export function revokeInvite(
   const { orm } = deps.db;
   const { membership } = requireTeam(orm, actor, teamId);
   const invite = findTeamInvite(orm, teamId, inviteRef);
-  const own = invite.createdById === actor.userId;
+  const own = isOwnContent(membership, invite.createdById);
   if (!hasPermission(membership, 'MANAGE_INVITES')) {
     // Others' invites are invisible without MANAGE_INVITES.
     if (!own) throw errors.notFound('Invite');
@@ -323,14 +325,14 @@ export function previewInvite(
 ): InvitePreview {
   const { orm } = deps.db;
   const { invite, team } = findByCode(orm, code);
-  const alreadyMember = getMembership(orm, team.id, actor.userId) !== null;
+  const alreadyMember = getMembership(orm, team.id, actor.ownerId ?? actor.userId) !== null;
   if (!alreadyMember) {
     const reason = unusableReason(orm, invite, now);
     if (reason) throw inviteError(reason);
   }
   const inviter = invite.createdById
-    ? orm.select().from(s.user).where(eq(s.user.id, invite.createdById)).get()
-    : undefined;
+    ? (getUserSummaries(orm, [invite.createdById]).get(invite.createdById) ?? null)
+    : null;
   return {
     code: invite.code,
     team: {
@@ -342,7 +344,7 @@ export function previewInvite(
       color: team.color,
       memberCount: memberCounts(orm, [team.id]).get(team.id) ?? 0,
     },
-    inviter: inviter ? toUserSummary(inviter) : null,
+    inviter,
     expiresAt: invite.expiresAt?.toISOString() ?? null,
     alreadyMember,
   };
@@ -350,15 +352,18 @@ export function previewInvite(
 
 /**
  * Joins the team with an invite code. The use is counted atomically (a link with one use left
- * admits exactly one person); accepting as an existing member changes nothing.
+ * admits exactly one person); accepting as an existing member changes nothing. Membership is the
+ * person's (agents A): through an API key the key's owner joins; their agent member always joins
+ * with them.
  */
 export function acceptInvite(deps: AppDeps, actor: Actor, code: string): AcceptInviteResponse {
   const { orm } = deps.db;
   const { team } = findByCode(orm, code);
   const summary = { id: team.id, slug: team.slug, name: team.name };
+  const personId = actor.ownerId ?? actor.userId;
 
   const joined = deps.db.write((tx) => {
-    if (getMembership(tx, team.id, actor.userId)) return false;
+    if (getMembership(tx, team.id, personId)) return false;
     const now = new Date();
     const used = tx
       .update(s.invite)
@@ -379,16 +384,18 @@ export function acceptInvite(deps: AppDeps, actor: Actor, code: string): AcceptI
     }
     // Checked under the write lock, before the use is committed (the update rolls back).
     if (!inviterCanInvite(tx, used)) throw inviteError('revoked');
-    tx.insert(s.teamMember).values({ teamId: team.id, userId: actor.userId, joinedAt: now }).run();
-    const users = getUserSummaries(tx, [actor.userId, used.createdById]);
+    tx.insert(s.teamMember).values({ teamId: team.id, userId: personId, joinedAt: now }).run();
+    const agentId = addAgentMembership(tx, team.id, personId, now);
+    const users = getUserSummaries(tx, [personId, used.createdById, agentId]);
     recordActivity(tx, actor, {
       teamId: team.id,
       entityType: 'member',
-      entityId: actor.userId,
+      entityId: personId,
       action: 'member.joined',
       meta: {
-        username: users.get(actor.userId)?.username ?? null,
-        name: users.get(actor.userId)?.name ?? null,
+        username: users.get(personId)?.username ?? null,
+        name: users.get(personId)?.name ?? null,
+        ...(agentId ? { agent: users.get(agentId)?.username ?? null } : {}),
         inviteId: used.id,
         inviteCode: inviteCodeHint(used.code),
         invitedBy: used.createdById ? (users.get(used.createdById)?.username ?? null) : null,
@@ -398,7 +405,7 @@ export function acceptInvite(deps: AppDeps, actor: Actor, code: string): AcceptI
       type: 'member.joined',
       teamId: team.id,
       entityType: 'member',
-      entityId: actor.userId,
+      entityId: personId,
       actorId: actor.userId,
     });
     emitAfterCommit(tx, {

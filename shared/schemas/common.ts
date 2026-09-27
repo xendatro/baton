@@ -13,6 +13,8 @@ export const ERROR_CODES = [
   'payload_too_large',
   'email_not_verified',
   'username_required',
+  /** 423: an agent member's write while it, its team or its project is paused (agents A). */
+  'agents_paused',
   'internal',
 ] as const;
 

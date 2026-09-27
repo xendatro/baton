@@ -5,6 +5,7 @@ import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import * as s from '../../db/schema';
 import {
+  agentActor,
   createApiKey,
   createProject,
   createTestContext,
@@ -12,6 +13,7 @@ import {
   type TestContext,
   type UserRow,
 } from '../../test/helpers';
+import { deleteTeam } from '../../services/teams';
 import { registerTools } from './index';
 import { teamsTools } from './teams';
 
@@ -32,7 +34,7 @@ afterEach(async () => {
   ctx.close();
 });
 
-/** An MCP client acting as `user` through a named API key. */
+/** An MCP client acting as `user`'s agent member through a named API key (agents A). */
 async function connect(user: UserRow, keyName = 'Claude on laptop'): Promise<Client> {
   const { apiKey } = createApiKey(ctx.db, { userId: user.id, name: keyName });
   const server = new McpServer({ name: 'baton-test', version: '0.0.0' });
@@ -40,7 +42,7 @@ async function connect(user: UserRow, keyName = 'Claude on laptop'): Promise<Cli
     server,
     {
       deps: ctx.deps,
-      actor: { userId: user.id, source: 'mcp', key: { id: apiKey.id, name: keyName } },
+      actor: agentActor(ctx.db, user.id, { id: apiKey.id, name: keyName }),
     },
     teamsTools,
   );
@@ -151,9 +153,12 @@ describe('teams MCP tools', () => {
       'list_members',
       { team: 'acme-rockets' },
     );
+    // Created and joined through keys: the people are members, their agents with them.
     expect(members.map((m) => [m.ref, m.isOwner])).toEqual([
       ['@ethan', true],
+      ['@ethan-ai', false],
       ['@mia', false],
+      ['@mia-ai', false],
     ]);
 
     const { roles } = await call<{ roles: Array<{ name: string }> }>(agent, 'reorder_roles', {
@@ -186,7 +191,9 @@ describe('teams MCP tools', () => {
       projects: Array<{ ref: string; url: string; openTasks: number }>;
       roles: Array<{ name: string }>;
     }>(agent, 'get_team', { team: 'acme' });
-    expect(detail.you.isOwner).toBe(true);
+    // The team is Ethan's; his agent, which created it, is its admin (never its owner).
+    expect(detail.you.isOwner).toBe(false);
+    expect(detail.you.permissions).toContain('ADMINISTRATOR');
     expect(detail.projects).toEqual([
       expect.objectContaining({
         ref: 'acme/WEB',
@@ -199,7 +206,7 @@ describe('teams MCP tools', () => {
     expect(teams.map((t) => t.slug)).toEqual(['acme']);
   });
 
-  it('guards owner-only actions with a typed confirmation', async () => {
+  it('guards owner-only actions with a typed confirmation, and keeps them from agents', async () => {
     const agent = await connect(ethan);
     const team = await call<{ id: string }>(agent, 'create_team', { name: 'Acme' });
     const miaAgent = await connect(mia);
@@ -216,21 +223,22 @@ describe('teams MCP tools', () => {
     expect(await callError(miaAgent, 'delete_team', { team: 'acme', confirm: 'acme' })).toMatch(
       /forbidden/,
     );
-    const transferred = await call<{ ownerId: string }>(agent, 'transfer_team_ownership', {
-      team: 'acme',
-      user: 'mia',
-      confirm: 'acme',
-    });
-    expect(transferred.ownerId).toBe(mia.id);
-
-    await call(miaAgent, 'delete_team', { team: team.id, confirm: 'ACME' });
-    const { items } = await call<{ items: Array<{ slug: string }> }>(
-      miaAgent,
-      'list_deleted_teams',
+    // Agents never own teams (agents A): even the owner's agent can't do owner-only things.
+    expect(
+      await callError(agent, 'transfer_team_ownership', {
+        team: 'acme',
+        user: 'mia',
+        confirm: 'acme',
+      }),
+    ).toMatch(/forbidden: Only the team owner/);
+    expect(await callError(agent, 'delete_team', { team: team.id, confirm: 'ACME' })).toMatch(
+      /forbidden/,
     );
-    expect(items.map((item) => item.slug)).toEqual(['acme']);
-    const restored = await call<{ slug: string }>(miaAgent, 'restore_team', { team: 'acme' });
-    expect(restored.slug).toBe('acme');
+
+    // The owner deletes it in the web app; their agent can't see or restore it in Trash.
+    deleteTeam(ctx.deps, { userId: ethan.id, source: 'web', key: null }, team.id);
+    const { items } = await call<{ items: Array<{ slug: string }> }>(agent, 'list_deleted_teams');
+    expect(items).toEqual([]);
     expect(await callError(agent, 'restore_team', { team: 'acme' })).toMatch(/not_found/);
   });
 

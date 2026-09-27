@@ -1,6 +1,6 @@
 import { and, asc, count, desc, eq, gt, inArray, isNotNull, isNull, ne } from 'drizzle-orm';
 import { DEFAULT_TEAM_COLOR, LIMITS, TRASH_RETENTION_DAYS } from '@shared/constants';
-import { TEAM_ROLE_SEEDS } from '@shared/permissions';
+import { ADMIN_ROLE_SEED, TEAM_ROLE_SEEDS } from '@shared/permissions';
 import {
   teamSlugFromName,
   type CreateTeamInput,
@@ -28,6 +28,7 @@ import {
   requirePermission,
 } from './access';
 import { recordActivity } from './activity';
+import { addAgentMembership, agentOwnerOf } from './agents';
 import { emitAfterCommit } from './events';
 import { getUserSummaries } from './users';
 
@@ -50,6 +51,7 @@ export function toTeam(row: TeamRow): Team {
     icon: row.icon,
     color: row.color,
     ownerId: row.ownerId,
+    agentsPausedAt: row.agentsPausedAt?.toISOString() ?? null,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
@@ -285,11 +287,15 @@ export function listDeletedTeams(
 // ---------------------------------------------------------------------------------------------
 
 /** Seeds `@everyone` and Admin for a new team. */
-function seedRoles(tx: Tx, teamId: string, now: Date): void {
+/** Seeds `@everyone` and Admin; returns the Admin role's id. */
+function seedRoles(tx: Tx, teamId: string, now: Date): string {
+  let adminId = '';
   for (const seed of TEAM_ROLE_SEEDS) {
+    const id = newId();
+    if (seed.slug === ADMIN_ROLE_SEED.slug) adminId = id;
     tx.insert(s.role)
       .values({
-        id: newId(),
+        id,
         teamId,
         name: seed.name,
         slug: seed.slug,
@@ -303,14 +309,20 @@ function seedRoles(tx: Tx, teamId: string, now: Date): void {
       })
       .run();
   }
+  return adminId;
 }
 
 /**
  * Creates a team owned by the caller (any verified user). The slug is derived from the name when
  * not given (made unique with a numeric suffix); an explicit slug that is taken is a conflict.
+ * Agents never own teams (agents A): created through an API key, the team belongs to the key's
+ * owner. The owner's agent member joins too, with only `@everyone`, except when the agent created
+ * the team: then it gets Admin, so it can set up what it was asked to create (still capped by its
+ * owner's permissions, and never the owner).
  */
 export function createTeam(deps: AppDeps, actor: Actor, input: CreateTeamInput): TeamDetail {
   const { orm } = deps.db;
+  const ownerId = actor.ownerId ?? actor.userId;
   const row = deps.db.write((tx) => {
     let slug: string;
     if (input.slug) {
@@ -329,14 +341,20 @@ export function createTeam(deps: AppDeps, actor: Actor, input: CreateTeamInput):
         description: input.description ?? '',
         icon: input.icon ?? null,
         color: input.color ?? DEFAULT_TEAM_COLOR,
-        ownerId: actor.userId,
+        ownerId,
         createdAt: now,
         updatedAt: now,
       })
       .returning()
       .get();
-    tx.insert(s.teamMember).values({ teamId: team.id, userId: actor.userId, joinedAt: now }).run();
-    seedRoles(tx, team.id, now);
+    tx.insert(s.teamMember).values({ teamId: team.id, userId: ownerId, joinedAt: now }).run();
+    const agentId = addAgentMembership(tx, team.id, ownerId, now);
+    const adminRoleId = seedRoles(tx, team.id, now);
+    if (actor.ownerId && agentId === actor.userId) {
+      tx.insert(s.memberRole)
+        .values({ teamId: team.id, userId: agentId, roleId: adminRoleId })
+        .run();
+    }
     recordActivity(tx, actor, {
       teamId: team.id,
       entityType: 'team',
@@ -349,7 +367,7 @@ export function createTeam(deps: AppDeps, actor: Actor, input: CreateTeamInput):
       type: 'member.joined',
       teamId: team.id,
       entityType: 'member',
-      entityId: actor.userId,
+      entityId: ownerId,
       actorId: actor.userId,
     });
     return team;
@@ -367,7 +385,12 @@ export function updateTeam(
   const { orm } = deps.db;
   const { team, membership } = requireTeam(orm, actor, teamId);
   requirePermission(membership, 'MANAGE_TEAM', "You don't have permission to edit this team");
-  const changes = diffFields(team, input);
+  const { agentsPaused, ...fields } = input;
+  const changes = diffFields(team, fields);
+  // "Pause all agents" (agents A).
+  const pauseChanged =
+    agentsPaused !== undefined && agentsPaused !== (team.agentsPausedAt !== null);
+  if (pauseChanged) changes.agentsPaused = change(!agentsPaused, agentsPaused);
   if (!hasChanges(changes)) return toTeamDetail(orm, team);
 
   const row = deps.db.write((tx) => {
@@ -386,6 +409,7 @@ export function updateTeam(
         ...(input.description !== undefined ? { description: input.description } : {}),
         ...(input.icon !== undefined ? { icon: input.icon } : {}),
         ...(input.color !== undefined ? { color: input.color } : {}),
+        ...(pauseChanged ? { agentsPausedAt: agentsPaused ? new Date() : null } : {}),
         updatedAt: new Date(),
       })
       .where(eq(s.team.id, teamId))
@@ -511,6 +535,9 @@ export function transferOwnership(
   requireOwner(membership, 'Only the team owner can transfer ownership');
   if (input.userId === actor.userId) throw errors.validation('You already own this team');
   if (!getMembership(orm, teamId, input.userId)) throw errors.notFound('Member');
+  if (agentOwnerOf(orm, input.userId) !== null) {
+    throw errors.validation('Agents can’t own teams: pick a person');
+  }
   const names = getUserSummaries(orm, [actor.userId, input.userId]);
 
   const row = deps.db.write((tx) => {

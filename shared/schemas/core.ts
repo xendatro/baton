@@ -4,6 +4,7 @@ import {
   ACTOR_SOURCES,
   ATTACHMENT_PARENT_TYPES,
   LIMITS,
+  MAX_ANY_USERNAME_LENGTH,
   NOTIFICATION_TYPES,
   REACTION_TARGET_TYPES,
   REPLY_PARENT_TYPES,
@@ -11,6 +12,7 @@ import {
   SUBSCRIBABLE_TYPES,
   THEMES,
   TRASHABLE_TYPES,
+  USER_KINDS,
 } from '../constants';
 import { PERMISSIONS } from '../permissions';
 import {
@@ -30,12 +32,22 @@ import {
 // Shared entity shapes
 // ---------------------------------------------------------------------------------------------
 
-export const userSummarySchema = z.object({
+const basicUserSummarySchema = z.object({
   id: z.string(),
   username: z.string(),
   /** Display name. */
   name: z.string(),
   image: z.string().nullable(),
+});
+
+/**
+ * A person or an agent member. Agents (docs/design/agents-and-pipelines.md §1) carry
+ * `kind: 'agent'` and their owner; `kind` is left out for people.
+ */
+export const userSummarySchema = basicUserSummarySchema.extend({
+  kind: z.enum(USER_KINDS).optional(),
+  /** For agents: the person the agent works for. */
+  agentOwner: basicUserSummarySchema.nullable().optional(),
 });
 export type UserSummary = z.infer<typeof userSummarySchema>;
 
@@ -481,11 +493,11 @@ const nameListSchema = z
         .filter(Boolean),
     ),
   ])
-  .pipe(z.array(z.string().max(LIMITS.username.max)).max(LIMITS.bulkIds));
+  .pipe(z.array(z.string().max(MAX_ANY_USERNAME_LENGTH)).max(LIMITS.bulkIds));
 
 export const mentionablesQuerySchema = z.object({
   /** Autocomplete: members and mentionable roles matching this text. */
-  q: z.string().trim().max(LIMITS.username.max).optional(),
+  q: z.string().trim().max(MAX_ANY_USERNAME_LENGTH).optional(),
   /**
    * Lookup instead of autocomplete (rendering mention chips): exactly these usernames and role
    * slugs. Roles are looked up whether or not the caller may mention them.

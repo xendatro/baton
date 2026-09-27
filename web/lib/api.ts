@@ -183,17 +183,21 @@ export function errorFromResponse(status: number, body: unknown): ApiError {
           ? 'not_found'
           : status === 413
             ? 'payload_too_large'
-            : status === 429
-              ? 'rate_limited'
-              : 'internal';
+            : status === 423
+              ? 'agents_paused'
+              : status === 429
+                ? 'rate_limited'
+                : 'internal';
   const message =
     status === 413
       ? 'The file is too large.'
-      : status === 429
-        ? 'Too many requests. Try again in a moment.'
-        : status >= 500
-          ? `The server had a problem (${status}). Try again.`
-          : `Request failed (${status}).`;
+      : status === 423
+        ? 'Agents are paused here, so they can read but not make changes.'
+        : status === 429
+          ? 'Too many requests. Try again in a moment.'
+          : status >= 500
+            ? `The server had a problem (${status}). Try again.`
+            : `Request failed (${status}).`;
   return new ApiError(code, status, message);
 }
 

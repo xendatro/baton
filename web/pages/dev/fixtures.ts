@@ -25,6 +25,24 @@ export const users: UserSummary[] = [
 
 export const [ethan, ada, grace] = users as [UserSummary, UserSummary, UserSummary];
 
+/** Agent members (agents A): every person has one, `<username>-ai`, owned by them. */
+export const ethanAi: UserSummary = {
+  id: 'u_ethan_ai',
+  username: 'ethan-ai',
+  name: 'Ethan Ho AI',
+  image: null,
+  kind: 'agent',
+  agentOwner: ethan,
+};
+export const adaAi: UserSummary = {
+  id: 'u_ada_ai',
+  username: 'ada-ai',
+  name: 'Ada Lovelace AI',
+  image: null,
+  kind: 'agent',
+  agentOwner: ada,
+};
+
 export const roles: RoleSummary[] = [
   { id: 'r_everyone', slug: 'everyone', name: '@everyone', color: null },
   { id: 'r_design', slug: 'design', name: 'Design', color: '#ec4899' },
@@ -32,7 +50,10 @@ export const roles: RoleSummary[] = [
   { id: 'r_admin', slug: 'admin', name: 'Admin', color: '#f59e0b' },
 ];
 
-export const mentionables: MentionablesResponse = { users, roles: roles.slice(1) };
+export const mentionables: MentionablesResponse = {
+  users: [...users, ethanAi, adaAi],
+  roles: roles.slice(1),
+};
 
 export const statuses = [
   { id: 's_open', name: 'Open', color: '#6b7280', category: 'open' as const },
@@ -206,6 +227,25 @@ export const replies: ReplyNode[] = [
     updatedAt: minutesAgo(30),
     editedAt: minutesAgo(30),
   },
+  {
+    id: 'rep_3',
+    teamId: TEAM_ID,
+    projectId: 'p_web',
+    parentType: 'task',
+    parentId: 'task_dev',
+    parentReplyId: null,
+    deleted: false,
+    replyCount: 0,
+    depth: 0,
+    body: 'Reviewed the diff: the sweeper skips expired leases twice. Fix pushed, @ethan please re-run CI.',
+    author: ethanAi,
+    via: { keyId: 'key_1', keyName: 'MSI', agentName: 'Claude' },
+    attachments: [],
+    reactions: [],
+    createdAt: minutesAgo(10),
+    updatedAt: minutesAgo(10),
+    editedAt: null,
+  },
 ];
 
 const actor = (user: UserSummary | null, keyName?: string) => ({
@@ -269,6 +309,23 @@ export const activity: ActivityEntry[] = [
     meta: {},
     url: '/t/acme/p/WEB/tasks/12',
     createdAt: minutesAgo(20),
+  },
+  {
+    id: 'act_agent',
+    teamId: TEAM_ID,
+    projectId: 'p_web',
+    actor: {
+      user: ethanAi,
+      via: { keyId: 'key_1', keyName: 'MSI', agentName: 'Claude' },
+      source: 'mcp',
+    },
+    entityType: 'task',
+    entityId: 'task_dev',
+    action: 'task.status_changed',
+    changes: { status: { from: 'In review', to: 'Done' } },
+    meta: {},
+    url: '/t/acme/p/WEB/tasks/12',
+    createdAt: minutesAgo(8),
   },
   {
     id: 'act_5',

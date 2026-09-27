@@ -7,6 +7,7 @@ import { ActorAvatar } from '@web/components/common/AgentAvatar';
 import { UserName } from '@web/components/common/UserName';
 import { LogoMark } from '@web/components/layout/Logo';
 import { describeActivity, hugsPrevious, type ActivityPart } from '@web/lib/activityText';
+import { isAgentUser } from '@web/lib/agentMembers';
 import { cn } from '@web/lib/utils';
 
 function Part({ part, url }: { part: ActivityPart; url: string | null }) {
@@ -69,7 +70,12 @@ export function ActivityFeed({ entries, teams }: ActivityFeedProps) {
             <li key={entry.id} className="flex gap-2.5 px-3 py-2.5 sm:px-4">
               <span className="pt-0.5">
                 {user || source !== 'system' ? (
-                  <ActorAvatar user={user} agentName={via?.agentName} size="md" />
+                  <ActorAvatar
+                    user={user}
+                    agentName={via?.agentName}
+                    keyName={via?.keyName}
+                    size="md"
+                  />
                 ) : (
                   <LogoMark className="size-6 rounded-full" />
                 )}
@@ -79,12 +85,12 @@ export function ActivityFeed({ entries, teams }: ActivityFeedProps) {
                   {/* An agent's action reads "Claude via Ethan's MSI" (BAT-10). */}
                   <UserName
                     user={user}
-                    via={via?.agentName ? via : null}
+                    via={via?.agentName || isAgentUser(user) ? via : null}
                     source={source}
                     hovercard={false}
                     className="align-bottom"
                   />
-                  {via && !via.agentName ? (
+                  {via && !via.agentName && !isAgentUser(user) ? (
                     <span className="ml-1 inline-flex items-center gap-0.5 align-bottom text-xs">
                       <BotIcon className="size-3.5" aria-hidden="true" />
                       <span className="sr-only">via </span>

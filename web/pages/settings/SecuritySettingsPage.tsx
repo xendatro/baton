@@ -1,5 +1,6 @@
 import {
   AppWindowIcon,
+  BotIcon,
   KeyRoundIcon,
   LinkIcon,
   LockKeyholeIcon,
@@ -184,6 +185,7 @@ const KIND_ICONS: Record<SecurityEventKind, LucideIcon> = {
   'api-key': KeyRoundIcon,
   session: AppWindowIcon,
   profile: UserPenIcon,
+  agent: BotIcon,
 };
 
 function SecurityLogCard() {

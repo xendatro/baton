@@ -19,6 +19,8 @@ import {
   createTeam,
   createTestContext,
   createUser,
+  giveAgentOwnerRoles,
+  giveRoleWithAgent,
   json,
   type CreatedProject,
   type CreatedTeam,
@@ -51,6 +53,9 @@ beforeEach(() => {
   [open, done] = project.statuses as [StatusRow, StatusRow];
   ownerKey = createApiKey(ctx.db, { userId: owner.id }).key;
   memberKey = createApiKey(ctx.db, { userId: member.id }).key;
+  // Keys act as their owner's agent member, capped by the owner (agents A): the owner's agent
+  // administers the team with him.
+  giveAgentOwnerRoles(ctx.db, owner.id);
   events = [];
   ctx.deps.events.subscribe((event) => events.push(event));
 });
@@ -84,12 +89,10 @@ function lastActivity(entityId: string) {
     .at(-1);
 }
 
+/** Grants MANAGE_STATUSES to `user` and their agent member (what their keys act as). */
 function grantStatuses(user: UserRow) {
   const role = createRole(ctx.db, { teamId: team.team.id, permissions: ['MANAGE_STATUSES'] });
-  ctx.db.orm
-    .insert(s.memberRole)
-    .values({ teamId: team.team.id, userId: user.id, roleId: role.id })
-    .run();
+  giveRoleWithAgent(ctx.db, { teamId: team.team.id, userId: user.id, roleId: role.id });
 }
 
 describe('statuses over REST', () => {

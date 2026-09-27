@@ -10,6 +10,7 @@ import type { Actor } from '../context';
 import * as s from '../db/schema';
 import {
   addMember,
+  agentActor,
   bearer,
   createApiKey,
   createIssue,
@@ -19,6 +20,8 @@ import {
   createTeam,
   createTestContext,
   createUser,
+  giveAgentOwnerRoles,
+  giveRoleWithAgent,
   json,
   type CreatedProject,
   type CreatedTeam,
@@ -63,13 +66,14 @@ function record(
 
 describe('recordActivity', () => {
   it('snapshots the key name and emits activity.created after commit', () => {
+    const { apiKey } = createApiKey(ctx.db, { userId: owner.id, name: 'Codex desktop' });
+    const actor = agentActor(ctx.db, owner.id, { id: apiKey.id, name: 'Codex desktop' });
     const events: LiveEvent[] = [];
     ctx.deps.events.subscribe((event) => events.push(event));
-    const { apiKey } = createApiKey(ctx.db, { userId: owner.id, name: 'Codex desktop' });
-    const row = record(
-      { userId: owner.id, source: 'mcp', key: { id: apiKey.id, name: 'Codex desktop' } },
-      { changes: { name: { from: 'A', to: 'B' } }, meta: { title: 'B' } },
-    );
+    const row = record(actor, {
+      changes: { name: { from: 'A', to: 'B' } },
+      meta: { title: 'B' },
+    });
     ctx.db.orm.update(s.apiKey).set({ name: 'Renamed' }).where(eq(s.apiKey.id, apiKey.id)).run();
 
     const [entry] = listEntityActivity(ctx.deps, web(owner), {
@@ -79,7 +83,8 @@ describe('recordActivity', () => {
     expect(entry).toMatchObject({
       id: row.id,
       actor: {
-        user: { id: owner.id },
+        // Written through a key: the owner's agent member, "via" the key (agents A).
+        user: { id: actor.userId, kind: 'agent', agentOwner: { id: owner.id } },
         via: { keyId: apiKey.id, keyName: 'Codex desktop' },
         source: 'mcp',
       },
@@ -244,10 +249,7 @@ describe('entity history access', () => {
     }
 
     const auditor = createRole(ctx.db, { teamId: team.team.id, permissions: ['VIEW_AUDIT_LOG'] });
-    ctx.db.orm
-      .insert(s.memberRole)
-      .values({ teamId: team.team.id, userId: member.id, roleId: auditor.id })
-      .run();
+    giveRoleWithAgent(ctx.db, { teamId: team.team.id, userId: member.id, roleId: auditor.id });
     const res = await history(key, 'role', role.id);
     expect(res.status).toBe(200);
     expect(activityListResponseSchema.parse(await res.json()).items).toHaveLength(1);
@@ -304,10 +306,7 @@ describe('team audit log', () => {
     expect(hidden.status).toBe(404);
 
     const auditor = createRole(ctx.db, { teamId: team.team.id, permissions: ['VIEW_AUDIT_LOG'] });
-    ctx.db.orm
-      .insert(s.memberRole)
-      .values({ teamId: team.team.id, userId: member.id, roleId: auditor.id })
-      .run();
+    giveRoleWithAgent(ctx.db, { teamId: team.team.id, userId: member.id, roleId: auditor.id });
     const allowed = await ctx.app.request(`/api/teams/${team.team.id}/audit-log`, {
       headers: bearer(key),
     });
@@ -355,6 +354,7 @@ describe('team audit log', () => {
     insert({ teamId: 'another-team' });
 
     const { key } = createApiKey(ctx.db, { userId: owner.id });
+    giveAgentOwnerRoles(ctx.db, owner.id);
     const query = async (params: string) =>
       auditLogResponseSchema
         .parse(

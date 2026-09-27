@@ -17,10 +17,15 @@ export interface ActorKey {
 
 /**
  * Who is performing an action. Every service function takes one. `key` is set when an agent or
- * script acts through an API key ("ethan via Claude on laptop"); null for the web session.
+ * script acts through an API key; null for the web session. A request with a key acts as the key
+ * owner's **agent member** (docs/design/agents-and-pipelines.md §1): `userId` is the agent
+ * (`ethan-ai`) and `ownerId` the person who owns the key (`ethan`); everything written through
+ * the key is authored by the agent. `ownerId` is absent for people acting themselves.
  */
 export interface Actor {
   userId: string;
+  /** Set when `userId` is an agent member: the human it works for (the key's owner). */
+  ownerId?: string;
   source: ActorSource;
   key: ActorKey | null;
 }

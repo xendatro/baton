@@ -15,11 +15,13 @@ import * as s from '../db/schema';
 import {
   addMember,
   bearer,
+  createAgent,
   createApiKey,
   createRole,
   createTeam,
   createTestContext,
   createUser,
+  giveAgentOwnerRoles,
   json,
   type CreatedTeam,
   type TestContext,
@@ -85,7 +87,8 @@ describe('creating and listing invites', () => {
       maxUses: 5,
       uses: 0,
       status: 'active',
-      createdBy: { username: 'mia' },
+      // Created through Mia's key: by her agent member (agents A).
+      createdBy: { username: 'mia-ai', kind: 'agent', agentOwner: { username: 'mia' } },
     });
     const expires = new Date(invite.expiresAt ?? 0).getTime() - before;
     expect(expires).toBeGreaterThan(59 * 60_000);
@@ -137,6 +140,7 @@ describe('creating and listing invites', () => {
       mine.id,
     ]);
     const { key } = createApiKey(ctx.db, { userId: manager.id });
+    giveAgentOwnerRoles(ctx.db, manager.id);
     const res = await ctx.app.request(`/api/teams/${team.team.id}/invites`, {
       headers: bearer(key),
     });
@@ -230,12 +234,20 @@ describe('joining with an invite', () => {
       .from(s.activity)
       .where(eq(s.activity.action, 'member.joined'))
       .get();
+    // Through Gus's key his agent accepted: Gus joined, and his agent with him.
+    const agent = createAgent(ctx.db, guest.id);
     expect(joined).toMatchObject({
-      actorId: guest.id,
+      actorId: agent.id,
       entityType: 'member',
       entityId: guest.id,
-      meta: { username: 'gus', inviteCode: `${invite.code.slice(0, 4)}…`, invitedBy: 'mia' },
+      meta: {
+        username: 'gus',
+        agent: 'gus-ai',
+        inviteCode: `${invite.code.slice(0, 4)}…`,
+        invitedBy: 'mia',
+      },
     });
+    expect(getMembership(ctx.db.orm, team.team.id, agent.id)?.roleIds).toEqual([]);
     expect(events.map((event) => event.type)).toEqual(
       expect.arrayContaining(['member.joined', 'invite.changed']),
     );
@@ -419,6 +431,7 @@ describe('invite codes outside the invite list (SEC-05)', () => {
       .run();
 
     const { key } = createApiKey(ctx.db, { userId: reviewer.id });
+    giveAgentOwnerRoles(ctx.db, reviewer.id);
     const res = await ctx.app.request(`/api/teams/${team.team.id}/audit-log?limit=100`, {
       headers: bearer(key),
     });

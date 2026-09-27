@@ -5,6 +5,7 @@ import type { Actor } from '../context';
 import * as s from '../db/schema';
 import {
   addMember,
+  agentActor,
   bearer,
   createApiKey,
   createProject,
@@ -22,36 +23,49 @@ import { listNotifications } from './notifications';
 import { createReply, editReply } from './replies';
 import { getViaKeys } from './users';
 
-/** BAT-6: agent identity on writes, agent writes in the owner's inbox, and @agent mentions. */
+/**
+ * BAT-6 agent identity on writes, and mentions of agent members (agents A): `@ethan-ai` is a
+ * username mention of Ethan's agent, queued for every active key of Ethan's until
+ * `wait_for_mentions` collects it.
+ */
 
 let ctx: TestContext;
 let ethan: UserRow;
 let caden: UserRow;
 let task: TaskRow;
+let teamId: string;
+/** Ethan's agent through his "MSI" key (Claude) and his "Laptop" key (Codex). */
 let claude: Actor;
 let codex: Actor;
 let cadenWeb: Actor;
+let ethanWeb: Actor;
 
-function agentActor(user: UserRow, keyName: string, agentName: string): Actor {
+function keyActor(user: UserRow, keyName: string, agentName: string): Actor {
   const { apiKey } = createApiKey(ctx.db, { userId: user.id, name: keyName });
   recordKeyAgent(ctx.deps, apiKey.id, agentName);
-  return { userId: user.id, source: 'mcp', key: { id: apiKey.id, name: keyName, agentName } };
+  return agentActor(ctx.db, user.id, { id: apiKey.id, name: keyName, agentName });
 }
 
 const reply = (actor: Actor, body: string) =>
   createReply(ctx.deps, actor, { parentType: 'task', parentId: task.id, body });
 
+const pending = async (actor: Actor) =>
+  (await waitForMentions(ctx.deps, actor, { timeoutSeconds: 0 })).mentions.map(
+    (mention) => mention.reply.body,
+  );
+
 beforeEach(() => {
   ctx = createTestContext();
-  ethan = createUser(ctx.db, { username: 'ethan' });
-  caden = createUser(ctx.db, { username: 'caden' });
-  const team = createTeam(ctx.db, { ownerId: ethan.id, slug: 'baton' }).team;
-  addMember(ctx.db, { teamId: team.id, userId: caden.id });
-  const { project } = createProject(ctx.db, { teamId: team.id, key: 'BAT', createdById: ethan.id });
+  ethan = createUser(ctx.db, { username: 'ethan', name: 'Ethan' });
+  caden = createUser(ctx.db, { username: 'caden', name: 'Caden' });
+  teamId = createTeam(ctx.db, { ownerId: ethan.id, slug: 'baton' }).team.id;
+  addMember(ctx.db, { teamId, userId: caden.id });
+  const { project } = createProject(ctx.db, { teamId, key: 'BAT', createdById: ethan.id });
   task = createTask(ctx.db, { project, authorId: caden.id, title: 'Agent replies' });
-  claude = agentActor(ethan, 'MSI', 'Claude');
-  codex = agentActor(ethan, 'Laptop', 'Codex');
+  claude = keyActor(ethan, 'MSI', 'Claude');
+  codex = keyActor(ethan, 'Laptop', 'Codex');
   cadenWeb = { userId: caden.id, source: 'web', key: null };
+  ethanWeb = { userId: ethan.id, source: 'web', key: null };
 });
 
 afterEach(() => {
@@ -98,75 +112,125 @@ describe('agent names', () => {
   });
 });
 
-describe('agent writes in the owner’s inbox', () => {
-  it('notifies the key’s owner of their agent’s reply, but not of their own web reply', () => {
-    reply({ userId: ethan.id, source: 'web', key: null }, 'Subscribing myself');
-    const ethanWeb: Actor = { userId: ethan.id, source: 'web', key: null };
-    expect(listNotifications(ctx.deps, ethanWeb, { limit: 50 }).items).toEqual([]);
+describe('agent writes', () => {
+  it('are authored by the agent member, named after the key and its harness', () => {
+    const written = reply(claude, 'I found the cause.');
+    expect(written.author).toMatchObject({
+      username: 'ethan-ai',
+      name: 'Ethan AI',
+      kind: 'agent',
+      agentOwner: { id: ethan.id, username: 'ethan' },
+    });
+    expect(written.via).toMatchObject({ keyName: 'MSI', agentName: 'Claude' });
+  });
 
+  it('reach the owner only as far as their agent notifications say (needs_me by default)', () => {
+    reply(ethanWeb, 'Subscribing myself');
     reply(claude, 'I found the cause.');
-    const inbox = listNotifications(ctx.deps, ethanWeb, { limit: 50 }).items;
-    expect(inbox).toEqual([
-      expect.objectContaining({ type: 'reply', viaKeyName: 'MSI', viaAgentName: 'Claude' }),
+    // A reply on a thread Ethan follows is nothing he needs to hear from his own agent…
+    expect(listNotifications(ctx.deps, ethanWeb, { limit: 50 }).items).toEqual([]);
+    // …but a mention of him is.
+    reply(claude, '@ethan the fix needs your review');
+    expect(listNotifications(ctx.deps, ethanWeb, { limit: 50 }).items).toEqual([
+      expect.objectContaining({
+        type: 'mention',
+        actor: expect.objectContaining({ username: 'ethan-ai' }) as unknown,
+        viaKeyName: 'MSI',
+        viaAgentName: 'Claude',
+      }),
     ]);
   });
 });
 
-describe('@agent mentions', () => {
-  it('reaches only agents of the mentioned kind that took part in the thread', async () => {
-    reply(claude, 'Looking into it.');
-    const outsider = agentActor(caden, 'Caden PC', 'Claude');
-    reply(cadenWeb, '@claude @codex can you check the tests?');
+describe('mentions of agent members', () => {
+  it('queue a reply mentioning @ethan-ai for every key of Ethan, once each', async () => {
+    const outsider = keyActor(caden, 'Caden PC', 'Claude');
+    reply(cadenWeb, '@ethan-ai can you check the tests?');
 
-    const mine = await waitForMentions(ctx.deps, claude, { timeoutSeconds: 0 });
-    expect(mine.mentions.map((m) => m.reply.body)).toEqual([
-      '@claude @codex can you check the tests?',
-    ]);
-    expect(mine.mentions[0]).toMatchObject({ parentType: 'task', reply: { ref: 'BAT-1' } });
-    // Delivered once.
-    expect((await waitForMentions(ctx.deps, claude, { timeoutSeconds: 0 })).mentions).toEqual([]);
-    // Codex never replied here, and Caden's Claude never took part.
-    expect((await waitForMentions(ctx.deps, codex, { timeoutSeconds: 0 })).mentions).toEqual([]);
-    expect((await waitForMentions(ctx.deps, outsider, { timeoutSeconds: 0 })).mentions).toEqual([]);
+    expect(await pending(claude)).toEqual(['@ethan-ai can you check the tests?']);
+    const mentions = await waitForMentions(ctx.deps, codex, { timeoutSeconds: 0 });
+    expect(mentions.mentions[0]).toMatchObject({
+      parentType: 'task',
+      reply: { ref: 'BAT-1', author: { username: 'caden' } },
+    });
+    // Delivered once per key.
+    expect(await pending(claude)).toEqual([]);
+    // Caden's agent wasn't mentioned; `@claude`-style handles no longer reach anyone.
+    reply(cadenWeb, '@claude @codex anyone?');
+    expect(await pending(outsider)).toEqual([]);
+    expect(await pending(claude)).toEqual([]);
   });
 
-  it('counts the key that created the item, ignores self-mentions and re-edits', async () => {
-    ctx.db.orm.update(s.task).set({ viaKeyId: codex.key?.id }).where(eq(s.task.id, task.id)).run();
-    reply(codex, '@codex note to self');
-    expect((await waitForMentions(ctx.deps, codex, { timeoutSeconds: 0 })).mentions).toEqual([]);
+  it('ignore self-mentions, re-edits, revoked keys and agents outside the team', async () => {
+    reply(claude, '@ethan-ai note to self');
+    expect(await pending(codex)).toEqual([]);
 
     const posted = reply(cadenWeb, 'Thanks');
-    editReply(ctx.deps, cadenWeb, posted.id, { body: 'Thanks @codex' });
-    editReply(ctx.deps, cadenWeb, posted.id, { body: 'Thanks @codex!' });
-    const { mentions } = await waitForMentions(ctx.deps, codex, { timeoutSeconds: 0 });
-    expect(mentions.map((m) => m.reply.id)).toEqual([posted.id]);
+    editReply(ctx.deps, cadenWeb, posted.id, { body: 'Thanks @ethan-ai' });
+    editReply(ctx.deps, cadenWeb, posted.id, { body: 'Thanks @ethan-ai!' });
+    expect(await pending(codex)).toEqual(['Thanks @ethan-ai!']);
+
+    ctx.db.orm
+      .update(s.apiKey)
+      .set({ revokedAt: new Date() })
+      .where(eq(s.apiKey.id, codex.key?.id ?? ''))
+      .run();
+    const queuedFor = () =>
+      ctx.db.orm
+        .select()
+        .from(s.agentMention)
+        .all()
+        .filter((row) => row.keyId === codex.key?.id).length;
+    expect(queuedFor()).toBe(1);
+    reply(cadenWeb, '@ethan-ai one more');
+    expect(queuedFor()).toBe(1);
+    expect(await pending(claude)).toEqual(['Thanks @ethan-ai!', '@ethan-ai one more']);
+
+    // An agent removed from the team is not queued.
+    ctx.db.orm.delete(s.teamMember).where(eq(s.teamMember.userId, claude.userId)).run();
+    reply(cadenWeb, '@ethan-ai are you there?');
+    expect(ctx.db.orm.select().from(s.agentMention).all()).toHaveLength(3);
+  });
+
+  it('do not wake a paused agent', async () => {
+    ctx.db.orm
+      .update(s.user)
+      .set({ agentPausedAt: new Date() })
+      .where(eq(s.user.id, ethan.id))
+      .run();
+    reply(cadenWeb, '@ethan-ai while you were paused');
+    ctx.db.orm.update(s.user).set({ agentPausedAt: null }).where(eq(s.user.id, ethan.id)).run();
+    ctx.db.orm
+      .update(s.team)
+      .set({ agentsPausedAt: new Date() })
+      .where(eq(s.team.id, teamId))
+      .run();
+    reply(cadenWeb, '@ethan-ai while the team paused agents');
+    expect(await pending(claude)).toEqual([]);
   });
 
   it('waits for the next mention', async () => {
-    reply(claude, 'Standing by.');
-    const pending = waitForMentions(ctx.deps, claude, { timeoutSeconds: 5 });
+    const waiting = waitForMentions(ctx.deps, claude, { timeoutSeconds: 5 });
     reply(cadenWeb, 'No mention here');
-    reply(cadenWeb, '@claude your turn');
-    const { mentions } = await pending;
-    expect(mentions.map((m) => m.reply.body)).toEqual(['@claude your turn']);
+    reply(cadenWeb, '@ethan-ai your turn');
+    const { mentions } = await waiting;
+    expect(mentions.map((m) => m.reply.body)).toEqual(['@ethan-ai your turn']);
   });
 
   it('stops waiting when the request goes away', async () => {
     const controller = new AbortController();
-    const pending = waitForMentions(ctx.deps, claude, { timeoutSeconds: 60 }, controller.signal);
+    const waiting = waitForMentions(ctx.deps, claude, { timeoutSeconds: 60 }, controller.signal);
     controller.abort();
-    expect((await pending).mentions).toEqual([]);
+    expect((await waiting).mentions).toEqual([]);
   });
 
-  it('needs a key whose agent is known', async () => {
+  it('are collected through an API key, whatever its harness', async () => {
     const { apiKey } = createApiKey(ctx.db, { userId: ethan.id, name: 'Script' });
-    const script: Actor = {
-      userId: ethan.id,
-      source: 'api',
-      key: { id: apiKey.id, name: 'Script' },
-    };
-    await expect(waitForMentions(ctx.deps, script, { timeoutSeconds: 0 })).rejects.toThrow(
-      /no agent name/,
+    const script = agentActor(ctx.db, ethan.id, { id: apiKey.id, name: 'Script' }, 'api');
+    reply(cadenWeb, '@ethan-ai ping');
+    expect(await pending(script)).toEqual(['@ethan-ai ping']);
+    await expect(waitForMentions(ctx.deps, ethanWeb, { timeoutSeconds: 0 })).rejects.toThrow(
+      /API key/,
     );
   });
 });

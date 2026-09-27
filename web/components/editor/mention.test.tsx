@@ -9,8 +9,30 @@ import { normalizeMarkdown } from './markdown';
 import { createMention, toAgentMentionItems, type MentionAgent, type MentionItem } from './mention';
 import { useMentionSource } from './useMentionSource';
 
-const claude: MentionAgent = { name: 'Claude', handle: 'claude', keys: ['Ethan’s MSI'] };
-const cursor: MentionAgent = { name: 'Cursor', handle: 'cursor', keys: ['Caden’s laptop'] };
+const ethan = { id: 'u0', username: 'ethan', name: 'Ethan', image: null };
+const caden = { id: 'u1', username: 'caden', name: 'Caden', image: null };
+const ethanAi: MentionAgent = {
+  user: {
+    id: 'a0',
+    username: 'ethan-ai',
+    name: 'Ethan AI',
+    image: null,
+    kind: 'agent',
+    agentOwner: ethan,
+  },
+  agentName: 'Claude',
+};
+const cadenAi: MentionAgent = {
+  user: {
+    id: 'a1',
+    username: 'caden-ai',
+    name: 'Caden AI',
+    image: null,
+    kind: 'agent',
+    agentOwner: caden,
+  },
+  agentName: null,
+};
 
 const editors: Editor[] = [];
 afterEach(() => {
@@ -20,8 +42,9 @@ afterEach(() => {
 function sourceHook(agents: readonly MentionAgent[]) {
   const client = new QueryClient({ defaultOptions: { queries: { staleTime: Infinity } } });
   for (const q of ['', 'c']) {
+    // Agent members are team members: the team's list has them too.
     client.setQueryData(queryKeys.teams.mentionables('team1', q), {
-      users: [{ id: 'u1', username: 'caden', name: 'Caden', image: null }],
+      users: [caden, ethanAi.user, cadenAi.user],
       roles: [],
     });
   }
@@ -34,24 +57,31 @@ function sourceHook(agents: readonly MentionAgent[]) {
   });
 }
 
-describe('agent mentions (BAT-12)', () => {
-  it('matches agents by handle or name', () => {
-    expect(toAgentMentionItems([claude, cursor], '').map((item) => item.id)).toEqual([
-      'claude',
-      'cursor',
+describe('agent mentions (BAT-12, agents A)', () => {
+  it('matches agent members by username or name', () => {
+    expect(toAgentMentionItems([ethanAi, cadenAi], '').map((item) => item.id)).toEqual([
+      'ethan-ai',
+      'caden-ai',
     ]);
-    expect(toAgentMentionItems([claude, cursor], 'CLA')).toEqual([
-      expect.objectContaining({ kind: 'user', id: 'claude', group: 'Agents', agent: claude }),
+    expect(toAgentMentionItems([ethanAi, cadenAi], 'ETHAN')).toEqual([
+      expect.objectContaining({
+        kind: 'user',
+        id: 'ethan-ai',
+        group: 'Agents',
+        user: ethanAi.user,
+        agent: ethanAi,
+      }),
     ]);
-    expect(toAgentMentionItems([claude], 'bob')).toEqual([]);
+    expect(toAgentMentionItems([ethanAi], 'bob')).toEqual([]);
   });
 
-  it('lists the thread’s agents above the team’s people', async () => {
-    const { result } = sourceHook([claude]);
+  it('lists the thread’s agents above the team’s people, and only there', async () => {
+    const { result } = sourceHook([cadenAi]);
     const items = await result.current!('c', new AbortController().signal);
     expect(items.map((item) => `${item.group}:${item.id}`)).toEqual([
-      'Agents:claude',
+      'Agents:caden-ai',
       'People:caden',
+      'People:ethan-ai',
     ]);
   });
 
@@ -60,29 +90,44 @@ describe('agent mentions (BAT-12)', () => {
     const first = result.current;
     expect((await first!('', new AbortController().signal)).map((item) => item.id)).toEqual([
       'caden',
+      'ethan-ai',
+      'caden-ai',
     ]);
-    rerender({ list: [claude] });
+    rerender({ list: [cadenAi] });
     expect(result.current).toBe(first);
     expect((await first!('', new AbortController().signal)).map((item) => item.id)).toEqual([
-      'claude',
+      'caden-ai',
       'caden',
+      'ethan-ai',
     ]);
   });
 
-  it('inserts a picked agent as plain @handle markdown', () => {
+  it('inserts a picked agent as a plain @username mention', () => {
     const editor = new Editor({
       extensions: createEditorExtensions({ slashCommands: false }),
       content: '',
       contentType: 'markdown',
     });
     editors.push(editor);
-    const [item] = toAgentMentionItems([claude], 'cl') as [MentionItem];
+    const [item] = toAgentMentionItems([ethanAi], 'eth') as [MentionItem];
     const end = editor.state.doc.content.size - 1;
     const suggestion = createMention(null).options.suggestion;
     suggestion.command?.({ editor, range: { from: end, to: end }, props: item });
-    expect(normalizeMarkdown(editor.getMarkdown())).toBe('@claude');
+    expect(normalizeMarkdown(editor.getMarkdown())).toBe('@ethan-ai');
     const doc: JSONContent = editor.getJSON();
     const mention = doc.content?.[0]?.content?.find((node) => node.type === 'mention');
-    expect(mention?.attrs).toEqual(expect.objectContaining({ id: 'claude', kind: 'user' }));
+    expect(mention?.attrs).toEqual(expect.objectContaining({ id: 'ethan-ai', kind: 'user' }));
+    // …and reads back from markdown as the same single mention.
+    const reread = new Editor({
+      extensions: createEditorExtensions({ slashCommands: false }),
+      content: 'hi @ethan-ai and @ethan-bob',
+      contentType: 'markdown',
+    });
+    editors.push(reread);
+    const rereadDoc: JSONContent = reread.getJSON();
+    const ids = (rereadDoc.content?.[0]?.content ?? [])
+      .filter((node) => node.type === 'mention')
+      .map((node) => node.attrs?.id as string);
+    expect(ids).toEqual(['ethan-ai', 'ethan']);
   });
 });

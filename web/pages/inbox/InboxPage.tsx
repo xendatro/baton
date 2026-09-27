@@ -4,6 +4,7 @@ import { Link, useSearchParams } from 'react-router';
 import { toast } from 'sonner';
 import type { MeTeam, Notification } from '@shared/schemas/core';
 import { ActorAvatar } from '@web/components/common/AgentAvatar';
+import { AgentBadge } from '@web/components/common/AgentBadge';
 import { EmptyState } from '@web/components/common/EmptyState';
 import { EntityIcon } from '@web/components/common/EntityIcon';
 import { ErrorState } from '@web/components/common/ErrorState';
@@ -16,6 +17,7 @@ import { useUnreadCount } from '@web/components/layout/useUnreadCount';
 import { Button } from '@web/components/ui/button';
 import { Skeleton } from '@web/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@web/components/ui/tabs';
+import { agentTitle, isAgentUser } from '@web/lib/agentMembers';
 import { useMe } from '@web/lib/auth';
 import {
   desktopPermission,
@@ -249,9 +251,24 @@ function NotificationRow({ notification, teams, onRead }: NotificationRowProps) 
             <ActorAvatar
               user={notification.actor}
               agentName={notification.viaAgentName}
+              keyName={notification.viaKeyName}
               size="sm"
             />
-            {notification.viaAgentName ? (
+            {notification.actor && isAgentUser(notification.actor) ? (
+              // Agent members: "Ethan AI [AI]", the key it used in the tooltip.
+              <span
+                className="inline-flex min-w-0 items-center gap-1.5"
+                title={agentTitle(notification.actor, {
+                  agentName: notification.viaAgentName,
+                  keyName: notification.viaKeyName,
+                })}
+              >
+                <span className="truncate font-medium text-foreground">
+                  {notification.actor.name}
+                </span>
+                <AgentBadge />
+              </span>
+            ) : notification.viaAgentName ? (
               // BAT-6: "Claude via Ethan's MSI".
               <>
                 <span className="font-medium text-foreground">{notification.viaAgentName}</span>

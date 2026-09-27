@@ -18,6 +18,7 @@ import {
 } from '@shared/schemas/issues';
 import type { Label } from '@shared/schemas/projects';
 import type { UserSummary } from '@shared/schemas/core';
+import { AgentBadge } from '@web/components/common/AgentBadge';
 import { Kbd } from '@web/components/common/Kbd';
 import { UserAvatar } from '@web/components/common/UserAvatar';
 import { LabelPicker } from '@web/components/pickers/LabelPicker';
@@ -34,6 +35,7 @@ import {
   DropdownMenuTrigger,
 } from '@web/components/ui/dropdown-menu';
 import { Input } from '@web/components/ui/input';
+import { isAgentUser } from '@web/lib/agentMembers';
 import { cn } from '@web/lib/utils';
 import { IssueStateIcon } from './IssueState';
 
@@ -268,6 +270,7 @@ export function AuthorFilter({
           >
             <UserAvatar user={user} size="sm" />
             <span className="truncate">{user.name}</span>
+            {isAgentUser(user) ? <AgentBadge /> : null}
             <span className="truncate text-xs text-muted-foreground">@{user.username}</span>
             {value?.id === user.id ? (
               <CheckIcon className="ml-auto" aria-label="(selected)" />

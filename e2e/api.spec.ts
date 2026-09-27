@@ -25,7 +25,8 @@ test('an API key created over REST authenticates the REST API and MCP', async ({
   try {
     const me = await script.get('/api/me');
     expect(me.ok()).toBe(true);
-    expect(meResponseSchema.parse(await me.json()).user.username).toBe(user.username);
+    // Keys act as their owner's agent member (agents A).
+    expect(meResponseSchema.parse(await me.json()).user.username).toBe(`${user.username}-ai`);
   } finally {
     await script.dispose();
   }
@@ -41,7 +42,8 @@ test('an API key created over REST authenticates the REST API and MCP', async ({
     const result = await client.callTool({ name: 'whoami', arguments: {} });
     expect(result.isError, JSON.stringify(result.content)).toBeFalsy();
     expect(result.structuredContent).toMatchObject({
-      user: { username: user.username, email: user.email },
+      user: { username: `${user.username}-ai`, kind: 'agent' },
+      owner: { username: user.username },
       via: { keyId: apiKey.id, keyName: 'Claude on laptop' },
       teams: [],
     });

@@ -8,6 +8,7 @@ import {
   deleteAccountInputSchema,
   setPasswordInputSchema,
   SOCIAL_PROVIDERS,
+  updateAgentSettingsInputSchema,
   updateProfileInputSchema,
 } from '@shared/schemas/account';
 import { idSchema } from '@shared/schemas/common';
@@ -29,13 +30,15 @@ import {
   setPassword,
   updateProfile,
 } from '../services/account';
+import { getAgentSettings, updateAgentSettings } from '../services/agents';
 
 /**
  * Account: profile, username, avatar, theme, password, sessions, sign-in methods, deletion.
  * Owner: account module. Paths are relative to /api and declared in full in this file.
  *
  * Password, session, sign-in method and deletion endpoints need a web session: an API key (an
- * agent or script) can't use them (SPEC §1.14). Profile and avatar changes work with keys too.
+ * agent or script) can't use them (SPEC §1.14), nor the agent settings. Profile and avatar
+ * changes work with keys too, and change the key owner's profile.
  */
 export const accountRoutes = new Hono<AppEnv>();
 
@@ -52,6 +55,18 @@ function currentSessionId(c: Context<AppEnv>): string | null {
 
 accountRoutes.patch('/me', validateJson(updateProfileInputSchema), (c) =>
   c.json(updateProfile(c.var.deps, requireActor(c), c.req.valid('json'))),
+);
+
+// ---------------------------------------------------------------------------------------------
+// Your agent member (agents A): pause it, choose how much of its activity reaches your inbox
+// ---------------------------------------------------------------------------------------------
+
+accountRoutes.get('/me/agent', webOnly, (c) =>
+  c.json(getAgentSettings(c.var.deps, requireActor(c))),
+);
+
+accountRoutes.patch('/me/agent', webOnly, validateJson(updateAgentSettingsInputSchema), (c) =>
+  c.json(updateAgentSettings(c.var.deps, requireActor(c), c.req.valid('json'))),
 );
 
 // ---------------------------------------------------------------------------------------------

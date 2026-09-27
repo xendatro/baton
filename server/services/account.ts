@@ -28,6 +28,7 @@ import { newId } from '../lib/ids';
 import { sha256Hex } from '../lib/security';
 import { attachmentPath } from '../lib/urls';
 import { recordActivity } from './activity';
+import { findAgentId, personActor, syncAgentProfile } from './agents';
 import {
   attachmentFilePath,
   removeAttachmentFiles,
@@ -36,6 +37,7 @@ import {
 } from './attachments';
 import { emitAfterCommit } from './events';
 import { revokeInvitesOf } from './invites';
+import { clearAgentMembership } from './members';
 import { unassignFromTasks } from './taskAssignees';
 
 /**
@@ -117,9 +119,11 @@ export function getProfile(deps: AppDeps, actor: Actor): ProfileResponse {
  */
 export function updateProfile(
   deps: AppDeps,
-  actor: Actor,
+  agentOrPerson: Actor,
   input: UpdateProfileInput,
 ): ProfileResponse {
+  // Through an API key, this is the key owner's profile (their agent's name follows it).
+  const actor = personActor(agentOrPerson);
   const before = loadUser(deps.db.orm, actor.userId);
   const next: Partial<Pick<UserRow, 'name' | 'username' | 'displayUsername' | 'theme'>> = {};
   if (input.name !== undefined) next.name = input.name;
@@ -169,6 +173,7 @@ export function updateProfile(
       changes,
     });
     emitProfileChanged(tx, actor.userId);
+    syncAgentProfile(tx, actor.userId);
     return row;
   });
   return toProfile(updated);
@@ -221,9 +226,10 @@ function deleteAvatarRows(tx: Tx, userId: string): string[] {
  */
 export async function setAvatar(
   deps: AppDeps,
-  actor: Actor,
+  agentOrPerson: Actor,
   upload: AvatarUpload,
 ): Promise<ProfileResponse> {
+  const actor = personActor(agentOrPerson);
   const maxBytes = Math.min(AVATAR_MAX_BYTES, deps.env.maxUploadMb * 1024 * 1024);
   if (upload.bytes.byteLength === 0) throw errors.validation('The file is empty');
   if (upload.bytes.byteLength > maxBytes) {
@@ -307,7 +313,8 @@ export function setAvatarFromBase64(
 }
 
 /** Removes the avatar (uploaded or from an OAuth profile); initials are shown instead. */
-export function removeAvatar(deps: AppDeps, actor: Actor): ProfileResponse {
+export function removeAvatar(deps: AppDeps, agentOrPerson: Actor): ProfileResponse {
+  const actor = personActor(agentOrPerson);
   const current = loadUser(deps.db.orm, actor.userId);
   if (current.image === null && avatarRows(deps.db.orm, actor.userId).length === 0) {
     return toProfile(current);
@@ -751,6 +758,8 @@ export async function deleteAccount(
       .where(eq(s.teamMember.userId, actor.userId))
       .all();
     for (const { teamId } of memberships) {
+      // Their agent member goes with them (agents A).
+      clearAgentMembership(tx, actor, teamId, actor.userId, 'account_deleted');
       // Their invite links stop working with them (the rows keep a null creator), and their
       // tasks record losing them as an assignee (the rows would otherwise just cascade away).
       const revokedInvites = revokeInvitesOf(tx, actor, teamId, actor.userId);
@@ -777,13 +786,14 @@ export async function deleteAccount(
       });
     }
 
-    // Personal files: the avatar and uploads never attached to anything.
+    // Personal files: the avatar and uploads never attached to anything (theirs and their agent's).
+    const agentId = findAgentId(tx, actor.userId);
     const personal = tx
       .select({ id: s.attachment.id, storagePath: s.attachment.storagePath })
       .from(s.attachment)
       .where(
         and(
-          eq(s.attachment.uploaderId, actor.userId),
+          inArray(s.attachment.uploaderId, agentId ? [actor.userId, agentId] : [actor.userId]),
           inArray(s.attachment.parentType, ['user_avatar', 'pending']),
         ),
       )
@@ -808,6 +818,8 @@ export async function deleteAccount(
     });
     // Cascades: sessions, accounts, API keys, memberships, member roles, task assignments,
     // subscriptions, notifications. Author/actor references become null ("deleted user").
+    // The agent member is deleted with its owner; what it wrote shows a "deleted user" too.
+    if (agentId) tx.delete(s.user).where(eq(s.user.id, agentId)).run();
     tx.delete(s.user).where(eq(s.user.id, actor.userId)).run();
     return personal.map((row) => row.storagePath);
   });

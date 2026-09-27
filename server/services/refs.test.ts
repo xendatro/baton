@@ -15,6 +15,7 @@ import {
   createTeam,
   createTestContext,
   createUser,
+  giveAgentOwnerRoles,
   type TestContext,
   type UserRow,
 } from '../test/helpers';
@@ -36,7 +37,7 @@ const actorOf = (u: { id: string }): Actor => ({ userId: u.id, source: 'mcp', ke
 
 beforeEach(() => {
   ctx = createTestContext();
-  me = createUser(ctx.db, { username: 'ethan' });
+  me = createUser(ctx.db, { username: 'ethan', name: 'Ethan' });
 });
 
 afterEach(() => {
@@ -237,11 +238,14 @@ describe('GET /api/me and mentionables', () => {
       .where(eq(s.project.id, gone.project.id))
       .run();
     const { key } = createApiKey(ctx.db, { userId: me.id });
+    // The key acts as my agent member, here with my roles; agents are never owners (agents A).
+    giveAgentOwnerRoles(ctx.db, me.id);
     const body = meResponseSchema.parse(
       await (await ctx.app.request('/api/me', { headers: bearer(key) })).json(),
     );
+    expect(body.user.username).toBe('ethan-ai');
     expect(body.teams.map((t) => [t.slug, t.isOwner, t.projects.map((p) => p.key)])).toEqual([
-      ['acme', true, ['API']],
+      ['acme', false, ['API']],
       ['other', false, []],
     ]);
     expect(body.teams[0]?.permissions).toContain('ADMINISTRATOR');
@@ -265,7 +269,13 @@ describe('GET /api/me and mentionables', () => {
         ).json(),
       );
     const all = await get('');
-    expect(all.users.map((u) => u.username).sort()).toEqual(['boss', 'ethan']);
+    // My key made my agent member, which joined with me and can be mentioned (agents A).
+    expect(all.users.map((u) => u.username).sort()).toEqual(['boss', 'ethan', 'ethan-ai']);
+    expect(all.users.find((u) => u.username === 'ethan-ai')).toMatchObject({
+      kind: 'agent',
+      agentOwner: { id: me.id, username: 'ethan' },
+    });
+    expect((await get('ethan-a')).users.map((u) => u.username)).toEqual(['ethan-ai']);
     expect(all.roles.map((r) => r.slug)).toEqual(['devs']);
     expect((await get('bo')).users.map((u) => u.username)).toEqual(['boss']);
     expect((await get('%25')).users).toEqual([]);
@@ -281,9 +291,20 @@ describe('GET /api/me and mentionables', () => {
       ).json(),
     );
     expect(lookup.users.map((u) => u.username)).toEqual(['boss']);
+    const agentChip = mentionablesResponseSchema.parse(
+      await (
+        await ctx.app.request(`/api/teams/${acme.team.id}/mentionables?usernames=ethan-ai`, {
+          headers: bearer(key),
+        })
+      ).json(),
+    );
+    expect(agentChip.users).toEqual([
+      expect.objectContaining({ username: 'ethan-ai', name: 'Ethan AI' }),
+    ]);
     expect(lookup.roles.map((r) => r.slug).sort()).toEqual(['devs', 'hidden']);
 
     const ownerKey = createApiKey(ctx.db, { userId: owner.id }).key;
+    giveAgentOwnerRoles(ctx.db, owner.id);
     const asOwner = await get('', ownerKey);
     expect(asOwner.roles.map((r) => r.slug).sort()).toEqual([
       'admin',

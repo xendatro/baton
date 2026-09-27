@@ -168,7 +168,7 @@ test('first run: welcome, then join a team with a pasted invite link', async ({
 });
 
 test('the dashboard shows my work, claims, live activity and my teams', async ({ page }) => {
-  await signedInUser(page);
+  const user = await signedInUser(page);
   const world = await createWorld(page.request);
   const { key } = await post<{ key: string }>(page.request, '/api/me/api-keys', {
     name: 'Claude on laptop',
@@ -205,10 +205,11 @@ test('the dashboard shows my work, claims, live activity and my teams', async ({
   await expect(due.getByRole('link', { name: /Review the design/ })).toBeVisible();
   await expect(due).not.toContainText('Someone else’s');
 
+  // Claimed through the key: by the user's agent member (agents A), named with its key.
   const claimed = page.getByRole('region', { name: 'Claimed by you and your agents' });
-  await expect(claimed.getByRole('link', { name: /Refactor the auth flow/ })).toContainText(
-    'via Claude on laptop',
-  );
+  const claimedTask = claimed.getByRole('link', { name: /Refactor the auth flow/ });
+  await expect(claimedTask).toContainText(`${user.name} AI`);
+  await expect(claimedTask).toContainText('via the Claude on laptop key');
 
   const feed = page.getByRole('list', { name: 'Recent activity' });
   await expect(feed).toContainText('created project Web app');

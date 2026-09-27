@@ -290,7 +290,9 @@ test('members without permissions see read-only settings', async ({ page, browse
   await expect(memberPage.getByRole('button', { name: 'Write a README' })).toHaveCount(0);
 
   await memberPage.goto(`/t/${team.slug}/p/SHR/settings/general`);
-  await expect(memberPage.getByText(/needs the Manage projects permission/)).toBeVisible();
+  await expect(memberPage.getByText(/^You can view this, but/)).toContainText(
+    'needs the Manage projects permission',
+  );
   await expect(memberPage.getByLabel('Name')).toBeDisabled();
   await expect(memberPage.getByRole('button', { name: 'Delete project' })).toHaveCount(0);
 

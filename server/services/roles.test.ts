@@ -13,6 +13,7 @@ import {
   createTeam,
   createTestContext,
   createUser,
+  giveAgentOwnerRoles,
   json,
   type CreatedTeam,
   type RoleRow,
@@ -69,7 +70,8 @@ describe('listRoles', () => {
     expect(items.map((role) => [role.name, role.memberCount])).toEqual([
       ['Role manager', 1],
       ['Admin', 0],
-      ['@everyone', 3],
+      // Mia's key made her agent member, which joined with her (agents A).
+      ['@everyone', 4],
     ]);
   });
 });
@@ -77,6 +79,7 @@ describe('listRoles', () => {
 describe('createRole', () => {
   it('creates a role at the bottom with a unique slug', async () => {
     const { key } = createApiKey(ctx.db, { userId: manager.id });
+    giveAgentOwnerRoles(ctx.db, manager.id);
     const res = await ctx.app.request(
       `/api/teams/${team.team.id}/roles`,
       json(
@@ -128,6 +131,7 @@ describe('createRole', () => {
 
   it('rejects names starting with @ over REST', async () => {
     const { key } = createApiKey(ctx.db, { userId: owner.id });
+    giveAgentOwnerRoles(ctx.db, owner.id);
     const res = await ctx.app.request(
       `/api/teams/${team.team.id}/roles`,
       json('POST', { name: '@here' }, bearer(key)),
@@ -143,6 +147,7 @@ describe('updateRole', () => {
       permissions: ['MANAGE_LABELS'],
     });
     const { key } = createApiKey(ctx.db, { userId: manager.id });
+    giveAgentOwnerRoles(ctx.db, manager.id);
     const res = await ctx.app.request(
       `/api/teams/${team.team.id}/roles/${role.id}`,
       json(
@@ -238,6 +243,7 @@ describe('deleteRole', () => {
 
   it('never deletes @everyone, and respects anti-escalation', async () => {
     const { key } = createApiKey(ctx.db, { userId: owner.id });
+    giveAgentOwnerRoles(ctx.db, owner.id);
     const res = await ctx.app.request(`/api/teams/${team.team.id}/roles/${team.everyoneRole.id}`, {
       method: 'DELETE',
       headers: bearer(key),
@@ -253,6 +259,7 @@ describe('reorderRoles', () => {
   it('reorders every role (except @everyone) and audits the new order', async () => {
     const low = createRole(ctx.deps, actorOf(owner), team.team.id, { name: 'Low' });
     const { key } = createApiKey(ctx.db, { userId: owner.id });
+    giveAgentOwnerRoles(ctx.db, owner.id);
     const res = await ctx.app.request(
       `/api/teams/${team.team.id}/roles/order`,
       json('PUT', { roleIds: [low.id, team.adminRole.id, managerRole.id] }, bearer(key)),

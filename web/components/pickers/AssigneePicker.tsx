@@ -1,8 +1,10 @@
 import { UserPlusIcon, UsersIcon } from 'lucide-react';
 import type { RoleSummary, UserSummary } from '@shared/schemas/core';
+import { AgentBadge } from '@web/components/common/AgentBadge';
 import { AvatarStack, UserAvatar } from '@web/components/common/UserAvatar';
 import { Button } from '@web/components/ui/button';
 import { CommandGroup, CommandItem } from '@web/components/ui/command';
+import { isAgentUser } from '@web/lib/agentMembers';
 import { CheckBox, PickerShell, type PickerControlProps } from './PickerShell';
 import { useOpenState } from './useOpenState';
 
@@ -101,6 +103,7 @@ export function AssigneePicker({
                     <span className="text-muted-foreground"> (you)</span>
                   ) : null}
                 </span>
+                {isAgentUser(user) ? <AgentBadge /> : null}
                 <span className="ml-auto truncate text-xs text-muted-foreground">
                   @{user.username}
                 </span>

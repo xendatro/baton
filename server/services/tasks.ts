@@ -26,6 +26,7 @@ import {
   canEditContent,
   canRestoreContent,
   hasPermission,
+  isOwnContent,
   requireCanDeleteContent,
   requireCanEditContent,
   requireMember,
@@ -106,7 +107,7 @@ export function requireTask(db: DbExecutor, actor: Actor, taskId: string): TaskA
 
 /** May the member change the task's workflow fields (status, assignees, …) and claim it? */
 export function canUpdateTask(membership: Membership, task: Pick<TaskRow, 'authorId'>): boolean {
-  return task.authorId === membership.userId || hasPermission(membership, 'UPDATE_TASKS');
+  return isOwnContent(membership, task.authorId) || hasPermission(membership, 'UPDATE_TASKS');
 }
 
 export function requireCanUpdateTask(

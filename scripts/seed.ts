@@ -27,6 +27,7 @@ import { loadDotEnv, parseEnv } from '../server/env';
 import { newId } from '../server/lib/ids';
 import { dataPaths, ensureDataDirs } from '../server/lib/paths';
 import { createLogger } from '../server/logger';
+import { ensureAgent } from '../server/services/agents';
 import { createApiKey } from '../server/services/apiKeys';
 import { acceptInvite, createInvite } from '../server/services/invites';
 import { createLabel } from '../server/services/labels';
@@ -228,6 +229,8 @@ async function seed(deps: ReturnType<typeof createAppDeps>): Promise<void> {
         })
         .run();
     });
+    // Every person has an agent member (agents A): it joins their teams along with them.
+    ensureAgent(db, id);
     users.set(username, { userId: id, source: 'web', key: null });
   }
   const actor = (username: Username): Actor => {

@@ -17,6 +17,7 @@ import {
   createTeam,
   createTestContext,
   createUser,
+  giveAgentOwnerRoles,
   json,
   type CreatedProject,
   type CreatedTeam,
@@ -182,7 +183,10 @@ describe('claim_next_task', () => {
     newTask('Work');
     setEveryone(EVERYONE_DEFAULTS.filter((p) => p !== 'UPDATE_TASKS'));
     expect(() => next(web(mia))).toThrow(/permission to claim/);
+    // The owner can (owners have every permission); through a key, so can his agent once it has
+    // the owner's Admin role (agents start with @everyone only).
     const key = createApiKey(ctx.db, { userId: owner.id }).key;
+    giveAgentOwnerRoles(ctx.db, owner.id);
     const res = await ctx.app.request(
       `/api/projects/${project.project.id}/claim-next`,
       json('POST', {}, bearer(key)),

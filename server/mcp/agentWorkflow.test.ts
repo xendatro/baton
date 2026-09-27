@@ -105,11 +105,18 @@ describe('MCP agent workflow', () => {
 
     // Orientation.
     const me = await call<{
-      user: { username: string };
+      user: { username: string; kind: string; mentionHandle: string };
+      owner: { username: string } | null;
       via: { keyName: string } | null;
       teams: Array<{ slug: string; projects: Array<{ key: string; ref: string }> }>;
     }>(agent, 'whoami');
-    expect(me.user.username).toBe('ethan');
+    // The key acts as Ethan's agent member (agents A).
+    expect(me.user).toMatchObject({
+      username: 'ethan-ai',
+      kind: 'agent',
+      mentionHandle: '@ethan-ai',
+    });
+    expect(me.owner?.username).toBe('ethan');
     expect(me.via?.keyName).toBe('Claude on laptop');
     expect(me.teams[0]?.projects.map((project) => project.ref)).toEqual(['northwind/WEB']);
 
@@ -155,7 +162,7 @@ describe('MCP agent workflow', () => {
     expect(claimed.task?.ref).toBe('northwind/WEB-1');
     expect(claimed.task?.status.name).toBe('In Progress');
     expect(claimed.task?.claim).toMatchObject({
-      user: { username: 'ethan' },
+      user: { username: 'ethan-ai' },
       via: { keyName: 'Claude on laptop' },
     });
     // Boards learn about the claim live.
@@ -185,22 +192,17 @@ describe('MCP agent workflow', () => {
       linkedTasks: Array<{ ref: string; kind: string; status: { category: string } }>;
     }>(agent, 'get_issue', { issue: 'WEB#1' });
     expect(resolved.resolved).toBe(true);
-    expect(resolved.resolvedBy?.username).toBe('ethan');
+    expect(resolved.resolvedBy?.username).toBe('ethan-ai');
     expect(resolved.linkedTasks).toMatchObject([
       { ref: 'northwind/WEB-1', kind: 'fixes', status: { category: 'done' } },
     ]);
 
-    // The issue's author is told, with the key that did it.
-    const inbox = await call<{
-      items: Array<{ type: string; title: string; viaKeyName: string | null; url: string }>;
-    }>(reporter, 'list_notifications', { unreadOnly: true });
-    expect(inbox.items).toContainEqual(
-      expect.objectContaining({
-        type: 'issue_resolved',
-        title: 'WEB#1: Checkout button does nothing on Safari',
-        viaKeyName: 'Claude on laptop',
-      }),
-    );
+    // The issue's author is Maya's agent, which has no inbox (agents hear through their jobs).
+    const inbox = await call<{ items: unknown[]; note?: string }>(reporter, 'list_notifications', {
+      unreadOnly: true,
+    });
+    expect(inbox.items).toEqual([]);
+    expect(inbox.note).toMatch(/wait_for_mentions/);
 
     // Every step of the task's history names the key.
     const history = await call<{ items: ActivityItem[] }>(agent, 'get_activity', { item: 'WEB-1' });

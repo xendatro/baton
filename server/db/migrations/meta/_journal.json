@@ -50,6 +50,13 @@
       "when": 1790472696861,
       "tag": "0006_agent_members",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1790473178616,
+      "tag": "0007_agent_pause_notifications",
+      "breakpoints": true
     }
   ]
 }

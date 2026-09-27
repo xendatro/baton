@@ -242,6 +242,20 @@ export function hasPermission(effective: readonly Permission[], permission: Perm
   return effective.includes('ADMINISTRATOR') || effective.includes(permission);
 }
 
+/**
+ * An agent member's effective permissions in a scope (team or project): its own, intersected with
+ * its owner's in the same scope (docs/design/agents-and-pipelines.md §1), so an agent can never do
+ * more than the person it works for. Both inputs are effective lists (`effectivePermissions`);
+ * `ADMINISTRATOR` survives only when both have it.
+ */
+export function capAgentPermissions(
+  ownerPermissions: readonly Permission[],
+  agentPermissions: readonly Permission[],
+): Permission[] {
+  const owner = new Set(ownerPermissions);
+  return PERMISSIONS.filter((p) => owner.has(p) && agentPermissions.includes(p));
+}
+
 export interface ActorPermissions {
   isOwner: boolean;
   permissions: readonly Permission[];

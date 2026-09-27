@@ -11,11 +11,13 @@ import * as s from '../db/schema';
 import { errors } from '../lib/errors';
 import { generateApiKey, hashApiKey, isApiKeyFormat } from '../lib/security';
 import { recordActivity } from './activity';
+import { ensureAgent } from './agents';
 
 /**
  * Personal API keys (SPEC §1.2): `bat_` + 40 base62 characters, shown once; only the SHA-256
- * hash is stored. Agents and scripts act as the key's owner "via" the key. Creating and revoking
- * keys is web-only (not exposed over MCP) and lands in the owner's security log.
+ * hash is stored. Keys belong to a person, but a request with one acts as that person's agent
+ * member (`ethan-ai`, agents A) "via" the key. Creating, listing and revoking keys is web-only
+ * (not exposed over MCP) and lands in the owner's security log.
  */
 
 type ApiKeyRow = typeof s.apiKey.$inferSelect;
@@ -125,13 +127,17 @@ export function revokeApiKey(deps: AppDeps, actor: Actor, id: string): { ok: tru
 }
 
 export interface AuthenticatedKey {
+  /** The agent member the key acts as. */
   userId: string;
+  /** The person who owns the key (and the agent). */
+  ownerId: string;
   key: ActorKey;
 }
 
 /**
  * Authenticates a presented `bat_…` key. Unknown, malformed, revoked and expired keys all return
- * null (the caller answers 401). `lastUsedAt` is refreshed at most once a minute.
+ * null (the caller answers 401). `lastUsedAt` is refreshed at most once a minute. The request
+ * acts as the owner's agent member, created on the spot if it is missing.
  */
 export function authenticateApiKey(
   deps: Pick<AppDeps, 'db'>,
@@ -164,7 +170,7 @@ export function authenticateApiKey(
   }
   const key: ActorKey = { id: row.id, name: row.name };
   if (row.agentName) key.agentName = row.agentName;
-  return { userId: row.userId, key };
+  return { userId: ensureAgent(deps.db, row.userId), ownerId: row.userId, key };
 }
 
 /**

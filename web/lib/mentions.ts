@@ -1,8 +1,10 @@
 import { LIMITS } from '@shared/constants';
+import { AGENT_USERNAME_SUFFIX } from '@shared/principals';
 
 /**
  * Mention syntax in markdown (SPEC §1.13): `@username` for people, `@&role-slug` for roles and
- * `@everyone` for the whole team. Shared by the editor (serialization) and MarkdownView
+ * `@everyone` for the whole team. Agent members are users too: `@ethan-ai` (a username plus the
+ * `-ai` suffix, shared/principals.ts) is one mention. Shared by the editor (serialization) and MarkdownView
  * (rendering) so both agree on what is a mention.
  */
 
@@ -19,7 +21,7 @@ export interface MentionToken {
 /** Slug of the built-in @everyone role, written as `@everyone` rather than `@&everyone`. */
 export const EVERYONE_SLUG = 'everyone';
 
-const USERNAME = `[a-z0-9_]{${LIMITS.username.min},${LIMITS.username.max}}`;
+const USERNAME = `[a-z0-9_]{${LIMITS.username.min},${LIMITS.username.max}}(?:${AGENT_USERNAME_SUFFIX})?`;
 const ROLE_SLUG = '[a-z0-9]+(?:-[a-z0-9]+)*';
 /** A mention must not run into more name characters (a name longer than the limit). */
 const END = '(?![a-z0-9_])';

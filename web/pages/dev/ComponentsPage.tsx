@@ -176,6 +176,28 @@ function Gallery() {
           <UserName user={null} />
           <UserName user={null} source="system" />
         </Row>
+        <Row label="Agent members">
+          <UserName
+            user={fixtures.ethanAi}
+            via={{ keyId: 'k', keyName: 'MSI', agentName: 'Claude' }}
+            avatar="md"
+          />
+          <UserName
+            user={fixtures.adaAi}
+            via={{ keyId: 'k2', keyName: 'Laptop', agentName: 'Codex' }}
+            avatar="md"
+          />
+          <UserName user={fixtures.adaAi} avatar="md" />
+          <UserAvatar user={fixtures.ethanAi} size="xl" />
+          <AvatarStack users={[fixtures.ethan, fixtures.ethanAi, fixtures.adaAi]} />
+        </Row>
+        <Row label="Before agent members (BAT-6)">
+          <UserName
+            user={fixtures.ethan}
+            via={{ keyId: 'k', keyName: 'MSI', agentName: 'Claude' }}
+            avatar="md"
+          />
+        </Row>
         <Row label="RoleChip">
           {fixtures.roles.map((role) => (
             <RoleChip key={role.id} role={role} mention />
@@ -223,6 +245,12 @@ function Gallery() {
             via={null}
             claimedAt={minutesAgo(90)}
             expiresAt={inMinutes(30)}
+          />
+          <ClaimBadge
+            holder={fixtures.ethanAi}
+            via={{ keyId: 'k3', keyName: 'MSI', agentName: 'Claude' }}
+            claimedAt={minutesAgo(2)}
+            expiresAt={inMinutes(28)}
           />
           <ClaimBadge
             holder={fixtures.grace}

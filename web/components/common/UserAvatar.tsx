@@ -1,6 +1,8 @@
 import { Avatar, AvatarFallback, AvatarImage } from '@web/components/ui/avatar';
+import { agentOwnerLabel, isAgentUser } from '@web/lib/agentMembers';
 import { hueFromString, initials } from '@web/lib/format';
 import { cn } from '@web/lib/utils';
+import { AgentMark } from './AgentMark';
 import { AVATAR_SIZE_CLASSES } from './avatarSizes';
 
 export interface AvatarUser {
@@ -8,6 +10,9 @@ export interface AvatarUser {
   name: string;
   username?: string | null;
   image?: string | null;
+  /** `'agent'` for agent members (shown as an agent mark with their owner's picture). */
+  kind?: 'agent' | 'human' | null;
+  agentOwner?: AvatarUser | null;
 }
 
 /** Initials text per size (the fallback has its own text size, so it is set there). */
@@ -26,11 +31,41 @@ export interface UserAvatarProps {
   user: AvatarUser | null;
   size?: AvatarSize;
   className?: string;
+  /** For agent members: the harness whose logo to show ("Claude"); generic mark when unknown. */
+  agentName?: string | null;
+  /** Tooltip (default: the name, or "Ethan’s agent" for agents). */
+  title?: string;
 }
 
-/** Profile picture, or initials on a color derived from the user id. */
-export function UserAvatar({ user, size = 'md', className }: UserAvatarProps) {
-  const label = user ? user.name || user.username || 'User' : 'Deleted user';
+/**
+ * Profile picture, or initials on a color derived from the user id. Agent members show the
+ * harness's mark (`agentName`, or the generic agent mark) with their owner's picture as a badge.
+ */
+export function UserAvatar({ user, size = 'md', className, agentName, title }: UserAvatarProps) {
+  if (user && isAgentUser(user)) {
+    return (
+      <span
+        className={cn(
+          'relative inline-flex shrink-0 rounded-full',
+          AVATAR_SIZE_CLASSES[size],
+          className,
+        )}
+        title={title ?? `${user.name} (${agentOwnerLabel(user)})`}
+        aria-hidden="true"
+        data-agent-member=""
+      >
+        <AgentMark agentName={agentName ?? ''} className="size-full" />
+        {user.agentOwner ? (
+          <UserAvatar
+            user={user.agentOwner}
+            size="xs"
+            className="absolute -right-0.5 -bottom-0.5 size-[55%] ring-2 ring-card"
+          />
+        ) : null}
+      </span>
+    );
+  }
+  const label = title ?? (user ? user.name || user.username || 'User' : 'Deleted user');
   const hue = user ? hueFromString(user.id) : 0;
   return (
     <Avatar className={cn(AVATAR_SIZE_CLASSES[size], className)} aria-hidden="true" title={label}>

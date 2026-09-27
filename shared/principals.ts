@@ -41,3 +41,23 @@ export const AGENT_USERNAME_SUFFIX = '-ai';
 export function agentUsername(ownerUsername: string): string {
   return `${ownerUsername}${AGENT_USERNAME_SUFFIX}`;
 }
+
+/** True for agent usernames (`ethan-ai`); people can never pick one. */
+export function isAgentUsername(username: string): boolean {
+  return username.toLowerCase().endsWith(AGENT_USERNAME_SUFFIX);
+}
+
+/** Display name of an agent member: `<Owner name> AI` ("Ethan AI"). */
+export function agentDisplayName(ownerName: string): string {
+  return `${ownerName} AI`;
+}
+
+/**
+ * Agents' email domain: `<agent id>@agents.baton.invalid`. `.invalid` never resolves (RFC 2606),
+ * and the server never mails it; nobody can sign up with it.
+ */
+export const AGENT_EMAIL_DOMAIN = 'agents.baton.invalid';
+
+export function isAgentEmail(email: string): boolean {
+  return email.trim().toLowerCase().endsWith(`@${AGENT_EMAIL_DOMAIN}`);
+}

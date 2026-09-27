@@ -10,6 +10,7 @@ import {
   type UpdateProjectInput,
 } from '@shared/schemas/projects';
 import { FormField } from '@web/components/auth/FormField';
+import { AgentsPauseSetting } from '@web/components/common/AgentsPauseSetting';
 import { ConfirmDialog } from '@web/components/common/ConfirmDialog';
 import { EntityIcon } from '@web/components/common/EntityIcon';
 import { ErrorState } from '@web/components/common/ErrorState';
@@ -81,6 +82,7 @@ function GeneralSettings({ team, project }: { team: MeTeam; project: Project }) 
   const access = useTeamAccess(team.id);
   const canEdit = access.has('MANAGE_PROJECTS');
   const update = useUpdateProject(project.id);
+  const pauseAgents = useUpdateProject(project.id);
   const [baseline, setBaseline] = useState(project);
   const [values, setValues] = useState<Values>(() => valuesOf(project));
   const [errors, setErrors] = useState<Partial<Record<Field, string>>>({});
@@ -273,6 +275,34 @@ function GeneralSettings({ team, project }: { team: MeTeam; project: Project }) 
           ) : null}
         </SettingsCard>
       </form>
+
+      <section aria-labelledby="project-agents" className="mt-8">
+        <h3 id="project-agents" className="mb-2 text-sm font-semibold">
+          Agents
+        </h3>
+        <SettingsCard className="p-4 sm:p-6">
+          <AgentsPauseSetting
+            scope="project"
+            pausedAt={project.agentsPausedAt}
+            canManage={canEdit}
+            permissionLabel="Manage projects"
+            pending={pauseAgents.isPending}
+            onChange={(paused) =>
+              pauseAgents.mutate(
+                { agentsPaused: paused },
+                {
+                  onSuccess: () =>
+                    toast.success(
+                      paused
+                        ? `Paused all agents in ${project.name}`
+                        : `Agents can write in ${project.name} again`,
+                    ),
+                },
+              )
+            }
+          />
+        </SettingsCard>
+      </section>
 
       {canEdit ? <DangerZone team={team} project={baseline} /> : null}
       <UnsavedChangesGuard when={dirty && !update.isPending} what="project settings" />

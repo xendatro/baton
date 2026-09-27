@@ -1,6 +1,7 @@
 import { and, eq, inArray, isNull } from 'drizzle-orm';
 import {
   canManageRoleWith,
+  capAgentPermissions,
   canModerateMember as canModerateMemberWith,
   effectivePermissions,
   hasPermission as permissionsInclude,
@@ -24,6 +25,11 @@ export interface Membership {
   roleIds: string[];
   /** Effective permissions: the full list for the owner and administrators. */
   permissions: Permission[];
+  /**
+   * Agents A: the member and their counterpart — a person's agent member, or an agent's owner.
+   * Content either of them wrote counts as the member's own (`isOwnContent`). Unset: just `userId`.
+   */
+  selfIds?: readonly string[];
 }
 
 /** The member's permissions as the shared anti-escalation helpers expect them. */
@@ -33,9 +39,75 @@ function subject(membership: Membership) {
 
 /**
  * Memberships of `userId` in non-deleted teams, optionally limited to `teamIds`.
- * One query for memberships and one for roles, whatever the number of teams.
+ * One query for memberships and one for roles, whatever the number of teams. An agent member's
+ * permissions are capped by its owner's (`applyAgentRules`).
  */
 export function listMemberships(
+  db: DbExecutor,
+  userId: string,
+  teamIds?: readonly string[],
+): Membership[] {
+  return applyAgentRules(db, userId, listRoleMemberships(db, userId, teamIds));
+}
+
+/**
+ * Agents A (docs/design/agents-and-pipelines.md §1): an agent member's effective permissions in
+ * a team are its own intersected with its owner's there (`capAgentPermissions`), and it is never
+ * the owner. An agent has no access to a team its owner isn't in. A person and their agent count
+ * as one author (`selfIds`).
+ */
+function applyAgentRules(db: DbExecutor, userId: string, memberships: Membership[]): Membership[] {
+  if (memberships.length === 0) return memberships;
+  const user = db
+    .select({ kind: s.user.kind, ownerId: s.user.agentOwnerId })
+    .from(s.user)
+    .where(eq(s.user.id, userId))
+    .get();
+  if (user?.kind !== 'agent') {
+    const agent = db
+      .select({ id: s.user.id })
+      .from(s.user)
+      .where(eq(s.user.agentOwnerId, userId))
+      .get();
+    if (!agent) return memberships;
+    const selfIds = [userId, agent.id];
+    return memberships.map((membership) => ({ ...membership, selfIds }));
+  }
+  const selfIds = user.ownerId ? [userId, user.ownerId] : [userId];
+  const owners = new Map(
+    user.ownerId
+      ? listRoleMemberships(
+          db,
+          user.ownerId,
+          memberships.map((membership) => membership.teamId),
+        ).map((membership) => [membership.teamId, membership])
+      : [],
+  );
+  return memberships.flatMap((membership) => {
+    const owner = owners.get(membership.teamId);
+    if (!owner) return [];
+    return [
+      {
+        ...membership,
+        isOwner: false,
+        permissions: capAgentPermissions(owner.permissions, membership.permissions),
+        selfIds,
+      },
+    ];
+  });
+}
+
+/**
+ * Did the member write it? Content by a person's agent member counts as theirs and the other
+ * way round (agents A), so people can fix or remove what their agent wrote and vice versa.
+ */
+export function isOwnContent(membership: Membership, authorId: string | null): boolean {
+  if (authorId === null) return false;
+  return authorId === membership.userId || (membership.selfIds?.includes(authorId) ?? false);
+}
+
+/** Memberships from team roles alone (no agent cap). */
+function listRoleMemberships(
   db: DbExecutor,
   userId: string,
   teamIds?: readonly string[],
@@ -183,12 +255,12 @@ export function canAssignRole(
 
 /** Authors can always edit their own content; others need `EDIT_ANY_CONTENT`. */
 export function canEditContent(membership: Membership, authorId: string | null): boolean {
-  return authorId === membership.userId || hasPermission(membership, 'EDIT_ANY_CONTENT');
+  return isOwnContent(membership, authorId) || hasPermission(membership, 'EDIT_ANY_CONTENT');
 }
 
 /** Authors can always delete their own content; others need `DELETE_ANY_CONTENT`. */
 export function canDeleteContent(membership: Membership, authorId: string | null): boolean {
-  return authorId === membership.userId || hasPermission(membership, 'DELETE_ANY_CONTENT');
+  return isOwnContent(membership, authorId) || hasPermission(membership, 'DELETE_ANY_CONTENT');
 }
 
 export function requireCanEditContent(membership: Membership, authorId: string | null): void {
@@ -205,7 +277,7 @@ export function requireCanDeleteContent(membership: Membership, authorId: string
 
 /** Authors can always restore their own items; others need `MANAGE_TRASH`. */
 export function canRestoreContent(membership: Membership, authorId: string | null): boolean {
-  return authorId === membership.userId || hasPermission(membership, 'MANAGE_TRASH');
+  return isOwnContent(membership, authorId) || hasPermission(membership, 'MANAGE_TRASH');
 }
 
 /** User ids of every member of a team. */

@@ -12,11 +12,13 @@ import { hashApiKey } from '../lib/security';
 import { authenticateApiKey } from '../services/apiKeys';
 import {
   bearer,
+  createAgent,
   createApiKey,
   createProject,
   createTeam,
   createTestContext,
   createUser,
+  giveAgentOwnerRoles,
   json,
   signIn,
   web,
@@ -47,12 +49,50 @@ describe('actor resolution', () => {
     expect(meResponseSchema.parse(await res.json()).user.id).toBe(user.id);
   });
 
-  it('authenticates a bearer key as an api actor', async () => {
-    const user = createUser(ctx.db);
+  it('authenticates a bearer key as an api actor: the key owner’s agent member (agents A)', async () => {
+    const user = createUser(ctx.db, { username: 'ethan', name: 'Ethan' });
     const { key } = createApiKey(ctx.db, { userId: user.id });
+    const agent = createAgent(ctx.db, user.id);
     const res = await ctx.app.request('/api/me', { headers: bearer(key) });
     expect(res.status).toBe(200);
-    expect(meResponseSchema.parse(await res.json()).user.id).toBe(user.id);
+    const me = meResponseSchema.parse(await res.json()).user;
+    expect(me).toMatchObject({ id: agent.id, username: 'ethan-ai', name: 'Ethan AI' });
+    expect(authenticateApiKey(ctx.deps, key)).toMatchObject({ userId: agent.id, ownerId: user.id });
+  });
+
+  it('creates the agent of a key owner who has none yet', () => {
+    const user = createUser(ctx.db, { username: 'newbie' });
+    const { key } = createApiKey(ctx.db, { userId: user.id });
+    // An account from before agents existed (or a repaired one): the agent row is missing.
+    ctx.db.orm.delete(s.user).where(eq(s.user.agentOwnerId, user.id)).run();
+    const authenticated = authenticateApiKey(ctx.deps, key);
+    const agent = ctx.db.orm.select().from(s.user).where(eq(s.user.agentOwnerId, user.id)).get();
+    expect(agent).toMatchObject({ kind: 'agent', username: 'newbie-ai' });
+    expect(authenticated?.userId).toBe(agent?.id);
+  });
+
+  it('gates a key on its owner’s verification, and refuses a paused agent’s writes (423)', async () => {
+    const user = createUser(ctx.db);
+    const { key } = createApiKey(ctx.db, { userId: user.id });
+    ctx.db.orm
+      .update(s.user)
+      .set({ agentPausedAt: new Date() })
+      .where(eq(s.user.id, user.id))
+      .run();
+    expect((await ctx.app.request('/api/me', { headers: bearer(key) })).status).toBe(200);
+    const write = await ctx.app.request(
+      '/api/notifications/read',
+      json('POST', { all: true }, bearer(key)),
+    );
+    expect(write.status).toBe(423);
+    expect(await errorCode(write)).toBe('agents_paused');
+    // The person themself is never paused.
+    const cookie = await signIn(ctx, user);
+    const own = await ctx.app.request(
+      '/api/notifications/read',
+      json('POST', { all: true }, web(ctx, cookie)),
+    );
+    expect(own.status).toBe(200);
   });
 
   it('rejects anonymous, unknown, malformed, revoked and expired credentials with 401', async () => {
@@ -351,6 +391,7 @@ describe('request bodies (SEC-01)', () => {
     const team = createTeam(ctx.db, { ownerId: owner.id });
     const { project } = createProject(ctx.db, { teamId: team.team.id });
     const { key } = createApiKey(ctx.db, { userId: owner.id });
+    giveAgentOwnerRoles(ctx.db, owner.id);
     // Every character is JSON-escaped to 6 bytes: the worst case.
     const readme = '\u0001'.repeat(LIMITS.readme.max);
     const res = await ctx.app.request(

@@ -1,9 +1,11 @@
 import { LockIcon } from 'lucide-react';
 import { useState, type ReactNode } from 'react';
 import type { Member, Role } from '@shared/schemas/teams';
+import { AgentBadge } from '@web/components/common/AgentBadge';
 import { UserAvatar } from '@web/components/common/UserAvatar';
 import { CheckBox, PickerShell } from '@web/components/pickers/PickerShell';
 import { CommandGroup, CommandItem } from '@web/components/ui/command';
+import { agentOwnerLabel, isAgentUser } from '@web/lib/agentMembers';
 import { roleAssignRefusal, type Viewer } from '@web/pages/teams/access';
 import type { ActorPermissions } from '@shared/permissions';
 
@@ -118,9 +120,15 @@ export function MemberPicker({ members, refusalFor, onPick, children }: MemberPi
             >
               <UserAvatar user={member.user} size="md" />
               <span className="min-w-0 flex-1">
-                <span className="block truncate">{member.user.name}</span>
+                <span className="flex min-w-0 items-center gap-1.5">
+                  <span className="truncate">{member.user.name}</span>
+                  {isAgentUser(member.user) ? <AgentBadge /> : null}
+                </span>
                 <span className="block truncate text-xs text-muted-foreground">
-                  {refusal ?? `@${member.user.username}`}
+                  {refusal ??
+                    (isAgentUser(member.user)
+                      ? `@${member.user.username} · ${agentOwnerLabel(member.user)}`
+                      : `@${member.user.username}`)}
                 </span>
               </span>
             </CommandItem>

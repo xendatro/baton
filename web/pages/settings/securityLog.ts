@@ -1,5 +1,6 @@
 import type { ActivityEntry } from '@shared/schemas/core';
 import { describeUserAgent } from '@shared/userAgent';
+import { isAgentUser } from '@web/lib/agentMembers';
 import { pluralize } from '@web/lib/format';
 
 /**
@@ -8,7 +9,7 @@ import { pluralize } from '@web/lib/format';
  */
 
 export type SecurityEventKind =
-  'sign-in' | 'account' | 'password' | 'connection' | 'api-key' | 'session' | 'profile';
+  'sign-in' | 'account' | 'password' | 'connection' | 'api-key' | 'session' | 'profile' | 'agent';
 
 export interface SecurityEventText {
   kind: SecurityEventKind;
@@ -64,6 +65,30 @@ function profileChanges(changes: ActivityEntry['changes']): string {
   return `Changed ${parts.length > 0 ? `${parts.join(', ')} and ${last}` : last}`;
 }
 
+const AGENT_NOTIFICATION_LABELS: Record<string, string> = {
+  all: 'everything',
+  needs_me: 'only what needs you',
+  none: 'nothing',
+};
+
+/** "Paused your agent", "Changed agent notifications to only what needs you", or both. */
+function agentSettingsChanges(changes: ActivityEntry['changes']): string {
+  const parts: string[] = [];
+  const paused = changes.agentPaused;
+  if (paused && paused.to === true) parts.push('Paused your agent');
+  else if (paused && paused.to === false) parts.push('Resumed your agent');
+  const level = changes.agentNotifications;
+  if (level) {
+    const to = text(level.to);
+    const label = to ? AGENT_NOTIFICATION_LABELS[to] : undefined;
+    const sentence = label
+      ? `changed agent notifications to ${label}`
+      : 'changed agent notifications';
+    parts.push(parts.length > 0 ? sentence : sentence[0]!.toUpperCase() + sentence.slice(1));
+  }
+  return parts.length > 0 ? parts.join(' and ') : 'Changed your agent’s settings';
+}
+
 function revokedSuffix(meta: Record<string, unknown>): string {
   const revoked = count(meta.revokedSessions);
   return revoked > 0 ? ` and signed out ${pluralize(revoked, 'other session')}` : '';
@@ -77,7 +102,9 @@ function context(entry: ActivityEntry): string[] {
   if (agent) details.push(describeUserAgent(agent));
   const ip = text(meta.ip);
   if (ip) details.push(ip);
-  if (entry.actor.via) details.push(`via ${entry.actor.via.keyName}`);
+  const { user, via } = entry.actor;
+  // An agent member acting through a key (agents A): "by Ada AI via Claude on laptop".
+  if (via) details.push(`${isAgentUser(user) ? `by ${user.name} ` : ''}via ${via.keyName}`);
   else if (entry.actor.source === 'mcp' || entry.actor.source === 'api') {
     details.push(entry.actor.source === 'mcp' ? 'via MCP' : 'via the API');
   }
@@ -144,6 +171,8 @@ export function describeSecurityEvent(entry: ActivityEntry): SecurityEventText {
       return { kind: 'profile', title: 'Changed your profile picture', details };
     case 'user.avatar_removed':
       return { kind: 'profile', title: 'Removed your profile picture', details };
+    case 'user.agent_settings_changed':
+      return { kind: 'agent', title: agentSettingsChanges(entry.changes), details };
     default:
       return { kind: 'account', title: entry.action, details };
   }

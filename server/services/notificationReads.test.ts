@@ -5,6 +5,7 @@ import { boardResponseSchema, taskListResponseSchema } from '@shared/schemas/tas
 import type { Actor } from '../context';
 import {
   addMember,
+  agentActor,
   bearer,
   createApiKey,
   createProject,
@@ -12,6 +13,8 @@ import {
   createTestContext,
   createUser,
   json,
+  signIn,
+  web as sessionHeaders,
   type CreatedProject,
   type CreatedTeam,
   type TestContext,
@@ -33,12 +36,13 @@ let leo: UserRow;
 let maya: UserRow;
 let team: CreatedTeam;
 let project: CreatedProject;
-let mayaKey: string;
+/** Maya's web session: her inbox is her own (her keys act as her agent, which has none). */
+let mayaSession: Record<string, string>;
 let events: LiveEvent[];
 
 const web = (user: { id: string }): Actor => ({ userId: user.id, source: 'web', key: null });
 
-beforeEach(() => {
+beforeEach(async () => {
   ctx = createTestContext();
   const owner = createUser(ctx.db, { username: 'owner' });
   leo = createUser(ctx.db, { username: 'leo' });
@@ -47,15 +51,15 @@ beforeEach(() => {
   addMember(ctx.db, { teamId: team.team.id, userId: leo.id, roleIds: [team.adminRole.id] });
   addMember(ctx.db, { teamId: team.team.id, userId: maya.id });
   project = createProject(ctx.db, { teamId: team.team.id, key: 'API', createdById: owner.id });
-  mayaKey = createApiKey(ctx.db, { userId: maya.id }).key;
+  mayaSession = sessionHeaders(ctx, await signIn(ctx, maya));
   events = [];
   ctx.deps.events.subscribe((event) => events.push(event));
 });
 
 afterEach(() => ctx.close());
 
-function markItem(item: { type: 'task' | 'issue'; id: string }, key = mayaKey) {
-  return ctx.app.request('/api/notifications/read', json('POST', { item }, bearer(key)));
+function markItem(item: { type: 'task' | 'issue'; id: string }, headers = mayaSession) {
+  return ctx.app.request('/api/notifications/read', json('POST', { item }, headers));
 }
 
 /** A task assigned to maya (1 notification) with a reply mentioning her (1 more). */
@@ -135,7 +139,7 @@ describe('mark read by item (BAT-15)', () => {
   it('accepts exactly one of ids, all and item', async () => {
     const res = await ctx.app.request(
       '/api/notifications/read',
-      json('POST', { all: true, item: { type: 'task', id: 'x' } }, bearer(mayaKey)),
+      json('POST', { all: true, item: { type: 'task', id: 'x' } }, mayaSession),
     );
     expect(res.status).toBe(400);
     const bad = await markItem({ type: 'project' as 'task', id: 'x' });
@@ -156,7 +160,7 @@ describe('mark read by item (BAT-15)', () => {
     events = [];
     const res = await ctx.app.request(
       '/api/notifications/read',
-      json('POST', { all: true }, bearer(mayaKey)),
+      json('POST', { all: true }, mayaSession),
     );
     expect(await res.json()).toEqual({ updated: 3 });
     const reads = events.filter((event) => event.type === 'notification.read');
@@ -185,7 +189,7 @@ describe('mark read by item (BAT-15)', () => {
   it('does not mark anything read when an agent reads the task', () => {
     const { task } = taskWithTwoUnread('Agent reads');
     const { apiKey } = createApiKey(ctx.db, { userId: maya.id, name: 'Claude' });
-    getTask(ctx.deps, { userId: maya.id, source: 'mcp', key: apiKey }, task.id);
+    getTask(ctx.deps, agentActor(ctx.db, maya.id, apiKey), task.id);
     expect(unreadNotificationCount(ctx.deps, web(maya))).toBe(2);
   });
 });
@@ -194,7 +198,7 @@ describe('unread counts on lists (BAT-16)', () => {
   it('counts the viewer’s unread notifications per task on the board and the list', async () => {
     const { task, reply } = taskWithTwoUnread('Counted');
     const quiet = createTask(ctx.deps, web(leo), project.project.id, { title: 'Quiet' });
-    const headers = bearer(mayaKey);
+    const headers = mayaSession;
 
     const board = async () => {
       const res = await ctx.app.request(`/api/projects/${project.project.id}/board`, { headers });
@@ -240,7 +244,7 @@ describe('unread counts on lists (BAT-16)', () => {
     const quiet = createIssue(ctx.deps, web(leo), project.project.id, { title: 'Quiet' });
     const issues = async () => {
       const res = await ctx.app.request(`/api/projects/${project.project.id}/issues`, {
-        headers: bearer(mayaKey),
+        headers: mayaSession,
       });
       const { items } = issueListResponseSchema.parse(await res.json());
       return Object.fromEntries(items.map((item) => [item.id, item.unreadCount]));

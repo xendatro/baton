@@ -1,15 +1,21 @@
 import { hashPassword } from 'better-auth/crypto';
 import { and, eq, sql } from 'drizzle-orm';
 import { DEFAULT_PROJECT_COLOR, DEFAULT_STATUSES, DEFAULT_TEAM_COLOR } from '@shared/constants';
-import { TEAM_ROLE_SEEDS, type Permission } from '@shared/permissions';
+import { ADMIN_ROLE_SEED, TEAM_ROLE_SEEDS, type Permission } from '@shared/permissions';
+import type { Actor, ActorKey } from '../context';
 import type { Database } from '../db';
 import * as s from '../db/schema';
 import { newId } from '../lib/ids';
 import { generateApiKey } from '../lib/security';
+import { ensureAgent, findAgentId } from '../services/agents';
 
 /**
  * Test data factories. They insert rows directly (bypassing services) using the same seeds the
  * services use (TEAM_ROLE_SEEDS, DEFAULT_STATUSES), so tests can set up state in one line.
+ *
+ * Agent members (agents A): `createUser` makes no agent; `createApiKey` (and `createAgent`)
+ * create the owner's agent, which joins the owner's teams, and from then on `createTeam` and
+ * `addMember` add the agent along with its owner, as the services do.
  */
 
 export type UserRow = typeof s.user.$inferSelect;
@@ -101,6 +107,8 @@ export function createTeam(db: Database, options: CreateTeamOptions): CreatedTea
       .returning()
       .get();
     tx.insert(s.teamMember).values({ teamId: team.id, userId: options.ownerId }).run();
+    const agentId = findAgentId(tx, options.ownerId);
+    if (agentId) tx.insert(s.teamMember).values({ teamId: team.id, userId: agentId }).run();
     const [everyoneRole, adminRole] = TEAM_ROLE_SEEDS.map((seed) =>
       tx
         .insert(s.role)
@@ -150,13 +158,23 @@ export function createRole(db: Database, options: CreateRoleOptions): RoleRow {
     .get();
 }
 
-/** Adds `userId` to the team, optionally with roles (`@everyone` is implicit). */
+/**
+ * Adds `userId` to the team, optionally with roles (`@everyone` is implicit). Their agent member
+ * (if created yet) joins too, without roles.
+ */
 export function addMember(
   db: Database,
   options: { teamId: string; userId: string; roleIds?: string[] },
 ): void {
   db.write((tx) => {
     tx.insert(s.teamMember).values({ teamId: options.teamId, userId: options.userId }).run();
+    const agentId = findAgentId(tx, options.userId);
+    if (agentId) {
+      tx.insert(s.teamMember)
+        .values({ teamId: options.teamId, userId: agentId })
+        .onConflictDoNothing()
+        .run();
+    }
     for (const roleId of options.roleIds ?? []) {
       tx.insert(s.memberRole)
         .values({ teamId: options.teamId, userId: options.userId, roleId })
@@ -212,10 +230,103 @@ export interface CreatedApiKey {
   apiKey: ApiKeyRow;
 }
 
+/**
+ * The user's agent member (agents A): created on first use, joining the user's teams. Its row is
+ * what a request with one of the user's API keys acts as.
+ */
+export function createAgent(db: Database, ownerId: string): UserRow {
+  const id = ensureAgent(db, ownerId);
+  const row = db.orm.select().from(s.user).where(eq(s.user.id, id)).get();
+  if (!row) throw new Error('agent not created');
+  return row;
+}
+
+/**
+ * Gives `ownerId`'s agent member (created if needed) the roles its owner has in each of the
+ * owner's teams, plus the Admin role in teams the owner owns, so the owner's API keys act with
+ * the owner's permissions (except owner-only actions: agents never own teams). Agents start with
+ * `@everyone` only, so tests of keys doing privileged things call this after setting up teams.
+ */
+export function giveAgentOwnerRoles(db: Database, ownerId: string): UserRow {
+  const agent = createAgent(db, ownerId);
+  db.write((tx) => {
+    const memberships = tx
+      .select({ teamId: s.teamMember.teamId, teamOwnerId: s.team.ownerId })
+      .from(s.teamMember)
+      .innerJoin(s.team, eq(s.team.id, s.teamMember.teamId))
+      .where(eq(s.teamMember.userId, ownerId))
+      .all();
+    for (const { teamId, teamOwnerId } of memberships) {
+      tx.insert(s.teamMember).values({ teamId, userId: agent.id }).onConflictDoNothing().run();
+      const roleIds = tx
+        .select({ roleId: s.memberRole.roleId })
+        .from(s.memberRole)
+        .where(and(eq(s.memberRole.teamId, teamId), eq(s.memberRole.userId, ownerId)))
+        .all()
+        .map((row) => row.roleId);
+      if (teamOwnerId === ownerId) {
+        const admin = tx
+          .select({ id: s.role.id })
+          .from(s.role)
+          .where(and(eq(s.role.teamId, teamId), eq(s.role.slug, ADMIN_ROLE_SEED.slug)))
+          .get();
+        if (admin) roleIds.push(admin.id);
+      }
+      for (const roleId of roleIds) {
+        tx.insert(s.memberRole)
+          .values({ teamId, userId: agent.id, roleId })
+          .onConflictDoNothing()
+          .run();
+      }
+    }
+  });
+  return agent;
+}
+
+/**
+ * Grants `roleId` to `userId` and, when they have one in the team, to their agent member, so the
+ * user's API keys (which act as the agent, capped by the user) get the role's permissions too.
+ */
+export function giveRoleWithAgent(
+  db: Database,
+  options: { teamId: string; userId: string; roleId: string },
+): void {
+  db.write((tx) => {
+    const agentId = findAgentId(tx, options.userId);
+    for (const userId of agentId ? [options.userId, agentId] : [options.userId]) {
+      const member = tx
+        .select({ userId: s.teamMember.userId })
+        .from(s.teamMember)
+        .where(and(eq(s.teamMember.teamId, options.teamId), eq(s.teamMember.userId, userId)))
+        .get();
+      if (!member) continue;
+      tx.insert(s.memberRole)
+        .values({ teamId: options.teamId, userId, roleId: options.roleId })
+        .onConflictDoNothing()
+        .run();
+    }
+  });
+}
+
+/**
+ * What a request with one of `ownerId`'s API keys acts as (agents A): their agent member, via
+ * the key. For tests that call services or register MCP tools directly.
+ */
+export function agentActor(
+  db: Database,
+  ownerId: string,
+  key: ActorKey,
+  source: 'mcp' | 'api' = 'mcp',
+): Actor {
+  return { userId: ensureAgent(db, ownerId), ownerId, source, key };
+}
+
+/** An API key of `userId`; creates their agent member too (which the key acts as). */
 export function createApiKey(
   db: Database,
   options: { userId: string; name?: string; expiresAt?: Date | null; revokedAt?: Date | null },
 ): CreatedApiKey {
+  ensureAgent(db, options.userId);
   const generated = generateApiKey();
   const apiKey = db.orm
     .insert(s.apiKey)

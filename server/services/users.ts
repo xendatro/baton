@@ -1,5 +1,5 @@
 import { and, asc, eq, inArray, isNull, or } from 'drizzle-orm';
-import { LIMITS } from '@shared/constants';
+import { MAX_ANY_USERNAME_LENGTH } from '@shared/constants';
 import type {
   MeResponse,
   MentionablesQuery,
@@ -18,10 +18,53 @@ import { unreadNotificationCount } from './notifications';
 
 type UserRow = typeof s.user.$inferSelect;
 
-export function toUserSummary(
-  user: Pick<UserRow, 'id' | 'username' | 'name' | 'image'>,
-): UserSummary {
+/** The user columns a `UserSummary` needs (agents also name their owner). */
+export const userSummaryColumns = {
+  id: s.user.id,
+  username: s.user.username,
+  name: s.user.name,
+  image: s.user.image,
+  kind: s.user.kind,
+  agentOwnerId: s.user.agentOwnerId,
+};
+
+type SummaryRow = Pick<UserRow, 'id' | 'username' | 'name' | 'image'> &
+  Partial<Pick<UserRow, 'kind' | 'agentOwnerId'>>;
+
+function basicSummary(user: Pick<UserRow, 'id' | 'username' | 'name' | 'image'>): UserSummary {
   return { id: user.id, username: user.username ?? '', name: user.name, image: user.image };
+}
+
+/**
+ * A user's summary. Agent members (agents A) carry `kind: 'agent'` and their owner (pass it, or
+ * use `toUserSummaries`/`getUserSummaries`, which look owners up); people have no `kind`.
+ */
+export function toUserSummary(user: SummaryRow, owner?: SummaryRow | null): UserSummary {
+  const summary = basicSummary(user);
+  if (user.kind !== 'agent') return summary;
+  return { ...summary, kind: 'agent', agentOwner: owner ? basicSummary(owner) : null };
+}
+
+/** Summaries of `rows` (selected with `userSummaryColumns`), agents with their owners. */
+export function toUserSummaries(db: DbExecutor, rows: readonly SummaryRow[]): UserSummary[] {
+  const ownerIds = [
+    ...new Set(
+      rows.flatMap((row) => (row.kind === 'agent' && row.agentOwnerId ? [row.agentOwnerId] : [])),
+    ),
+  ];
+  const owners = new Map(
+    ownerIds.length === 0
+      ? []
+      : db
+          .select(userSummaryColumns)
+          .from(s.user)
+          .where(inArray(s.user.id, ownerIds))
+          .all()
+          .map((row) => [row.id, row]),
+  );
+  return rows.map((row) =>
+    toUserSummary(row, row.agentOwnerId ? (owners.get(row.agentOwnerId) ?? null) : null),
+  );
 }
 
 /** Summaries of the given users, keyed by id (missing ids are deleted accounts). */
@@ -31,12 +74,8 @@ export function getUserSummaries(
 ): Map<string, UserSummary> {
   const unique = [...new Set([...ids].filter((id): id is string => Boolean(id)))];
   if (unique.length === 0) return new Map();
-  const rows = db
-    .select({ id: s.user.id, username: s.user.username, name: s.user.name, image: s.user.image })
-    .from(s.user)
-    .where(inArray(s.user.id, unique))
-    .all();
-  return new Map(rows.map((row) => [row.id, toUserSummary(row)]));
+  const rows = db.select(userSummaryColumns).from(s.user).where(inArray(s.user.id, unique)).all();
+  return new Map(toUserSummaries(db, rows).map((summary) => [summary.id, summary]));
 }
 
 /** Current names of the given API keys, keyed by id ("ethan via Claude on laptop"). */
@@ -145,10 +184,10 @@ export function listMentionables(
   if (query.usernames !== undefined || query.roles !== undefined) {
     return lookupMentionables(orm, teamId, query.usernames ?? [], query.roles ?? []);
   }
-  const q = (query.q ?? '').trim().toLowerCase().slice(0, LIMITS.username.max);
+  const q = (query.q ?? '').trim().toLowerCase().slice(0, MAX_ANY_USERNAME_LENGTH);
 
   const users = orm
-    .select({ id: s.user.id, username: s.user.username, name: s.user.name, image: s.user.image })
+    .select(userSummaryColumns)
     .from(s.teamMember)
     .innerJoin(s.user, eq(s.user.id, s.teamMember.userId))
     .where(
@@ -173,7 +212,7 @@ export function listMentionables(
     .slice(0, MENTIONABLE_LIMIT)
     .map(toRoleSummary);
 
-  return { users: users.map(toUserSummary), roles };
+  return { users: toUserSummaries(orm, users), roles };
 }
 
 function toRoleSummary(role: typeof s.role.$inferSelect): RoleSummary {
@@ -193,12 +232,7 @@ function lookupMentionables(
 ): MentionablesResponse {
   const users = usernames.length
     ? db
-        .select({
-          id: s.user.id,
-          username: s.user.username,
-          name: s.user.name,
-          image: s.user.image,
-        })
+        .select(userSummaryColumns)
         .from(s.teamMember)
         .innerJoin(s.user, eq(s.user.id, s.teamMember.userId))
         .where(and(eq(s.teamMember.teamId, teamId), inArray(s.user.username, [...usernames])))
@@ -214,5 +248,5 @@ function lookupMentionables(
         .sort((a, b) => b.position - a.position)
         .map(toRoleSummary)
     : [];
-  return { users: users.map(toUserSummary), roles };
+  return { users: toUserSummaries(db, users), roles };
 }

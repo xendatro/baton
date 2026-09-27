@@ -28,7 +28,7 @@ import { unreadCountsByItem } from './notifications';
 import { reactionsOf } from './reactions';
 import { statusesOf } from './statuses';
 import { blockersOf, blockingOf, linkedIssuesOf, openBlockerRefs } from './taskLinks';
-import { getUserSummaries, getViaKeys, toUserSummary } from './users';
+import { getUserSummaries, getViaKeys, toUserSummaries, userSummaryColumns } from './users';
 
 /**
  * Read models of the tasks module: task cards (board and list), the full task (task page,
@@ -109,22 +109,21 @@ export function toTaskCards(
     ({ id, name, color }): TaskLabelSummary => ({ id, name, color }),
   );
 
+  const assigneeRows = db
+    .select({ taskId: s.taskAssigneeUser.taskId, ...userSummaryColumns })
+    .from(s.taskAssigneeUser)
+    .innerJoin(s.user, eq(s.user.id, s.taskAssigneeUser.userId))
+    .where(inArray(s.taskAssigneeUser.taskId, ids))
+    .orderBy(asc(sql`lower(${s.user.name})`))
+    .all();
+  const assigneeSummaries = toUserSummaries(db, assigneeRows);
   const users = groupBy(
-    db
-      .select({
-        taskId: s.taskAssigneeUser.taskId,
-        id: s.user.id,
-        username: s.user.username,
-        name: s.user.name,
-        image: s.user.image,
-      })
-      .from(s.taskAssigneeUser)
-      .innerJoin(s.user, eq(s.user.id, s.taskAssigneeUser.userId))
-      .where(inArray(s.taskAssigneeUser.taskId, ids))
-      .orderBy(asc(sql`lower(${s.user.name})`))
-      .all(),
+    assigneeRows.flatMap((row, index) => {
+      const summary = assigneeSummaries[index];
+      return summary ? [{ taskId: row.taskId, summary }] : [];
+    }),
     (row) => row.taskId,
-    (row): UserSummary => toUserSummary(row),
+    (row): UserSummary => row.summary,
   );
 
   const roles = groupBy(

@@ -8,6 +8,7 @@ import {
   PERMISSIONS,
   canManageRoleWith,
   canModerateMember,
+  capAgentPermissions,
   displayRoleColor,
   effectivePermissions,
   hasPermission,
@@ -124,5 +125,25 @@ describe('displayRoleColor', () => {
       ]),
     ).toBe('#22c55e');
     expect(displayRoleColor([{ position: 0, color: null }])).toBeNull();
+  });
+});
+
+describe('capAgentPermissions (agents A)', () => {
+  const admin = effectivePermissions({ isOwner: false, rolePermissions: [['ADMINISTRATOR']] });
+  const everyone = effectivePermissions({ isOwner: false, rolePermissions: [EVERYONE_DEFAULTS] });
+
+  it('keeps only what both the agent and its owner have', () => {
+    expect(capAgentPermissions(admin, everyone)).toEqual(everyone);
+    expect(capAgentPermissions(everyone, admin)).toEqual(everyone);
+    expect(capAgentPermissions(['REPLY', 'CREATE_TASKS'], ['REPLY', 'MANAGE_LABELS'])).toEqual([
+      'REPLY',
+    ]);
+    expect(hasPermission(capAgentPermissions(everyone, admin), 'MANAGE_TEAM')).toBe(false);
+  });
+
+  it('lets ADMINISTRATOR through only when both have it', () => {
+    const owner = effectivePermissions({ isOwner: true, rolePermissions: [] });
+    expect(capAgentPermissions(owner, admin)).toContain('ADMINISTRATOR');
+    expect(capAgentPermissions(owner, everyone)).not.toContain('ADMINISTRATOR');
   });
 });

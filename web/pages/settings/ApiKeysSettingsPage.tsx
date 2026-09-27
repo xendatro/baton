@@ -1,8 +1,9 @@
-import { KeyRoundIcon, PlusIcon, TriangleAlertIcon } from 'lucide-react';
+import { BotIcon, KeyRoundIcon, PlusIcon, TriangleAlertIcon } from 'lucide-react';
 import { useId, useState, type FormEvent } from 'react';
-import { useSearchParams } from 'react-router';
+import { Link, useSearchParams } from 'react-router';
 import { toast } from 'sonner';
 import { LIMITS } from '@shared/constants';
+import { agentDisplayName, agentUsername } from '@shared/principals';
 import {
   createApiKeyInputSchema,
   type ApiKey,
@@ -35,6 +36,7 @@ import {
 import { Skeleton } from '@web/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@web/components/ui/tabs';
 import { errorMessage, isApiError } from '@web/lib/api';
+import { useMe } from '@web/lib/auth';
 import { formatDateTime, formatShortDate } from '@web/lib/format';
 import { useHotkey } from '@web/lib/hotkeys';
 import { cn } from '@web/lib/utils';
@@ -268,6 +270,31 @@ function CreateKeyDialog({
 // List
 // ---------------------------------------------------------------------------------------------
 
+/** Keys act as your agent member (agents A): "Keys act as your agent, Ethan AI (@ethan-ai)". */
+function AgentNote() {
+  const me = useMe();
+  const user = me.data?.user;
+  if (!user?.username) return null;
+  return (
+    <p
+      role="note"
+      className="flex gap-2.5 rounded-md border bg-muted/40 px-3 py-2.5 text-sm text-muted-foreground"
+    >
+      <BotIcon className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+      <span>
+        Keys act as your agent, {agentDisplayName(user.name)} (@{agentUsername(user.username)}):
+        everything written with them is authored by it.{' '}
+        <Link
+          to="/settings/agent"
+          className="font-medium text-foreground underline-offset-4 hover:underline"
+        >
+          Agent settings
+        </Link>
+      </span>
+    </p>
+  );
+}
+
 const STATE_BADGE: Record<KeyState, { label: string; className: string }> = {
   active: {
     label: 'Active',
@@ -398,6 +425,7 @@ export default function ApiKeysSettingsPage() {
         </Button>
       }
     >
+      <AgentNote />
       <SettingsCard
         title="Your keys"
         description={

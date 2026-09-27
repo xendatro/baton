@@ -8,12 +8,12 @@ import { coreTools } from '../mcp/tools/core';
 import { registerTools } from '../mcp/tools/index';
 import {
   addMember,
-  bearer,
-  createApiKey,
   createProject,
   createTeam,
   createTestContext,
   createUser,
+  signIn,
+  web as sessionHeaders,
   type CreatedProject,
   type CreatedTeam,
   type TestContext,
@@ -35,12 +35,13 @@ let leo: UserRow;
 let maya: UserRow;
 let team: CreatedTeam;
 let project: CreatedProject;
-let mayaKey: string;
+/** Maya's web session (her keys act as her agent, which has no inbox: agents A). */
+let mayaSession: Record<string, string>;
 let clients: Client[];
 
 const web = (user: { id: string }): Actor => ({ userId: user.id, source: 'web', key: null });
 
-beforeEach(() => {
+beforeEach(async () => {
   ctx = createTestContext();
   const owner = createUser(ctx.db, { username: 'owner' });
   leo = createUser(ctx.db, { username: 'leo' });
@@ -49,7 +50,7 @@ beforeEach(() => {
   addMember(ctx.db, { teamId: team.team.id, userId: leo.id, roleIds: [team.adminRole.id] });
   addMember(ctx.db, { teamId: team.team.id, userId: maya.id });
   project = createProject(ctx.db, { teamId: team.team.id, key: 'API', createdById: owner.id });
-  mayaKey = createApiKey(ctx.db, { userId: maya.id }).key;
+  mayaSession = sessionHeaders(ctx, await signIn(ctx, maya));
   clients = [];
 });
 
@@ -59,9 +60,9 @@ afterEach(async () => {
 });
 
 async function inbox(): Promise<{ items: Notification[]; unread: number }> {
-  const list = await ctx.app.request('/api/notifications', { headers: bearer(mayaKey) });
+  const list = await ctx.app.request('/api/notifications', { headers: mayaSession });
   const count = await ctx.app.request('/api/notifications/unread-count', {
-    headers: bearer(mayaKey),
+    headers: mayaSession,
   });
   return {
     items: notificationListResponseSchema.parse(await list.json()).items,
@@ -69,12 +70,15 @@ async function inbox(): Promise<{ items: Notification[]; unread: number }> {
   };
 }
 
+/**
+ * The MCP inbox tool over Maya's own inbox. (Real MCP callers are agents, whose inbox is empty;
+ * this keeps the tool's filtering covered.)
+ */
 async function mcpInbox(): Promise<Notification[]> {
-  const { apiKey } = createApiKey(ctx.db, { userId: maya.id, name: 'Claude' });
   const server = new McpServer({ name: 'baton-test', version: '0.0.0' });
   registerTools(
     server,
-    { deps: ctx.deps, actor: { userId: maya.id, source: 'mcp', key: apiKey } },
+    { deps: ctx.deps, actor: { userId: maya.id, source: 'mcp', key: null } },
     coreTools,
   );
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();

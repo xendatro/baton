@@ -7,7 +7,7 @@ import type { DbExecutor, Tx } from '../db';
 import * as s from '../db/schema';
 import { errors } from '../lib/errors';
 import { excerpt } from '../lib/markdown';
-import { hasPermission, requireMember } from './access';
+import { hasPermission, isOwnContent, requireMember } from './access';
 import { recordActivity } from './activity';
 import { trashHandlers } from './trashHandlers';
 import { getUserSummaries, getViaKeys } from './users';
@@ -174,7 +174,10 @@ export function listTrash(
   const { orm } = deps.db;
   const membership = requireMember(orm, actor, teamId);
   const seeAll = hasPermission(membership, 'MANAGE_TRASH');
-  const rows = deletedRows(orm, teamId).filter((row) => seeAll || row.authorId === actor.userId);
+  // Your own items include your agent's (and an agent's include its owner's): agents A.
+  const rows = deletedRows(orm, teamId).filter(
+    (row) => seeAll || isOwnContent(membership, row.authorId),
+  );
   const users = getUserSummaries(
     orm,
     rows.flatMap((row) => [row.authorId, row.deletedById]),

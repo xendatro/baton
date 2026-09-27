@@ -54,6 +54,7 @@ function Agents() {
   const runner = state.runner;
   return (
     <PageContainer>
+      <AppVersion state={state} />
       <PageHeader
         title="Running agents"
         description={
@@ -114,6 +115,51 @@ function Agents() {
         </div>
       )}
     </PageContainer>
+  );
+}
+
+const UPDATE_TEXT: Record<string, string> = {
+  checking: 'Checking for updates…',
+  latest: 'Up to date',
+  available: 'A new version is available',
+  downloading: 'Downloading an update…',
+  ready: 'An update is ready: restart to install',
+};
+
+/** The app's version and "Check for updates" (apps from 0.3.0 on can update themselves). */
+function AppVersion({ state }: { state: DesktopState }) {
+  const bridge = desktopBridge();
+  const update = state.update;
+  const canCheck = bridge !== null && 'checkForUpdates' in bridge;
+  return (
+    <p className="mb-3 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+      <span>Desktop app {state.version}</span>
+      {update ? (
+        <span aria-live="polite">
+          ·{' '}
+          {update.status === 'error'
+            ? `Couldn’t check for updates: ${update.error ?? ''}`
+            : (UPDATE_TEXT[update.status] ?? '')}
+        </span>
+      ) : null}
+      {canCheck ? (
+        <Button
+          variant="link"
+          size="sm"
+          className="h-auto p-0 text-xs"
+          disabled={update?.status === 'checking' || update?.status === 'downloading'}
+          onClick={() =>
+            void bridge
+              ?.checkForUpdates?.()
+              .catch((cause: unknown) => toast.error(errorMessage(cause)))
+          }
+        >
+          Check for updates
+        </Button>
+      ) : (
+        <span>· Reinstall from the Download page to get automatic updates.</span>
+      )}
+    </p>
   );
 }
 

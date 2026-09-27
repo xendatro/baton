@@ -37,6 +37,8 @@ const bridge: BatonDesktopBridge = {
   setMachineName: (name) => call('setMachineName', name),
   onState: (listener) => subscribe<DesktopState>('desktop:state', listener),
   onOutput: (listener) => subscribe<{ jobId: string; text: string }>('desktop:output', listener),
+  checkForUpdates: () => call('checkForUpdates'),
+  installUpdate: () => call('installUpdate'),
 };
 
 if (serverOrigin && window.location.origin === serverOrigin) {

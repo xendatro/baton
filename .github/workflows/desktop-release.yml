@@ -1,7 +1,8 @@
 name: Desktop release
 
 # Builds the Baton desktop app for Windows, macOS and Linux and publishes it as a GitHub release
-# (the web app links to the latest release's Baton-Setup.exe, Baton.dmg and Baton.AppImage).
+# (the web app links to the latest release's Baton-Setup.exe, Baton.dmg and Baton.AppImage; the
+# installed app checks the latest release's latest.yml / latest-linux.yml to update itself).
 # Run it by pushing a tag `desktop-v<version>` or from the Actions tab.
 
 on:
@@ -20,13 +21,10 @@ jobs:
         include:
           - os: windows-latest
             target: --win
-            file: desktop/release/Baton-Setup.exe
           - os: macos-latest
             target: --mac
-            file: desktop/release/Baton.dmg
           - os: ubuntu-latest
             target: --linux
-            file: desktop/release/Baton.AppImage
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     env:
@@ -53,7 +51,14 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.os }}
-          path: ${{ matrix.file }}
+          # The installers, plus what the app's updater reads: latest.yml (Windows),
+          # latest-linux.yml (Linux) and the block maps for smaller downloads.
+          path: |
+            desktop/release/Baton-Setup.exe
+            desktop/release/Baton.dmg
+            desktop/release/Baton.AppImage
+            desktop/release/latest*.yml
+            desktop/release/*.blockmap
           if-no-files-found: error
 
   release:
@@ -74,7 +79,7 @@ jobs:
           version=$(node -p "require('./desktop/package.json').version")
           tag="${GITHUB_REF_NAME}"
           if [[ "$tag" != desktop-v* ]]; then tag="desktop-v${version}"; fi
-          notes="Baton desktop app ${version}. Windows: Baton-Setup.exe · macOS: Baton.dmg · Linux: Baton.AppImage. The builds aren't code-signed yet: Windows may show a SmartScreen warning (More info → Run anyway) and macOS a Gatekeeper warning (right-click → Open)."
+          notes="Baton desktop app ${version}. Windows: Baton-Setup.exe · macOS: Baton.dmg · Linux: Baton.AppImage. The app updates itself on Windows and Linux (from 0.3.0 on) and offers the download on macOS. The builds aren't code-signed yet: Windows may show a SmartScreen warning (More info → Run anyway) and macOS a Gatekeeper warning (right-click → Open)."
           if gh release view "$tag" > /dev/null 2>&1; then
             gh release upload "$tag" artifacts/* --clobber
           else

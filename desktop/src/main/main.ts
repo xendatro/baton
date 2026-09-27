@@ -22,6 +22,7 @@ import { createAdapters } from './harness';
 import { isAllowedSender, navigationTarget, originOf } from './origin';
 import { describeToolCall, PermissionServer } from './permissions';
 import { Runner, type RunnerStore } from './runner';
+import { Updates } from './updates';
 
 /**
  * The Baton desktop app's main process (BAT-24, BAT-26). The window shows the real Baton web app
@@ -38,6 +39,36 @@ let api: BatonApi | null = null;
 let permissions: PermissionServer | null = null;
 let quitting = false;
 const adapters = createAdapters();
+/** Versions already announced with a system notification (once each). */
+const announced = new Set<string>();
+const updates = new Updates(
+  (update) => {
+    broadcast();
+    const key = `${update.status}:${update.version ?? ''}`;
+    if ((update.status === 'ready' || update.status === 'available') && !announced.has(key)) {
+      announced.add(key);
+      if (Notification.isSupported()) {
+        const notice = new Notification({
+          title: `Baton ${update.version ?? ''} is available`,
+          body:
+            update.status === 'ready'
+              ? 'Restart Baton to update (it also updates the next time you quit).'
+              : 'Click to download the new version.',
+        });
+        notice.on('click', () => {
+          if (update.status === 'available') updates.install();
+          else showWindow();
+        });
+        notice.show();
+      }
+    }
+  },
+  () => {
+    quitting = true;
+    runner?.stop();
+    permissions?.stop();
+  },
+);
 
 const secrets: SecretBox = {
   available: () => safeStorage.isEncryptionAvailable(),
@@ -74,7 +105,29 @@ function state(): DesktopState {
     folders: cfg.folders,
     permissionModes: cfg.permissionModes,
     testedHarnesses: cfg.testedHarnesses ?? [],
+    update: updates.state,
     runner: runner?.snapshot() ?? null,
+  };
+}
+
+function updateMenuItem(): Electron.MenuItemConstructorOptions {
+  const update = updates.state;
+  if (update.status === 'ready') {
+    return {
+      label: `Restart to update to ${update.version ?? 'the new version'}`,
+      click: () => updates.install(),
+    };
+  }
+  if (update.status === 'available') {
+    return { label: `Download Baton ${update.version ?? ''}`, click: () => updates.install() };
+  }
+  if (update.status === 'downloading') {
+    return { label: `Downloading update… ${update.progress ?? 0}%`, enabled: false };
+  }
+  return {
+    label: update.status === 'checking' ? 'Checking for updates…' : 'Check for updates',
+    enabled: update.status !== 'checking',
+    click: () => void updates.check(),
   };
 }
 
@@ -114,6 +167,7 @@ function updateTray() {
         click: () => showWindow(`${serverUrl().replace(/\/+$/, '')}/desktop`),
       },
       { type: 'separator' },
+      updateMenuItem(),
       { label: 'Quit', click: () => app.quit() },
     ]),
   );
@@ -416,6 +470,8 @@ function registerIpc() {
     return { ok, outcome: result.outcome, output: output.join('\n') };
   });
   handle('kill', (jobId: string) => runner?.kill(String(jobId)));
+  handle('checkForUpdates', () => updates.check());
+  handle('installUpdate', () => updates.install());
   handle('pauseHere', (paused: boolean) => {
     setPausedHere(Boolean(paused));
     return state();
@@ -451,5 +507,6 @@ if (!app.requestSingleInstanceLock()) {
     showWindow();
     await connect().catch(() => undefined);
     updateTray();
+    updates.start();
   });
 }

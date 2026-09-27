@@ -40,6 +40,8 @@ export interface DesktopState {
   folders: Record<string, DesktopFolder>;
   /** Harnesses whose test run succeeded here (optional: older apps). */
   testedHarnesses?: string[];
+  /** Updates of the app itself (optional: apps before 0.3.0 can't update themselves). */
+  update?: DesktopUpdate;
   permissionModes: Partial<Record<HarnessId, string>>;
   runner: {
     status: DesktopRunnerStatus;
@@ -76,6 +78,20 @@ export interface DesktopTestResult {
 }
 
 /** `window.batonDesktop`. */
+/**
+ * An update of the desktop app. `manual`: this build can't replace itself (macOS, unsigned), so an
+ * available update is downloaded from the browser instead of installed in place.
+ */
+export interface DesktopUpdate {
+  status: 'idle' | 'checking' | 'latest' | 'available' | 'downloading' | 'ready' | 'error';
+  /** The new version, when there is one. */
+  version: string | null;
+  /** Download progress in percent while `downloading`. */
+  progress: number | null;
+  error: string | null;
+  manual: boolean;
+}
+
 export interface BatonDesktopBridge {
   state(): Promise<DesktopState>;
   /** Runs the agent's jobs on this computer with this API key (created by the web app). */
@@ -99,4 +115,8 @@ export interface BatonDesktopBridge {
   setMachineName(name: string): Promise<DesktopState>;
   onState(listener: (state: DesktopState) => void): () => void;
   onOutput(listener: (event: { jobId: string; text: string }) => void): () => void;
+  /** Checks for a new version of the app now (optional: apps before 0.3.0). */
+  checkForUpdates?(): Promise<DesktopUpdate>;
+  /** Restarts into the downloaded update, or opens the new version's download (manual). */
+  installUpdate?(): Promise<void>;
 }

@@ -20,6 +20,14 @@ live in `web/pages/desktop/` and show only inside the app (`window.batonDesktop`
 | Cursor CLI  | `cursor-agent -p`   | flags read from `--help` at run time  |
 | opencode    | `opencode run`      | flags read from `--help` at run time  |
 
+## Updates
+
+The web app inside the window updates with the Baton server. The app itself (runner, harnesses,
+tray) updates from GitHub Releases from 0.3.0 on: Windows and Linux download a new version in the
+background and install it on "Restart to update" (sidebar, tray or notification) or the next quit;
+macOS offers the download, since unsigned macOS apps can't replace themselves. Release by bumping
+`version` in `package.json` and pushing a `desktop-v<version>` tag.
+
 ## Develop
 
 ```bash

@@ -8,6 +8,7 @@ import type { BatonDesktopBridge, DesktopState } from '@shared/desktopBridge';
 import { TooltipProvider } from '@web/components/ui/tooltip';
 import { createQueryClient } from '@web/lib/queryClient';
 import { jsonResponse, mockApi, testMe } from '@web/test/mockApi';
+import { DesktopUpdateNotice } from '@web/components/layout/DesktopUpdateNotice';
 import DesktopAgentsPage from './DesktopAgentsPage';
 import DesktopFoldersPage from './DesktopFoldersPage';
 import DesktopHarnessesPage from './DesktopHarnessesPage';
@@ -194,5 +195,26 @@ describe('desktop pages', () => {
     });
     renderPage(<DesktopSetupPage />);
     expect(await screen.findByText('2 of 3 steps done.')).toBeInTheDocument();
+  });
+
+  it('offers a downloaded update as Restart to update, and a manual one as Download', async () => {
+    const user = userEvent.setup();
+    const bridge = mockBridge();
+    const installUpdate = vi.fn(() => Promise.resolve());
+    Object.assign(bridge, { installUpdate });
+    const update = { version: '0.3.1', progress: 100, error: null };
+    const { rerender } = renderPage(
+      <DesktopUpdateNotice update={{ ...update, status: 'ready', manual: false }} />,
+    );
+    expect(screen.getByText('Baton 0.3.1 is available')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Restart to update' }));
+    expect(installUpdate).toHaveBeenCalledTimes(1);
+    rerender(
+      <QueryClientProvider client={createQueryClient()}>
+        <DesktopUpdateNotice update={{ ...update, status: 'available', manual: true }} />
+      </QueryClientProvider>,
+    );
+    await user.click(screen.getByRole('button', { name: 'Download' }));
+    expect(installUpdate).toHaveBeenCalledTimes(2);
   });
 });

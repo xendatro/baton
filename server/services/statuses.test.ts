@@ -252,6 +252,8 @@ describe('stage rules and icons', () => {
       resolveIssues: true,
       releaseClaim: true,
       notifyAuthor: false,
+      notifyAssignees: true,
+      notifyPreviousHolder: false,
     });
     expect(lastActivity(open.id)).toMatchObject({
       changes: {

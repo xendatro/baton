@@ -1,19 +1,24 @@
+import { QueryClientProvider } from '@tanstack/react-query';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useState } from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { PrincipalRule } from '@shared/principals';
-import { DEFAULT_STAGE_RULES, type StageRules } from '@shared/schemas/pipelines';
-import type { Status } from '@shared/schemas/projects';
+import { DEFAULT_STAGE_RULES } from '@shared/schemas/pipelines';
+import type { CreateStatusInput, Status, UpdateStatusInput } from '@shared/schemas/projects';
 import { StatusIcon } from '@web/components/common/StatusBadge';
 import { PrincipalRulePicker } from '@web/components/pickers/PrincipalRulePicker';
 import { StatusIconPicker, type StatusIconValue } from '@web/components/pickers/StatusIconPicker';
 import { describeRule, type PrincipalOptions } from '@web/components/pickers/principals';
 import { TooltipProvider } from '@web/components/ui/tooltip';
-import { StageRulesDialog } from './StageRulesDialog';
+import { createQueryClient } from '@web/lib/queryClient';
+import { mockApi, testConfig, testMe } from '@web/test/mockApi';
+import { StatusDialog, type StatusDialogProps } from './StatusDialog';
 import { countRules } from './stageRules';
 
 /** The "who" picker and the per-status rules editor (design §2, §5). */
+
+afterEach(() => vi.unstubAllGlobals());
 
 const options: PrincipalOptions = {
   users: [
@@ -49,38 +54,59 @@ function Harness({
 }
 
 describe('PrincipalRulePicker', () => {
-  it('adds people, agents and roles, sets scopes and exceptions', async () => {
+  it('adds people, agents and roles by @name, and exclusions behind a link', async () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
     render(<Harness initial={{ allow: [], deny: [] }} onChange={onChange} />);
-    const allowed = screen.getByRole('list', { name: 'Who can approve: allowed' });
-    expect(within(allowed).getByText('Nobody yet')).toBeInTheDocument();
+    const include = screen.getByRole('combobox', { name: 'Add to Who can approve: include' });
 
-    await user.click(screen.getByRole('button', { name: 'Add to Who can approve: allowed' }));
-    // People and agents are listed apart.
-    expect(screen.getByRole('group', { name: 'Agents' })).toHaveTextContent('Ann AI');
-    await user.click(screen.getByRole('option', { name: /Reviewer/ }));
+    // A name shared by a person and her agent: both are offered, told apart by their tags.
+    await user.type(include, '@ann');
+    const listbox = screen.getByRole('listbox');
+    expect(within(listbox).getByRole('option', { name: /@ann Ann Person/ })).toBeInTheDocument();
+    expect(
+      within(listbox).getByRole('option', { name: /@ann-ai Ann AI Agent/ }),
+    ).toBeInTheDocument();
+    await user.click(within(listbox).getByRole('option', { name: /@ann-ai/ }));
     expect(onChange).toHaveBeenLastCalledWith({
-      allow: [{ type: 'role', roleId: 'r1', scope: 'both' }],
+      allow: [{ type: 'user', userId: 'u2' }],
       deny: [],
     });
-    await user.selectOptions(screen.getByRole('combobox', { name: 'Scope of Reviewer' }), 'people');
+
+    // @reviewer is the role's people, @reviewer-ai their agents.
+    await user.type(include, 'reviewer-');
+    await user.keyboard('{Enter}');
     expect(onChange).toHaveBeenLastCalledWith({
-      allow: [{ type: 'role', roleId: 'r1', scope: 'people' }],
+      allow: [
+        { type: 'user', userId: 'u2' },
+        { type: 'role', roleId: 'r1', scope: 'agents' },
+      ],
       deny: [],
     });
+    expect(
+      within(screen.getByRole('list', { name: 'Who can approve: include' })).getByText(
+        '@reviewer-ai',
+      ),
+    ).toBeInTheDocument();
 
-    await user.click(screen.getByRole('button', { name: 'Add to Who can approve: excepted' }));
-    await user.click(screen.getByRole('option', { name: /Ann AI/ }));
+    await user.click(screen.getByRole('button', { name: 'Exclude someone' }));
+    await user.type(
+      screen.getByRole('combobox', { name: 'Add to Who can approve: exclude' }),
+      '@ann',
+    );
+    await user.keyboard('{Enter}');
     expect(onChange).toHaveBeenLastCalledWith({
-      allow: [{ type: 'role', roleId: 'r1', scope: 'people' }],
-      deny: [{ type: 'user', userId: 'u2' }],
+      allow: [
+        { type: 'user', userId: 'u2' },
+        { type: 'role', roleId: 'r1', scope: 'agents' },
+      ],
+      deny: [{ type: 'user', userId: 'u1' }],
     });
 
-    await user.click(screen.getByRole('button', { name: 'Remove Reviewer' }));
+    await user.click(screen.getByRole('button', { name: 'Remove @ann-ai' }));
     expect(onChange).toHaveBeenLastCalledWith({
-      allow: [],
-      deny: [{ type: 'user', userId: 'u2' }],
+      allow: [{ type: 'role', roleId: 'r1', scope: 'agents' }],
+      deny: [{ type: 'user', userId: 'u1' }],
     });
   });
 
@@ -114,20 +140,28 @@ const statuses: Status[] = ['Open', 'In Review', 'Done'].map((name, position) =>
   rules: DEFAULT_STAGE_RULES,
 }));
 
-function renderDialog(onSave: (rules: StageRules) => Promise<unknown>, canManage = true) {
+function renderDialog(
+  props: Partial<StatusDialogProps> & { onUpdate?: StatusDialogProps['onUpdate'] },
+) {
   const review = statuses[1];
   if (!review) throw new Error('status');
+  mockApi({ '/api/config': testConfig, '/api/me': testMe() });
   render(
-    <TooltipProvider>
-      <StageRulesDialog
-        status={review}
-        statuses={statuses}
-        options={options}
-        canManage={canManage}
-        onClose={() => undefined}
-        onSave={onSave}
-      />
-    </TooltipProvider>,
+    <QueryClientProvider client={createQueryClient()}>
+      <TooltipProvider>
+        <StatusDialog
+          state={{ mode: 'edit', status: review }}
+          statuses={statuses}
+          options={options}
+          teamId="t1"
+          canManage
+          onClose={() => undefined}
+          onCreate={() => Promise.reject(new Error('unused'))}
+          onUpdate={() => Promise.resolve()}
+          {...props}
+        />
+      </TooltipProvider>
+    </QueryClientProvider>,
   );
 }
 
@@ -173,101 +207,117 @@ describe('StatusIconPicker', () => {
   });
 });
 
-describe('StageRulesDialog', () => {
-  it('edits criteria, approvals, auto-advance and the next stage', async () => {
+describe('StatusDialog', () => {
+  it('creates a status step by step and saves everything at once', async () => {
     const user = userEvent.setup();
-    const onSave = vi.fn((_rules: StageRules) => Promise.resolve());
-    renderDialog(onSave);
-    expect(screen.getByRole('heading', { name: 'Rules of In Review' })).toBeInTheDocument();
+    const onCreate = vi.fn((input: CreateStatusInput) =>
+      Promise.resolve({ ...statuses[0], id: 'new', name: input.name } as Status),
+    );
+    renderDialog({ state: { mode: 'create' }, onCreate });
+    expect(screen.getByRole('heading', { name: 'New status' })).toBeInTheDocument();
+    // Later steps are locked until reached.
+    expect(screen.getByRole('button', { name: /Exit criteria/ })).toBeDisabled();
 
+    await user.click(screen.getByRole('button', { name: 'Next' }));
+    expect(screen.getByRole('alert')).toHaveTextContent('Name');
+    await user.type(screen.getByRole('textbox', { name: 'Name' }), 'QA');
+    await user.click(screen.getByRole('button', { name: 'Next' })); // → Instructions
+    await user.click(screen.getByRole('button', { name: 'Next' })); // → When a task arrives
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Assign to' }), 'custom');
+    await user.type(screen.getByRole('combobox', { name: 'Add to Who: include' }), '@reviewer');
+    await user.keyboard('{Enter}');
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Who gets it' }), 'pool');
+    await user.click(screen.getByRole('checkbox', { name: 'The author' }));
+    await user.click(screen.getByRole('button', { name: 'Next' })); // → While it’s here
+    await user.click(screen.getByRole('checkbox', { name: 'Counts as finished' }));
+    await user.click(screen.getByRole('button', { name: 'Next' })); // → Exit criteria
     await user.click(screen.getByRole('button', { name: 'Add criterion' }));
     await user.type(screen.getByRole('textbox', { name: 'Criterion 1' }), 'Tests pass');
-    await user.click(screen.getByRole('checkbox', { name: 'Require approvals' }));
-    await user.clear(screen.getByRole('spinbutton', { name: 'Approvals needed' }));
-    await user.type(screen.getByRole('spinbutton', { name: 'Approvals needed' }), '2');
-    await user.click(screen.getByRole('button', { name: 'Add to Who can approve: allowed' }));
-    await user.click(screen.getByRole('option', { name: /Reviewer/ }));
-    await user.click(
-      screen.getByRole('checkbox', {
-        name: 'Move on by itself once the criteria and approvals are met',
-      }),
+    await user.click(screen.getByRole('button', { name: 'Next' })); // → Moving on
+    const count = screen.getByRole('spinbutton', { name: 'Approvals needed' });
+    await user.clear(count);
+    await user.type(count, '2');
+    await user.type(
+      screen.getByRole('combobox', { name: 'Add to Who can approve: include' }),
+      '@ann',
     );
-    await user.selectOptions(screen.getByRole('combobox', { name: 'Next stage' }), 's2');
-    await user.click(screen.getByRole('button', { name: 'Save rules' }));
+    await user.keyboard('{Enter}');
+    expect(screen.getByText(/2 different people must approve/)).toBeInTheDocument();
+    await user.click(screen.getByRole('radio', { name: 'It moves on by itself' }));
+    await user.click(screen.getByRole('button', { name: 'Create status' }));
 
-    await waitFor(() => expect(onSave).toHaveBeenCalled());
-    const saved = onSave.mock.calls[0]?.[0];
-    expect(saved).toMatchObject({
-      exitCriteria: [{ id: 'c1', text: 'Tests pass' }],
-      approvals: {
-        count: 2,
-        rule: { allow: [{ type: 'role', roleId: 'r1', scope: 'both' }], deny: [] },
-        dismissOnChange: false,
+    await waitFor(() => expect(onCreate).toHaveBeenCalled());
+    const input = onCreate.mock.calls[0]?.[0];
+    expect(input).toMatchObject({
+      name: 'QA',
+      rules: {
+        handoff: {
+          mode: 'pool',
+          rule: { allow: [{ type: 'role', roleId: 'r1', scope: 'people' }], deny: [] },
+        },
+        onEnter: { notifyAuthor: true, notifyAssignees: true, releaseClaim: false },
+        blocksDependents: false,
+        exitCriteria: [{ id: 'c1', text: 'Tests pass' }],
+        approvals: { count: 2, rule: { allow: [{ type: 'user', userId: 'u1' }], deny: [] } },
+        autoAdvance: true,
+        moveRule: null,
+        nextStatusId: null,
       },
-      autoAdvance: true,
-      nextStatusId: 's2',
-      handoff: { mode: 'keep' },
     });
-    expect(countRules(saved)).toBe(4);
   });
 
-  it('asks who gets the task for rule-based hand-offs and explains invalid rules', async () => {
+  it('saves one category of an existing status on its own', async () => {
     const user = userEvent.setup();
-    const onSave = vi.fn(() => Promise.resolve());
-    renderDialog(onSave);
-    await user.selectOptions(screen.getByRole('combobox', { name: 'Hand-off' }), 'pool');
-    await user.click(screen.getByRole('button', { name: 'Save rules' }));
-    expect(screen.getByRole('alert')).toHaveTextContent('Choose who gets the task');
-    expect(onSave).not.toHaveBeenCalled();
-    await user.click(screen.getByRole('button', { name: 'Add to Who gets the task: allowed' }));
-    await user.click(screen.getByRole('option', { name: /Everyone in the team/ }));
-    await user.click(screen.getByRole('button', { name: 'Save rules' }));
+    const onUpdate = vi.fn((_id: string, _input: UpdateStatusInput) => Promise.resolve());
+    renderDialog({ onUpdate });
+    expect(screen.getByRole('heading', { name: 'Edit In Review' })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /While it’s here/ }));
+    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
+    await user.click(screen.getByRole('checkbox', { name: 'Can be claimed' }));
+    await user.click(screen.getByRole('button', { name: 'Save' }));
     await waitFor(() =>
-      expect(onSave).toHaveBeenCalledWith(
-        expect.objectContaining({
-          handoff: {
-            mode: 'pool',
-            rule: { allow: [{ type: 'everyone', scope: 'both' }], deny: [] },
-          },
-        }),
-      ),
-    );
-  });
-
-  it('edits the stage’s own behaviour: assign nobody, on-enter effects, blocking, claiming', async () => {
-    const user = userEvent.setup();
-    const onSave = vi.fn((_rules: StageRules) => Promise.resolve());
-    renderDialog(onSave);
-    await user.selectOptions(screen.getByRole('combobox', { name: 'Hand-off' }), 'nobody');
-    await user.click(screen.getByRole('checkbox', { name: 'Resolve the issues it fixes' }));
-    await user.click(screen.getByRole('checkbox', { name: 'Release its claim' }));
-    await user.click(
-      screen.getByRole('checkbox', {
-        name: 'Tell the author (and whoever had it) that it got here',
+      expect(onUpdate).toHaveBeenCalledWith('s1', {
+        rules: { blocksDependents: true, claimable: false },
       }),
     );
-    const blocks = screen.getByRole('checkbox', {
-      name: 'It still blocks the tasks waiting on it',
-    });
-    expect(blocks).toBeChecked();
-    await user.click(blocks);
-    await user.click(screen.getByRole('checkbox', { name: 'It can be claimed' }));
-    await user.click(screen.getByRole('button', { name: 'Save rules' }));
-
-    await waitFor(() => expect(onSave).toHaveBeenCalled());
-    const saved = onSave.mock.calls[0]?.[0];
-    expect(saved).toMatchObject({
-      handoff: { mode: 'nobody' },
-      onEnter: { resolveIssues: true, releaseClaim: true, notifyAuthor: true },
-      blocksDependents: false,
-      claimable: false,
-    });
-    expect(countRules(saved)).toBe(6);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled());
   });
 
-  it('is read-only without Manage statuses', () => {
-    renderDialog(() => Promise.resolve(), false);
-    expect(screen.queryByRole('button', { name: 'Save rules' })).not.toBeInTheDocument();
+  it('keeps the claim only for the last stage’s assignees, and checks custom lists', async () => {
+    const user = userEvent.setup();
+    const onUpdate = vi.fn((_id: string, _input: UpdateStatusInput) => Promise.resolve());
+    renderDialog({
+      onUpdate,
+      state: { mode: 'edit', status: statuses[1] as Status, section: 'arrival' },
+    });
+    await user.click(screen.getByRole('checkbox', { name: 'Keep their claim' }));
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(onUpdate).toHaveBeenCalled());
+    expect(onUpdate.mock.calls[0]?.[1].rules?.onEnter).toMatchObject({ releaseClaim: true });
+
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Assign to' }), 'custom');
+    expect(screen.queryByRole('checkbox', { name: 'Keep their claim' })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    expect(screen.getByRole('alert')).toHaveTextContent('Choose who gets the task');
+    expect(onUpdate).toHaveBeenCalledTimes(1);
+  });
+
+  it('is read-only without Manage statuses', async () => {
+    const user = userEvent.setup();
+    renderDialog({ canManage: false });
+    expect(screen.queryByRole('button', { name: 'Save' })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /Exit criteria/ }));
     expect(screen.getByRole('button', { name: 'Add criterion' })).toBeDisabled();
+  });
+
+  it('counts the rules a status has', () => {
+    expect(countRules(DEFAULT_STAGE_RULES)).toBe(0);
+    expect(
+      countRules({
+        ...DEFAULT_STAGE_RULES,
+        handoff: { mode: 'nobody' },
+        onEnter: { ...DEFAULT_STAGE_RULES.onEnter, notifyAssignees: false },
+      }),
+    ).toBe(2);
   });
 });

@@ -63,19 +63,24 @@ test('a task moves through a pipeline stage with a criterion and an approval', a
 
   // Configure In Review: one criterion, one approval from the reviewer, auto-advance.
   await page.goto(`/t/${slug}/p/PIP/settings/statuses`);
-  await page.getByRole('button', { name: 'Rules of In Review' }).click();
-  const dialog = page.getByRole('dialog', { name: 'Rules of In Review' });
+  await page.getByRole('button', { name: 'Edit In Review' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Edit In Review' });
+  await dialog.getByRole('button', { name: /Exit criteria/ }).click();
   await dialog.getByRole('button', { name: 'Add criterion' }).click();
   await dialog.getByRole('textbox', { name: 'Criterion 1' }).fill('Tests pass');
-  await dialog.getByRole('checkbox', { name: 'Require approvals' }).click();
-  await dialog.getByRole('button', { name: 'Add to Who can approve: allowed' }).click();
-  await page.getByRole('option', { name: new RegExp(reviewer.username) }).click();
+  await dialog.getByRole('button', { name: 'Save', exact: true }).click();
+  await expect(page.getByText('Saved exit criteria of In Review')).toBeVisible();
+  await dialog.getByRole('button', { name: /Moving on/ }).click();
+  await dialog.getByRole('spinbutton', { name: 'Approvals needed' }).fill('1');
   await dialog
-    .getByRole('checkbox', { name: 'Move on by itself once the criteria and approvals are met' })
-    .click();
-  await dialog.getByRole('button', { name: 'Save rules' }).click();
-  await expect(page.getByText('Saved the rules of In Review')).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Rules of In Review (3 set)' })).toBeVisible();
+    .getByRole('combobox', { name: 'Add to Who can approve: include' })
+    .fill(`@${reviewer.username}`);
+  await dialog.getByRole('option', { name: new RegExp(`@${reviewer.username} `) }).click();
+  await dialog.getByRole('radio', { name: 'It moves on by itself' }).click();
+  await dialog.getByRole('button', { name: 'Save', exact: true }).click();
+  await expect(page.getByText('Saved moving on of In Review')).toBeVisible();
+  await dialog.getByRole('button', { name: 'Done', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Edit In Review (3 rules set)' })).toBeVisible();
 
   // A task enters the stage.
   const task = await api<{ id: string; path: string }>(

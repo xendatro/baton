@@ -319,7 +319,7 @@ describe('on-enter rules', () => {
     expect(resolved()).toBe(false);
   });
 
-  it('notifyAuthor: tells the author and the previous holders it reached the stage', () => {
+  it('notifyAuthor tells the author, notifyPreviousHolder the previous holders', () => {
     const task = newTask({ assigneeUserIds: [ann.id] }, web(ben));
     move(task.id, review);
     expect(notificationsOf(ben).map((n) => n.type)).not.toContain('task_done');
@@ -328,6 +328,10 @@ describe('on-enter rules', () => {
     move(task.id, review, web(owner));
     const note = notificationsOf(ben).find((n) => n.type === 'task_done');
     expect(note?.snippet).toBe('Reached Review');
+    expect(notificationsOf(ann).map((n) => n.type)).not.toContain('task_done');
+    setRules(review, { onEnter: { notifyPreviousHolder: true } });
+    move(task.id, doing);
+    move(task.id, review, web(owner));
     expect(notificationsOf(ann).map((n) => n.type)).toContain('task_done');
   });
 
@@ -337,6 +341,24 @@ describe('on-enter rules', () => {
     expect(move(task.id, review).claim?.user.username).toBe('ann');
     setRules(doing, { onEnter: { releaseClaim: true } });
     expect(move(task.id, doing).claim).toBeNull();
+  });
+
+  it('a stage that assigns nobody also drops the claim', () => {
+    const task = newTask();
+    claimTask(ctx.deps, web(ann), task.id, {});
+    setRules(review, { handoff: { mode: 'nobody' } });
+    expect(move(task.id, review).claim).toBeNull();
+  });
+
+  it('notifyAssignees off: the hand-off assigns without notifying', () => {
+    setRules(review, {
+      handoff: { mode: 'specific', rule: { allow: [{ type: 'user', userId: ann.id }], deny: [] } },
+      onEnter: { notifyAssignees: false },
+    });
+    const task = newTask();
+    move(task.id, review);
+    expect(current(task.id)).toEqual(['@ann']);
+    expect(notificationsOf(ann).map((n) => n.type)).not.toContain('assigned');
   });
 });
 

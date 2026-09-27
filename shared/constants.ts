@@ -282,7 +282,13 @@ export const DEFAULT_STATUS_ICON: StatusIconShape = 'circle';
  */
 export const FINISHED_STAGE_RULES = {
   handoff: { mode: 'nobody' as const },
-  onEnter: { resolveIssues: true, releaseClaim: true, notifyAuthor: true },
+  onEnter: {
+    resolveIssues: true,
+    releaseClaim: true,
+    notifyAuthor: true,
+    notifyAssignees: true,
+    notifyPreviousHolder: true,
+  },
   blocksDependents: false,
   claimable: false,
 };

@@ -392,8 +392,9 @@ describe('release_task', () => {
   });
 
   it('keeps the claim when the stage entered doesn’t release it', () => {
+    // Keeps the assignees too: a stage assigning nobody drops the claim with them.
     updateStatus(ctx.deps, web(owner), statusId(doneStatus), {
-      rules: { onEnter: { releaseClaim: false } },
+      rules: { onEnter: { releaseClaim: false }, handoff: { mode: 'keep' } },
     });
     const task = newTask('Almost');
     claimTask(ctx.deps, miaAgent, task.id, {});

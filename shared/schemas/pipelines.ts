@@ -104,14 +104,18 @@ const criteriaListSchema = z
     'Each criterion needs its own id',
   );
 
-/** What entering the stage does besides the hand-off (all off by default). */
+/** What entering the stage does besides the hand-off (only `notifyAssignees` is on by default). */
 export const onEnterRulesSchema = z.object({
   /** Resolve the open issues the task `fixes`. */
   resolveIssues: z.boolean(),
   /** Release the task's claim. */
   releaseClaim: z.boolean(),
-  /** Tell the task's author (and whoever held it in the stage it left) it reached this stage. */
+  /** Tell the task's author it reached this stage. */
   notifyAuthor: z.boolean(),
+  /** Notify the people the hand-off assigns (default true). */
+  notifyAssignees: z.boolean().default(true),
+  /** Tell whoever held the task in the stage it left that it reached this stage. */
+  notifyPreviousHolder: z.boolean().default(false),
 });
 export type OnEnterRules = z.infer<typeof onEnterRulesSchema>;
 
@@ -150,7 +154,13 @@ export const DEFAULT_STAGE_RULES: StageRules = {
   instructions: '',
   handoff: { mode: 'keep' },
   notify: null,
-  onEnter: { resolveIssues: false, releaseClaim: false, notifyAuthor: false },
+  onEnter: {
+    resolveIssues: false,
+    releaseClaim: false,
+    notifyAuthor: false,
+    notifyAssignees: true,
+    notifyPreviousHolder: false,
+  },
   blocksDependents: true,
   claimable: true,
   exitCriteria: [],
@@ -167,7 +177,16 @@ export const stageRulesPatchSchema = z.object({
   handoff: handoffSchema.optional(),
   notify: principalRuleSchema.nullable().optional(),
   /** Only the flags given change. */
-  onEnter: onEnterRulesSchema.partial().optional(),
+  onEnter: z
+    .object({
+      resolveIssues: z.boolean(),
+      releaseClaim: z.boolean(),
+      notifyAuthor: z.boolean(),
+      notifyAssignees: z.boolean(),
+      notifyPreviousHolder: z.boolean(),
+    })
+    .partial()
+    .optional(),
   blocksDependents: z.boolean().optional(),
   claimable: z.boolean().optional(),
   exitCriteria: criteriaListSchema.optional(),
@@ -193,6 +212,8 @@ export function hasStageRules(rules: StageRules): boolean {
     rules.onEnter.resolveIssues ||
     rules.onEnter.releaseClaim ||
     rules.onEnter.notifyAuthor ||
+    !rules.onEnter.notifyAssignees ||
+    rules.onEnter.notifyPreviousHolder ||
     !rules.blocksDependents ||
     !rules.claimable ||
     rules.autoAdvance ||

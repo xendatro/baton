@@ -458,8 +458,8 @@ export interface StatusTransition {
  * write (before `enterStage`, which applies the hand-off): `completedAt` follows the new stage's
  * `blocksDependents` (set when it enters a stage that doesn't block, kept while it moves between
  * such stages, cleared otherwise); `onEnter.resolveIssues` resolves the issues it `fixes`;
- * `onEnter.notifyAuthor` tells the author and whoever held it in the stage it left (`task_done`,
- * "Reached <stage>"); `onEnter.releaseClaim` releases the claim. They run on every entry of such
+ * `onEnter.notifyAuthor` tells the author and `onEnter.notifyPreviousHolder` whoever held it in the
+ * stage it left (`task_done`, "Reached <stage>"); `onEnter.releaseClaim` releases the claim. They run on every entry of such
  * a stage. Leaving a stage undoes nothing (resolved issues stay resolved).
  */
 export function applyStatusTransition(
@@ -481,12 +481,15 @@ export function applyStatusTransition(
   if (rules.onEnter.resolveIssues) {
     resolveFixedIssues(tx, actor, linkSubject(task, projectKey), notified, now);
   }
-  if (rules.onEnter.notifyAuthor) {
+  if (rules.onEnter.notifyAuthor || rules.onEnter.notifyPreviousHolder) {
     notifyUsers(
       tx,
       actor,
       'task_done',
-      [...(task.authorId ? [task.authorId] : []), ...assignedUserIds(tx, task.id, from.id)],
+      [
+        ...(rules.onEnter.notifyAuthor && task.authorId ? [task.authorId] : []),
+        ...(rules.onEnter.notifyPreviousHolder ? assignedUserIds(tx, task.id, from.id) : []),
+      ],
       notificationTarget(task, { key: projectKey }, { slug: teamSlug }, `Reached ${to.name}`),
       notified,
     );

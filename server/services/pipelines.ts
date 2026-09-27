@@ -81,7 +81,12 @@ export function rulesOf(row: StatusRow): StageRules {
     instructions: row.instructions,
     handoff: row.handoff ?? { mode: 'keep' },
     notify: row.notify ?? null,
-    onEnter: { ...DEFAULT_STAGE_RULES.onEnter, ...row.onEnter },
+    onEnter: {
+      ...DEFAULT_STAGE_RULES.onEnter,
+      // Before the split, `notifyAuthor` also told the previous holder.
+      notifyPreviousHolder: row.onEnter?.notifyAuthor ?? false,
+      ...row.onEnter,
+    },
     blocksDependents: row.blocksDependents,
     claimable: row.claimable,
     exitCriteria: row.exitCriteria,
@@ -114,7 +119,11 @@ export function ruleColumns(rules: StageRules) {
     instructions: rules.instructions,
     handoff,
     notify: rules.notify,
-    onEnter: onEnter.resolveIssues || onEnter.releaseClaim || onEnter.notifyAuthor ? onEnter : null,
+    onEnter: (Object.keys(onEnter) as Array<keyof typeof onEnter>).some(
+      (flag) => onEnter[flag] !== DEFAULT_STAGE_RULES.onEnter[flag],
+    )
+      ? onEnter
+      : null,
     blocksDependents: rules.blocksDependents,
     claimable: rules.claimable,
     exitCriteria: rules.exitCriteria,
@@ -331,6 +340,8 @@ function ruleSummaries(db: DbExecutor, rules: StageRules): Record<keyof StageRul
     ...(rules.onEnter.resolveIssues ? ['resolve fixed issues'] : []),
     ...(rules.onEnter.releaseClaim ? ['release the claim'] : []),
     ...(rules.onEnter.notifyAuthor ? ['notify the author'] : []),
+    ...(rules.onEnter.notifyPreviousHolder ? ['notify the previous holder'] : []),
+    ...(rules.onEnter.notifyAssignees ? [] : ["don't notify the assignees"]),
   ];
   return {
     instructions: excerpt(rules.instructions, 140),
@@ -1048,11 +1059,17 @@ export function enterStage(
     const addedRoles = after.roles.filter((id) => !previous.roles.includes(id));
     if (addedUsers.length > 0 || addedRoles.length > 0) {
       autoSubscribe(tx, addedUsers, 'task', task.id);
-      notifyAssigned(tx, actor, target, { userIds: addedUsers, roleIds: addedRoles }, notified);
+      if (rules.onEnter.notifyAssignees) {
+        notifyAssigned(tx, actor, target, { userIds: addedUsers, roleIds: addedRoles }, notified);
+      }
     }
   }
-  // The claim goes with the hand-off (a pool always frees it) unless the holder still has the task.
-  const handedOff = pool !== null || assignedUserIds.length > 0;
+  // The claim goes with the hand-off (a pool or `nobody` always frees it) unless the holder still
+  // has the task.
+  const handedOff =
+    pool !== null ||
+    assignedUserIds.length > 0 ||
+    (rules.handoff.mode === 'nobody' && !options.assignees && !options.keepAssignees);
   if (
     handedOff &&
     task.claimedById &&

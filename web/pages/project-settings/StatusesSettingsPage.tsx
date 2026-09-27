@@ -26,7 +26,7 @@ import {
 import { useEffect, useId, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
 import { useSearchParams } from 'react-router';
 import { toast } from 'sonner';
-import { COLOR_PALETTE, LIMITS } from '@shared/constants';
+import { LIMITS } from '@shared/constants';
 import { DEFAULT_STAGE_RULES } from '@shared/schemas/pipelines';
 import { statusNameSchema, type Status } from '@shared/schemas/projects';
 import { EmptyState } from '@web/components/common/EmptyState';
@@ -56,7 +56,7 @@ import {
 } from '@web/components/ui/select';
 import { Skeleton } from '@web/components/ui/skeleton';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@web/components/ui/tooltip';
-import { errorMessage, isApiError } from '@web/lib/api';
+import { errorMessage } from '@web/lib/api';
 import { useMe } from '@web/lib/auth';
 import { pluralize } from '@web/lib/format';
 import { useProjectAccess } from '@web/lib/permissions';
@@ -73,15 +73,15 @@ import {
 import { BoardBackLink, ReadOnlyNotice, SettingsCard, SettingsHeader } from './common';
 import { CopyPipelineDialog } from './CopyPipelineDialog';
 import { usePrincipalOptions } from './pipelineQueries';
-import { StageRulesDialog } from './StageRulesDialog';
+import { StatusDialog, type StatusDialogState } from './StatusDialog';
 import { countRules } from './stageRules';
 
 /**
  * Project settings → Statuses: the board's columns (stages). Drag to reorder (or use the keyboard:
  * focus a handle, Space, arrows, Space), rename in place, pick an icon (shape and color), choose
- * the default for new tasks, add and delete (moving the tasks elsewhere). What a stage does —
- * hand-off, on-enter effects, blocking, claiming, exit rules — is its rules, edited in a dialog;
- * "Copy pipeline from…" copies another project's statuses and rules.
+ * the default for new tasks and delete (moving the tasks elsewhere). "New status" and each row's
+ * edit button open the status dialog (basics, instructions, arrival, while here, exit criteria,
+ * moving on); "Copy pipeline from…" copies another project's statuses and rules.
  * `?status=<id>` (a board column's "Edit statuses") scrolls to that status and highlights it.
  */
 
@@ -104,7 +104,8 @@ function Statuses({ teamId, projectId }: { teamId: string; projectId: string }) 
   const reorder = useReorderStatuses(projectId);
   const update = useUpdateStatus(projectId);
   const [deleting, setDeleting] = useState<Status | null>(null);
-  const [editingRules, setEditingRules] = useState<Status | null>(null);
+  const [dialog, setDialog] = useState<StatusDialogState>(null);
+  const create = useCreateStatus(projectId);
   const [copying, setCopying] = useState(false);
   const principals = usePrincipalOptions(teamId, projectId);
   const me = useMe();
@@ -128,10 +129,16 @@ function Statuses({ teamId, projectId }: { teamId: string; projectId: string }) 
       }
       actions={
         canManage ? (
-          <Button variant="outline" size="sm" onClick={() => setCopying(true)}>
-            <CopyIcon aria-hidden="true" />
-            Copy pipeline from…
-          </Button>
+          <>
+            <Button variant="outline" size="sm" onClick={() => setCopying(true)}>
+              <CopyIcon aria-hidden="true" />
+              Copy pipeline from…
+            </Button>
+            <Button size="sm" onClick={() => setDialog({ mode: 'create' })}>
+              <PlusIcon aria-hidden="true" />
+              New status
+            </Button>
+          </>
         ) : null
       }
     />
@@ -181,6 +188,14 @@ function Statuses({ teamId, projectId }: { teamId: string; projectId: string }) 
             icon={KanbanSquareIcon}
             title="No statuses"
             description="Add a status to give the board a column."
+            action={
+              canManage ? (
+                <Button size="sm" onClick={() => setDialog({ mode: 'create' })}>
+                  <PlusIcon aria-hidden="true" />
+                  New status
+                </Button>
+              ) : undefined
+            }
             className="m-4"
           />
         ) : (
@@ -218,7 +233,7 @@ function Statuses({ teamId, projectId }: { teamId: string; projectId: string }) 
                       isOnly={items.length === 1}
                       targeted={status.id === targetId}
                       onDelete={() => setDeleting(status)}
-                      onEditRules={() => setEditingRules(status)}
+                      onEditRules={() => setDialog({ mode: 'edit', status })}
                     />
                   ))}
                 </ul>
@@ -226,7 +241,6 @@ function Statuses({ teamId, projectId }: { teamId: string; projectId: string }) 
             </SortableContext>
           </DndContext>
         )}
-        {canManage ? <AddStatus projectId={projectId} existing={items} /> : null}
       </SettingsCard>
       <DeleteStatusDialog
         projectId={projectId}
@@ -234,17 +248,15 @@ function Statuses({ teamId, projectId }: { teamId: string; projectId: string }) 
         statuses={items}
         onClose={() => setDeleting(null)}
       />
-      <StageRulesDialog
-        status={editingRules}
+      <StatusDialog
+        state={dialog}
         statuses={items}
         options={principals.options}
+        teamId={teamId}
         canManage={canManage}
-        onClose={() => setEditingRules(null)}
-        onSave={(rules) =>
-          editingRules
-            ? update.mutateAsync({ id: editingRules.id, input: { rules } })
-            : Promise.resolve()
-        }
+        onClose={() => setDialog(null)}
+        onCreate={(input) => create.mutateAsync(input)}
+        onUpdate={(id, input) => update.mutateAsync({ id, input })}
       />
       <CopyPipelineDialog
         open={copying}
@@ -388,7 +400,7 @@ function StatusRow({
           variant="ghost"
           size="sm"
           onClick={onEditRules}
-          aria-label={`Rules of ${status.name}${ruleCount ? ` (${ruleCount} set)` : ''}`}
+          aria-label={`Edit ${status.name}${ruleCount ? ` (${ruleCount} rules set)` : ''}`}
           className={cn('h-8 gap-1 px-1.5 text-muted-foreground', ruleCount > 0 && 'text-primary')}
         >
           <WorkflowIcon aria-hidden="true" />
@@ -436,68 +448,6 @@ function StatusRow({
         </span>
       </div>
     </li>
-  );
-}
-
-function suggestColor(existing: readonly Status[]): string {
-  const used = new Set(existing.map((status) => status.color));
-  return (COLOR_PALETTE.slice(1).find((color) => !used.has(color.hex)) ?? COLOR_PALETTE[0]).hex;
-}
-
-function AddStatus({ projectId, existing }: { projectId: string; existing: Status[] }) {
-  const inputId = useId();
-  const create = useCreateStatus(projectId);
-  const [name, setName] = useState('');
-  const [error, setError] = useState<string | null>(null);
-
-  const submit = (event: FormEvent) => {
-    event.preventDefault();
-    const parsed = statusNameSchema.safeParse(name);
-    if (!parsed.success) {
-      setError(parsed.error.issues[0]?.message ?? 'Invalid name');
-      return;
-    }
-    setError(null);
-    create.mutate(
-      { name: parsed.data, color: suggestColor(existing) },
-      {
-        onSuccess: (status) => {
-          setName('');
-          toast.success(`Added ${status.name}`);
-        },
-        onError: (cause) => setError(isApiError(cause) ? cause.message : errorMessage(cause)),
-      },
-    );
-  };
-
-  return (
-    <form onSubmit={submit} className="border-t bg-muted/30 px-3 py-3" noValidate>
-      <Label htmlFor={inputId} className="sr-only">
-        New status name
-      </Label>
-      <div className="flex flex-wrap items-center gap-2">
-        <Input
-          id={inputId}
-          value={name}
-          onChange={(event) => setName(event.target.value)}
-          placeholder="Add a status, e.g. In review"
-          maxLength={LIMITS.statusName.max}
-          aria-invalid={error ? true : undefined}
-          aria-describedby={error ? `${inputId}-error` : undefined}
-          className="h-8 min-w-0 flex-1 basis-48"
-          autoComplete="off"
-        />
-        <Button type="submit" size="sm" disabled={create.isPending || !name.trim()}>
-          {create.isPending ? <Spinner /> : <PlusIcon aria-hidden="true" />}
-          Add status
-        </Button>
-      </div>
-      {error ? (
-        <p id={`${inputId}-error`} role="alert" className="mt-1.5 text-xs text-destructive">
-          {error}
-        </p>
-      ) : null}
-    </form>
   );
 }
 

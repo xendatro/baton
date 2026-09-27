@@ -211,6 +211,14 @@ const stageFields = {
       resolveIssues: z.boolean().optional().describe('Resolve the issues the task fixes'),
       releaseClaim: z.boolean().optional().describe('Release the claim'),
       notifyAuthor: z.boolean().optional().describe('Tell the author it reached this stage'),
+      notifyAssignees: z
+        .boolean()
+        .optional()
+        .describe('Notify the people the hand-off assigns (default true)'),
+      notifyPreviousHolder: z
+        .boolean()
+        .optional()
+        .describe('Tell whoever held it in the stage it left that it reached this stage'),
     })
     .optional()
     .describe('What entering the stage does (only the flags given change)'),
@@ -236,6 +244,8 @@ function stageRulesPatch(input: {
         resolveIssues?: boolean | undefined;
         releaseClaim?: boolean | undefined;
         notifyAuthor?: boolean | undefined;
+        notifyAssignees?: boolean | undefined;
+        notifyPreviousHolder?: boolean | undefined;
       }
     | undefined;
   blocksDependents?: boolean | undefined;
@@ -270,7 +280,7 @@ const createStatusTool = defineTool({
   name: 'create_status',
   title: 'Create status',
   description:
-    'Adds a task status (stage) at the end of the board (needs MANAGE_STATUSES). A stage is just a column unless you give it rules: e.g. a finishing stage has handoff nobody, onEnter { resolveIssues, releaseClaim, notifyAuthor }, blocksDependents false and claimable false.',
+    'Adds a task status (stage) at the end of the board (needs MANAGE_STATUSES). A stage is just a column unless you give it rules: e.g. a finishing stage has handoff nobody, onEnter { resolveIssues, releaseClaim, notifyAuthor, notifyPreviousHolder }, blocksDependents false and claimable false.',
   input: toolInput({
     project: projectRef,
     name: z.string().min(1).max(LIMITS.statusName.max).describe('Status name, e.g. In review'),

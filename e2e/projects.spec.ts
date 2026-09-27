@@ -149,8 +149,14 @@ test('manage statuses: add, set default, pick an icon, reorder by keyboard, dele
       .getByRole('listitem'),
   ).toHaveCount(2);
 
-  await page.getByLabel('New status name').fill('In review');
-  await page.getByRole('button', { name: 'Add status' }).click();
+  await page.getByRole('button', { name: 'New status' }).click();
+  const create = page.getByRole('dialog', { name: 'New status' });
+  await create.getByRole('textbox', { name: 'Name' }).fill('In review');
+  for (let step = 0; step < 5; step += 1) {
+    await create.getByRole('button', { name: 'Next' }).click();
+  }
+  await create.getByRole('button', { name: 'Create status' }).click();
+  await expect(create).toBeHidden();
   await expect(page.getByTestId('status-row')).toHaveCount(3);
   await expect(page.getByLabel('Name of status In review')).toHaveValue('In review');
 
@@ -307,7 +313,7 @@ test('members without permissions see read-only settings', async ({ page, browse
 
   await memberPage.goto(`/t/${team.slug}/p/SHR/settings/statuses`);
   await expect(memberPage.getByText(/needs the Manage statuses permission/)).toBeVisible();
-  await expect(memberPage.getByRole('button', { name: 'Add status' })).toHaveCount(0);
+  await expect(memberPage.getByRole('button', { name: 'New status' })).toHaveCount(0);
 
   // Labels are an @everyone permission.
   await memberPage.goto(`/t/${team.slug}/p/SHR/settings/labels`);

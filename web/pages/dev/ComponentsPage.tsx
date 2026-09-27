@@ -33,6 +33,7 @@ import { EmojiPicker } from '@web/components/pickers/EmojiPicker';
 import { LabelPicker } from '@web/components/pickers/LabelPicker';
 import { PriorityPicker } from '@web/components/pickers/PriorityPicker';
 import { StatusPicker } from '@web/components/pickers/StatusPicker';
+import { DEFAULT_REPLY_VIEW, replyTreeKey } from '@web/components/replies/queries';
 import { ReplyComposer } from '@web/components/replies/ReplyComposer';
 import { Timeline } from '@web/components/replies/Timeline';
 import { Button } from '@web/components/ui/button';
@@ -72,7 +73,12 @@ function createSeededClient(): QueryClient {
       roles: fixtures.mentionables.roles.filter((role) => role.slug.startsWith(q)),
     });
   }
-  client.setQueryData(queryKeys.replies.list('task', 'task_dev'), { items: fixtures.replies });
+  client.setQueryData(replyTreeKey('task', 'task_dev', DEFAULT_REPLY_VIEW), {
+    items: fixtures.replies,
+    total: fixtures.replies.length,
+    topLevelCount: fixtures.replies.filter((reply) => reply.depth === 0).length,
+    ancestors: [],
+  });
   client.setQueryData(queryKeys.activity('task', 'task_dev'), { items: fixtures.activity });
   return client;
 }

@@ -29,6 +29,13 @@
       "when": 1790460295874,
       "tag": "0003_agent_identity",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1790469429142,
+      "tag": "0004_threaded_replies",
+      "breakpoints": true
     }
   ]
 }

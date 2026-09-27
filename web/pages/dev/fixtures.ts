@@ -4,7 +4,7 @@ import type {
   ConfigResponse,
   MeResponse,
   MentionablesResponse,
-  Reply,
+  ReplyNode,
   RoleSummary,
   UserSummary,
 } from '@shared/schemas/core';
@@ -156,13 +156,17 @@ Inline \`code\`, ~~struck~~ text and an image:
 
 <script>alert('xss')</script><img src="x" onerror="alert(1)">`;
 
-export const replies: Reply[] = [
+export const replies: ReplyNode[] = [
   {
     id: 'rep_1',
     teamId: TEAM_ID,
     projectId: 'p_web',
     parentType: 'task',
     parentId: 'task_dev',
+    parentReplyId: null,
+    deleted: false,
+    replyCount: 1,
+    depth: 0,
     body: 'I can take this. Starting with the **API contract**, then the UI.',
     author: ada,
     via: null,
@@ -177,6 +181,10 @@ export const replies: Reply[] = [
     projectId: 'p_web',
     parentType: 'task',
     parentId: 'task_dev',
+    parentReplyId: 'rep_1',
+    deleted: false,
+    replyCount: 0,
+    depth: 1,
     body: 'Pushed a first pass. Tests pass locally:\n\n```bash\nnpm test -- claims\n```\n\ncc @grace',
     author: ethan,
     via: { keyId: 'key_1', keyName: 'Claude on laptop' },

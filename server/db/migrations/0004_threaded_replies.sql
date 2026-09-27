@@ -1,0 +1,2 @@
+ALTER TABLE `reply` ADD `parent_reply_id` text REFERENCES `reply`(`id`) ON UPDATE no action ON DELETE set null;--> statement-breakpoint
+CREATE INDEX `reply_parent_reply_idx` ON `reply` (`parent_reply_id`);

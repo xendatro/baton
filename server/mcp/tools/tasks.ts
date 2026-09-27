@@ -254,6 +254,7 @@ function assigneeFilter(ctx: ToolContext, teamId: string, value: string): string
 function replyOut(ctx: ToolContext, taskPath: string, reply: Reply) {
   return {
     id: reply.id,
+    parentReplyId: reply.parentReplyId,
     author: reply.author?.username ?? null,
     via: reply.via?.keyName ?? null,
     body: reply.body,
@@ -349,7 +350,7 @@ const getTaskTool = defineTool({
   name: 'get_task',
   title: 'Get task',
   description:
-    'Full context of a task before you work on it: description (markdown), status, priority, due date, assignees, labels, blockers (blockedBy) and tasks waiting for it (blocking) with their statuses, linked issues (fixes/relates), the claim (holder, key, expiry), attachments, the latest 20 replies (replyCount says how many there are; list_replies pages through them all) and the latest 20 history entries (get_activity pages through all of them).',
+    'Full context of a task before you work on it: description (markdown), status, priority, due date, assignees, labels, blockers (blockedBy) and tasks waiting for it (blocking) with their statuses, linked issues (fixes/relates), the claim (holder, key, expiry), attachments, the latest 20 replies, each with parentReplyId (the reply it answers, null for a top-level comment) (replyCount says how many there are; list_replies pages through them all) and the latest 20 history entries (get_activity pages through all of them).',
   input: toolInput({ task: taskRef }),
   annotations: { readOnlyHint: true },
   handler: (ctx, input) => {

@@ -104,7 +104,7 @@ function mockIssueApi(permissions: readonly Permission[], list: IssueListRespons
     '/api/teams/t1/members': { items: [] },
     '/api/projects/p1/issues': list,
     '/api/projects/p1/issues/12': issue,
-    '/api/replies': { items: [] },
+    '/api/replies': { items: [], total: 0, topLevelCount: 0, ancestors: [] },
     '/api/activity': { items: [] },
     '/api/teams/t1/mentionables': { users: [], roles: [] },
   });

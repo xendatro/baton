@@ -96,6 +96,9 @@ export const queryKeys = {
   replies: {
     all: () => ['replies'] as const,
     list: (parentType: string, parentId: string) => ['replies', parentType, parentId] as const,
+    /** One view of an item's comment tree (BAT-13); `list` covers every view of the item. */
+    tree: (parentType: string, parentId: string, view: KeyParams) =>
+      ['replies', parentType, parentId, view] as const,
   },
 
   activity: (entityType: string, entityId: string) => ['activity', entityType, entityId] as const,

@@ -26,6 +26,7 @@ describe('mergeTimeline', () => {
     projectId: 'p1',
     parentType: 'task',
     parentId: 'task1',
+    parentReplyId: null,
     body: 'hi',
     author: null,
     via: null,

@@ -204,7 +204,7 @@ const listRepliesTool = defineTool({
   name: 'list_replies',
   title: 'List replies',
   description:
-    'The reply thread of a task or issue, one page at a time: oldest first by default, or newest first with order: "desc" (the latest replies). `total` counts every reply; pass nextCursor back for the next page.',
+    'The replies of a task or issue, one page at a time: oldest first by default, or newest first with order: "desc" (the latest replies). Replies are threaded: parentReplyId is the reply one answers (null for a top-level comment; it may name a deleted reply). `total` counts every reply; pass nextCursor back for the next page.',
   input: toolInput({
     item: itemRef,
     order: orderField.default('asc'),
@@ -250,7 +250,7 @@ const addReply = defineTool({
   name: 'add_reply',
   title: 'Add reply',
   description:
-    'Replies to a task or issue (markdown; mention people with @username and roles with @&role-slug). Subscribers and mentioned members are notified.',
+    'Replies to a task or issue (markdown; mention people with @username and roles with @&role-slug). Pass inReplyTo (a reply id) to answer a specific reply in its thread; its author is notified too. Subscribers and mentioned members are notified.',
   input: toolInput({
     item: itemRef,
     body: z
@@ -263,6 +263,12 @@ const addReply = defineTool({
       .max(LIMITS.attachmentsPerItem)
       .optional()
       .describe('Ids of pending uploads (from upload_attachment without an item) to attach'),
+    inReplyTo: z
+      .string()
+      .optional()
+      .describe(
+        'Id of the reply to answer (from list_replies, get_task or get_issue), on the same item; omit for a top-level comment',
+      ),
   }),
   annotations: { destructiveHint: false },
   handler: (ctx, input) => {
@@ -270,6 +276,7 @@ const addReply = defineTool({
     const data = parseInput(createReplyInputSchema, {
       parentType: item.type,
       parentId: item.id,
+      parentReplyId: input.inReplyTo,
       body: input.body,
       attachmentIds: input.attachmentIds,
     });

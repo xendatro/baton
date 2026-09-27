@@ -15,6 +15,16 @@ describe('reply drafts', () => {
     expect(sessionStorage.getItem(replyDraftKey('u1', 'task', 't1'))).toBeNull();
   });
 
+  it('keeps an answer to a reply apart from the thread’s own draft (BAT-13)', () => {
+    writeReplyDraft('u1', 'task', 't1', { body: 'top level', attachments: [] });
+    writeReplyDraft('u1', 'task', 't1', { body: 'an answer', attachments: [] }, 'r1');
+    expect(readReplyDraft('u1', 'task', 't1')?.body).toBe('top level');
+    expect(readReplyDraft('u1', 'task', 't1', 'r1')?.body).toBe('an answer');
+    expect(readReplyDraft('u1', 'task', 't1', 'r2')).toBeNull();
+    clearReplyDrafts();
+    expect(readReplyDraft('u1', 'task', 't1', 'r1')).toBeNull();
+  });
+
   // Someone else signing in in the same tab must never be offered another person's unsent text.
   it("never hands one user's draft to another", () => {
     writeReplyDraft('u1', 'issue', 'i1', { body: 'private note', attachments: [] });

@@ -26,6 +26,7 @@ import {
   listRunners,
   listWaitingJobs,
   nextRunnerJobs,
+  pauseAgentEverywhere,
   registerRunner,
   runnerHeartbeat,
   setHarnessSession,
@@ -155,6 +156,11 @@ agentRunnerRoutes.get('/me/agent/models', (c) =>
 
 agentRunnerRoutes.put('/me/agent/models', validateJson(modelMappingsSchema), (c) =>
   c.json(setModelMappings(c.var.deps, requireActor(c), c.req.valid('json'))),
+);
+
+/** Pausing works with the app's key; resuming is done on the web (the pause is a safety switch). */
+agentRunnerRoutes.post('/me/agent/pause', (c) =>
+  c.json(pauseAgentEverywhere(c.var.deps, requireActor(c))),
 );
 
 agentRunnerRoutes.get('/me/agent/stats', validateQuery(agentStatsQuerySchema), (c) =>

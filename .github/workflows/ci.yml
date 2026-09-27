@@ -37,3 +37,33 @@ jobs:
 
       - name: Build
         run: npm run build
+
+  desktop:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            desktop/package-lock.json
+
+      # Shared code (desktop imports ../shared) resolves its dependencies from the root.
+      - run: npm ci
+
+      - run: npm ci
+        working-directory: desktop
+
+      - name: Typecheck and test
+        run: npm run check
+        working-directory: desktop
+
+      - name: Build
+        run: npm run build
+        working-directory: desktop

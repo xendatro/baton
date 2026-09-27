@@ -18,7 +18,7 @@ import {
   type TestContext,
   type UserRow,
 } from '../test/helpers';
-import { sweepListenerSessions } from './agentJobs';
+import { releaseJob, sweepListenerSessions } from './agentJobs';
 import {
   agentStats,
   approveWaitingJob,
@@ -28,6 +28,7 @@ import {
   jobBrief,
   listWaitingJobs,
   nextRunnerJobs,
+  pauseAgentEverywhere,
   registerRunner,
   runnerHeartbeat,
   setHarnessSession,
@@ -251,6 +252,33 @@ describe('job briefs, sessions and usage', () => {
       { outcome: 'out_of_usage', jobs: 1 },
     ]);
     expect(stats.byDifficulty).toMatchObject([{ difficulty: 'None', jobs: 1 }]);
+  });
+
+  it('holds killed runs for the owner’s OK, and leaves jobs the agent released itself alone', async () => {
+    const runner = register();
+    mention(ethanWeb, 'Try this @ethan-ai');
+    const [job] = (await nextRunnerJobs(ctx.deps, runnerKey, runner.id, 0)).jobs;
+    const jobId = job?.jobId ?? '';
+    const held = finishJob(ctx.deps, runnerKey, jobId, 'release', {
+      usage: [{ harness: 'claude', outcome: 'killed' }],
+      hold: true,
+    });
+    expect(held).toMatchObject({ status: 'pending', needsOk: true });
+    expect((await nextRunnerJobs(ctx.deps, runnerKey, runner.id, 0)).jobs).toEqual([]);
+    approveWaitingJob(ctx.deps, ethanWeb, jobId);
+    await nextRunnerJobs(ctx.deps, runnerKey, runner.id, 0);
+    // The agent releases it through MCP; the app's "complete" afterwards only records usage.
+    releaseJob(ctx.deps, runnerKey, { jobId });
+    expect(
+      finishJob(ctx.deps, runnerKey, jobId, 'complete', {
+        usage: [{ harness: 'claude', outcome: 'done' }],
+      }).status,
+    ).toBe('pending');
+  });
+
+  it('pauses the agent everywhere with the app’s key', () => {
+    expect(pauseAgentEverywhere(ctx.deps, runnerKey).pausedAt).not.toBeNull();
+    expect(runnerHeartbeat(ctx.deps, runnerKey, register().id, { running: 0 }).paused).toBe(true);
   });
 
   it('keeps mappings personal and checks their levels', async () => {

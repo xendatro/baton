@@ -35,7 +35,7 @@ import {
   requireListeningAgent,
   type AgentJobContext,
 } from './agentJobs';
-import { agentPauseReason, findAgentId } from './agents';
+import { agentPauseReason, findAgentId, updateAgentSettings } from './agents';
 import { emitEvent } from './events';
 import { stageOf } from './pipelines';
 import { isSessionListening, refreshPresence } from './presence';
@@ -622,7 +622,7 @@ export function jobBrief(
   const ref = context.target.ref ?? 'the item';
   const sections: string[] = [
     `# Baton job: ${job.kind.replace('_', ' ')} on ${ref}${context.target.title ? ` — ${context.target.title}` : ''}`,
-    `You are **@${me}**, the Baton agent of **@${owner}**, running headless on their machine for this one job. Use the Baton MCP tools (server "baton") to read and write in Baton: everything you write is posted as @${me}. Work in the current folder, with your usual tools and settings.`,
+    `You are **@${me}**, the Baton agent of **@${owner}**, running headless on their machine for this one job. Use the Baton MCP tools (get_task, add_reply, move_task, complete_job, …) to read and write in Baton: everything you write is posted as @${me}. Work in the current folder, with your usual tools and settings.`,
     `## The job\n\n${context.instructions}\n\nJob id: \`${job.id}\`.`,
   ];
   if (item) {
@@ -811,8 +811,8 @@ export function recordJobUsage(
 
 /**
  * `POST /api/agent/jobs/:jobId/complete|release` from the app: records what each harness run
- * cost, then completes or releases the job like `complete_job` / `release_job` (a killed job is
- * released back to the queue).
+ * cost, then completes or releases the job like `complete_job` / `release_job` when it is still
+ * claimed. `hold` puts a released job under "Waiting for your OK" (killed or failed runs).
  */
 export function finishJob(
   deps: AppDeps,
@@ -825,13 +825,21 @@ export function finishJob(
   const job = deps.db.orm.select().from(s.agentJob).where(eq(s.agentJob.id, jobId)).get();
   if (!job || job.agentUserId !== agent.id) throw errors.notFound('Job');
   recordUsage(deps, agent, job, input);
+  // The agent usually completes or releases the job itself (complete_job / release_job): only a
+  // job still claimed is finished here.
+  if (job.status !== 'claimed') return jobContexts(deps, [job])[0] as AgentJobContext;
   if (mode === 'complete') {
     return completeJob(deps, actor, { jobId, ...(input.agreeDone ? { agreeDone: true } : {}) });
   }
-  if (job.status === 'done' || job.status === 'cancelled') {
-    return jobContexts(deps, [job])[0] as AgentJobContext;
-  }
-  return releaseJob(deps, actor, { jobId });
+  const released = releaseJob(deps, actor, { jobId });
+  if (!input.hold) return released;
+  deps.db.write((tx) => {
+    tx.update(s.agentJob).set({ needsOk: true }).where(eq(s.agentJob.id, job.id)).run();
+    jobChanged(tx, job, agent.ownerId);
+  });
+  return jobContexts(deps, [
+    deps.db.orm.select().from(s.agentJob).where(eq(s.agentJob.id, job.id)).get() ?? job,
+  ])[0] as AgentJobContext;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -924,4 +932,14 @@ export function agentStats(deps: AppDeps, actor: Actor, days: number): AgentStat
     byDifficulty: sorted(byDifficulty).map(([difficulty, value]) => ({ difficulty, ...value })),
     byOutcome: sorted(byOutcome).map(([outcome, jobs]) => ({ outcome, jobs })),
   };
+}
+
+/** `POST /api/me/agent/pause`: pauses the owner's agent (the app's "Pause everywhere"). */
+export function pauseAgentEverywhere(deps: AppDeps, actor: Actor) {
+  const owner = requireOwner(deps, actor);
+  return updateAgentSettings(
+    deps,
+    { userId: owner.ownerId, source: actor.source, key: actor.key },
+    { paused: true },
+  );
 }

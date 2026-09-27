@@ -52,6 +52,7 @@ web/
   components/layout/    app shell, sidebar, header
   pages/<area>/         one folder per feature area
 e2e/                    playwright specs
+desktop/                the Electron desktop app (own package: `cd desktop && npm run check`)
 ```
 
 The registration files (`server/routes/index.ts`, `server/mcp/tools/index.ts`, `server/jobs/index.ts`,

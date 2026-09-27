@@ -15,6 +15,8 @@ export default defineConfig([
     'server/db/migrations/',
     // Agent worktrees (full checkouts) while parallel work is in progress.
     '.claude/',
+    // The desktop app is its own package (Electron types): `npm run check` in desktop/.
+    'desktop/',
   ]),
   js.configs.recommended,
   tseslint.configs.recommendedTypeChecked,

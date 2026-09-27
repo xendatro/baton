@@ -225,6 +225,11 @@ export type JobUsage = z.input<typeof jobUsageSchema>;
 export const finishJobInputSchema = z.object({
   usage: z.array(jobUsageSchema).max(AGENT_RUNNER_LIMITS.chain).default([]),
   agreeDone: z.boolean().optional(),
+  /**
+   * Release only: put it under "Waiting for your OK" instead of back in the queue (a killed or
+   * failed run), so the same runner doesn't take it again at once.
+   */
+  hold: z.boolean().optional(),
 });
 export type FinishJobInput = z.input<typeof finishJobInputSchema>;
 

@@ -6,3 +6,4 @@ server/db/migrations/
 package-lock.json
 SPEC.md
 .claude/
+desktop/release/

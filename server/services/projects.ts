@@ -28,7 +28,9 @@ import {
   memberTeamIds,
   requireMember,
   requirePermission,
-  type Membership,
+  requireProjectAccess,
+  visibleProjectIds,
+  type ProjectMembership,
 } from './access';
 import { recordActivity } from './activity';
 import { attachToParent, referencedPendingUploads } from './attachments';
@@ -48,11 +50,11 @@ import { getUserSummaries } from './users';
 export type ProjectRow = typeof s.project.$inferSelect;
 type TeamRow = typeof s.team.$inferSelect;
 
-/** A live project, its team and the actor's membership there. */
+/** A live project, its team and the actor's access to it (project permissions). */
 export interface ProjectAccess {
   project: ProjectRow;
   team: TeamRow;
-  membership: Membership;
+  membership: ProjectMembership;
 }
 
 /**
@@ -72,7 +74,7 @@ export function requireProject(
     .where(and(eq(s.project.id, projectId), isNull(s.project.deletedAt), isNull(s.team.deletedAt)))
     .get();
   if (!row) throw errors.notFound(what);
-  return { ...row, membership: requireMember(db, actor, row.team.id, what) };
+  return { ...row, membership: requireProjectAccess(db, actor, row.project.id, what) };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -185,31 +187,33 @@ export function getProject(deps: AppDeps, actor: Actor, projectId: string): Proj
   return toProject(orm, project, team.slug);
 }
 
-/** Live projects of a team, alphabetical (any member). */
+/** Live projects of a team the actor can see (`VIEW_PROJECT`), alphabetical. */
 export function listTeamProjects(deps: AppDeps, actor: Actor, teamId: string): ProjectListResponse {
   const { orm } = deps.db;
   requireMember(orm, actor, teamId);
   const team = orm.select({ slug: s.team.slug }).from(s.team).where(eq(s.team.id, teamId)).get();
   if (!team) throw errors.notFound('Team');
+  const visible = visibleProjectIds(orm, actor.userId, [teamId]);
+  if (visible.length === 0) return { items: [] };
   const rows = orm
     .select()
     .from(s.project)
-    .where(and(eq(s.project.teamId, teamId), isNull(s.project.deletedAt)))
+    .where(and(inArray(s.project.id, visible), isNull(s.project.deletedAt)))
     .orderBy(asc(s.project.name), asc(s.project.key))
     .all();
   return { items: toSummaries(orm, rows, team.slug) };
 }
 
-/** Live projects in every team the actor belongs to, grouped by team name, then by name. */
+/** Live projects the actor can see in all their teams, grouped by team name, then by name. */
 export function listAllProjects(deps: AppDeps, actor: Actor): ProjectListResponse {
   const { orm } = deps.db;
-  const teamIds = memberTeamIds(orm, actor.userId);
-  if (teamIds.length === 0) return { items: [] };
+  const visible = visibleProjectIds(orm, actor.userId);
+  if (visible.length === 0) return { items: [] };
   const rows = orm
     .select({ project: s.project, slug: s.team.slug })
     .from(s.project)
     .innerJoin(s.team, eq(s.team.id, s.project.teamId))
-    .where(and(inArray(s.project.teamId, teamIds), isNull(s.project.deletedAt)))
+    .where(and(inArray(s.project.id, visible), isNull(s.project.deletedAt)))
     .orderBy(asc(s.team.name), asc(s.project.name), asc(s.project.key))
     .all();
   const counts = projectCounts(
@@ -237,7 +241,7 @@ export function resolveProjectRef(deps: AppDeps, actor: Actor, ref: string): Pro
     .where(and(eq(s.project.id, value), isNull(s.project.deletedAt), isNull(s.team.deletedAt)))
     .get();
   if (byId) {
-    requireMember(orm, actor, byId.team.id, 'Project');
+    requireProjectAccess(orm, actor, byId.project.id, 'Project');
     const [summary] = toSummaries(orm, [byId.project], byId.team.slug);
     if (!summary) throw errors.internal();
     return summary;
@@ -253,7 +257,10 @@ export function resolveProjectRef(deps: AppDeps, actor: Actor, ref: string): Pro
       .get();
     teamIds = team ? teamIds.filter((id) => id === team.id) : [];
   }
-  const matches = findLiveProjectsByKey(orm, teamIds, parsed.projectKey);
+  const visible = new Set(visibleProjectIds(orm, actor.userId, teamIds));
+  const matches = findLiveProjectsByKey(orm, teamIds, parsed.projectKey).filter((row) =>
+    visible.has(row.project.id),
+  );
   if (matches.length === 0) throw errors.notFound('Project');
   if (matches.length > 1) {
     const candidates = matches.map((row) => formatProjectRef(row.project.key, row.team.slug));

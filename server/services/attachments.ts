@@ -22,6 +22,8 @@ import {
   hasPermission,
   requireCanDeleteContent,
   requireMember,
+  requireProjectAccess,
+  requireScopedAccess,
   type Membership,
 } from './access';
 import { recordActivity } from './activity';
@@ -556,7 +558,10 @@ export async function uploadAttachment(
     const resolved = resolveParent(orm, parent);
     // Another team's item is "not found", exactly like a missing one (never leak existence).
     if (resolved.teamId !== input.teamId) throw errors.notFound(PARENT_NAMES[parent.type]);
-    if (!resolved.canEdit(membership)) throw errors.forbidden("You can't add files to this item");
+    const access = resolved.projectId
+      ? requireProjectAccess(orm, actor, resolved.projectId, PARENT_NAMES[parent.type])
+      : membership;
+    if (!resolved.canEdit(access)) throw errors.forbidden("You can't add files to this item");
   } else {
     requireCanUploadPending(membership);
   }
@@ -719,7 +724,13 @@ function readableAttachment(deps: AppDeps, actor: Actor, id: string): Attachment
     if (row.parentType !== 'user_avatar') throw errors.notFound('Attachment');
     return row;
   }
-  const membership = requireMember(orm, actor, row.teamId, 'Attachment');
+  const membership = requireScopedAccess(
+    orm,
+    actor,
+    row.teamId,
+    attachmentProjectId(orm, row),
+    'Attachment',
+  );
   if (row.parentType === 'pending' && row.uploaderId !== actor.userId) {
     throw errors.notFound('Attachment');
   }
@@ -775,7 +786,7 @@ export function listAttachments(
 ): { items: Attachment[] } {
   const { orm } = deps.db;
   const resolved = resolveParent(orm, parent);
-  requireMember(orm, actor, resolved.teamId, 'Item');
+  requireScopedAccess(orm, actor, resolved.teamId, resolved.projectId, 'Item');
   return { items: attachmentsByParent(orm, parent.type, [parent.id]).get(parent.id) ?? [] };
 }
 
@@ -912,7 +923,13 @@ function attachmentProjectId(db: DbExecutor, row: AttachmentRow): string | null 
 export function deleteAttachment(deps: AppDeps, actor: Actor, id: string): { ok: true } {
   const row = readableAttachment(deps, actor, id);
   if (row.teamId === null) throw errors.notFound('Attachment');
-  const membership = requireMember(deps.db.orm, actor, row.teamId, 'Attachment');
+  const membership = requireScopedAccess(
+    deps.db.orm,
+    actor,
+    row.teamId,
+    attachmentProjectId(deps.db.orm, row),
+    'Attachment',
+  );
   requireCanDeleteContent(membership, row.uploaderId);
   const teamId = row.teamId;
   deps.db.write((tx) => {
@@ -953,7 +970,13 @@ export function restoreAttachment(deps: AppDeps, actor: Actor, id: string): void
   const { orm } = deps.db;
   const row = orm.select().from(s.attachment).where(eq(s.attachment.id, id)).get();
   if (!row?.deletedAt || row.teamId === null) throw errors.notFound('Deleted attachment');
-  const membership = requireMember(orm, actor, row.teamId, 'Deleted attachment');
+  const membership = requireScopedAccess(
+    orm,
+    actor,
+    row.teamId,
+    attachmentProjectId(orm, row),
+    'Deleted attachment',
+  );
   if (!canRestoreContent(membership, row.uploaderId)) {
     throw errors.forbidden('You can only restore your own files');
   }

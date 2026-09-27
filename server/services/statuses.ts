@@ -16,7 +16,7 @@ import * as s from '../db/schema';
 import { change, diffFields } from '../lib/diff';
 import { errors } from '../lib/errors';
 import { newId } from '../lib/ids';
-import { requireMember, requirePermission, type Membership } from './access';
+import { requirePermission, requireProjectAccess, type Membership } from './access';
 import { recordActivity } from './activity';
 import { emitAfterCommit } from './events';
 import { queueLinkedIssueEvents } from './linkEvents';
@@ -98,7 +98,7 @@ function requireManageableStatus(deps: AppDeps, actor: Actor, statusId: string):
     .where(and(eq(s.status.id, statusId), isNull(s.project.deletedAt), isNull(s.team.deletedAt)))
     .get();
   if (!row) throw errors.notFound('Status');
-  const membership = requireMember(orm, actor, row.project.teamId, 'Status');
+  const membership = requireProjectAccess(orm, actor, row.project.id, 'Status');
   requirePermission(membership, 'MANAGE_STATUSES', "You don't have permission to manage statuses");
   return { ...row, membership };
 }

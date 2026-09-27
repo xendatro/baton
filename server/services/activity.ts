@@ -37,6 +37,7 @@ import {
   hasPermission,
   requireMember,
   requirePermission,
+  requireProjectAccess,
   type Membership,
 } from './access';
 import { canSeeAttachmentHistory } from './attachments';
@@ -468,6 +469,16 @@ function historyScope(db: DbExecutor, actor: Actor, query: EntityActivityQuery):
     undefined;
   if (!teamId) throw errors.notFound('Item');
   const membership = requireMember(db, actor, teamId, 'Item');
+  if (!hasPermission(membership, 'VIEW_AUDIT_LOG')) {
+    // Per-item history of a project the actor can't see is hidden like the item itself.
+    const projectId = db
+      .select({ projectId: s.activity.projectId })
+      .from(s.activity)
+      .where(and(entity, isNotNull(s.activity.projectId)))
+      .limit(1)
+      .get()?.projectId;
+    if (projectId) requireProjectAccess(db, actor, projectId, 'Item');
+  }
   requireHistoryAccess(db, membership, query);
   return eq(s.activity.teamId, teamId);
 }

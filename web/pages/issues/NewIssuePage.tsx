@@ -19,7 +19,7 @@ import { Button } from '@web/components/ui/button';
 import { Input } from '@web/components/ui/input';
 import { errorMessage, isApiError } from '@web/lib/api';
 import { useHotkey } from '@web/lib/hotkeys';
-import { useTeamAccess } from '@web/lib/permissions';
+import { useProjectAccess } from '@web/lib/permissions';
 import { useRouteContext } from '@web/lib/routeContext';
 import { useDocumentTitle } from '@web/lib/title';
 import { useLabels } from '@web/pages/projects/queries';
@@ -41,7 +41,7 @@ export default function NewIssuePage() {
 function NewIssueForm({ team, project }: { team: MeTeam; project: MeProject }) {
   useDocumentTitle(['New issue', project.name]);
   const navigate = useNavigate();
-  const access = useTeamAccess(team.id);
+  const access = useProjectAccess(team.id, project.id);
   const base = `/t/${team.slug}/p/${project.key}`;
   const labels = useLabels(project.id);
   const createLabel = useCreateLabelOption(project.id, access.has('MANAGE_LABELS'));

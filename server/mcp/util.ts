@@ -6,7 +6,7 @@ import * as s from '../db/schema';
 import { AppError, errors, isAppError } from '../lib/errors';
 import { absoluteUrl } from '../lib/urls';
 import { parseInput, type ValidationIssue } from '../lib/validate';
-import { requireMember } from '../services/access';
+import { requireProjectAccess } from '../services/access';
 import { findItem, type ItemType } from '../services/items';
 import { refFromAppUrl, resolveIssue, resolveTask } from '../services/refs';
 
@@ -141,7 +141,7 @@ export function resolveItemRef(deps: Pick<AppDeps, 'db'>, actor: Actor, ref: str
   for (const type of ['task', 'issue'] as const) {
     const item = findItem(deps.db.orm, type, value);
     if (item) {
-      requireMember(deps.db.orm, actor, item.teamId, 'Item');
+      requireProjectAccess(deps.db.orm, actor, item.projectId, 'Item');
       return { type, id: item.id };
     }
   }

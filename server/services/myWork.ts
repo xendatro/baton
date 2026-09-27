@@ -29,7 +29,13 @@ import type { DbExecutor } from '../db';
 import * as s from '../db/schema';
 import { errors } from '../lib/errors';
 import { likeContains } from '../lib/sql';
-import { listMemberships, requireMember, type Membership } from './access';
+import {
+  listMemberships,
+  requireMember,
+  requireProjectAccess,
+  visibleProjectIds,
+  type Membership,
+} from './access';
 import { assignedTo, claimValidAt, toTaskCards, toTaskSummary, utcToday } from './taskViews';
 
 /**
@@ -75,6 +81,8 @@ export interface WorkScope {
   userId: string;
   memberships: Membership[];
   teamIds: string[];
+  /** Live projects of those teams the caller can see (`VIEW_PROJECT`). */
+  projectIds: string[];
   /** The caller's explicit roles plus the `@everyone` role of each of their teams. */
   roleIds: string[];
 }
@@ -95,6 +103,7 @@ export function workScope(db: DbExecutor, userId: string): WorkScope {
     userId,
     memberships,
     teamIds,
+    projectIds: teamIds.length === 0 ? [] : visibleProjectIds(db, userId, teamIds),
     roleIds: [...memberships.flatMap((membership) => membership.roleIds), ...everyoneRoles],
   };
 }
@@ -103,6 +112,7 @@ export function workScope(db: DbExecutor, userId: string): WorkScope {
 function liveTaskCondition(scope: WorkScope): SQL | undefined {
   return and(
     inArray(s.task.teamId, scope.teamIds),
+    inArray(s.task.projectId, scope.projectIds),
     isNull(s.task.deletedAt),
     isNull(s.project.deletedAt),
     isNull(s.team.deletedAt),
@@ -280,7 +290,7 @@ export function listMyTasks(
       .where(and(eq(s.project.id, query.projectId), isNull(s.project.deletedAt)))
       .get();
     if (!project) throw errors.notFound('Project');
-    requireMember(orm, actor, project.teamId, 'Project');
+    requireProjectAccess(orm, actor, query.projectId, 'Project');
   }
 
   const scope = workScope(orm, actor.userId);

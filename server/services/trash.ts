@@ -7,7 +7,7 @@ import type { DbExecutor, Tx } from '../db';
 import * as s from '../db/schema';
 import { errors } from '../lib/errors';
 import { excerpt } from '../lib/markdown';
-import { hasPermission, requireMember } from './access';
+import { canViewProject, hasPermission, listProjectMemberships, requireMember } from './access';
 import { recordActivity } from './activity';
 import { trashHandlers } from './trashHandlers';
 import { getUserSummaries, getViaKeys } from './users';
@@ -174,7 +174,19 @@ export function listTrash(
   const { orm } = deps.db;
   const membership = requireMember(orm, actor, teamId);
   const seeAll = hasPermission(membership, 'MANAGE_TRASH');
-  const rows = deletedRows(orm, teamId).filter((row) => seeAll || row.authorId === actor.userId);
+  // Authors see their own items, except in projects they can no longer see (design §3).
+  const visible = seeAll
+    ? null
+    : new Set(
+        listProjectMemberships(orm, actor.userId, { teamIds: [teamId], includeDeleted: true })
+          .filter(canViewProject)
+          .map((access) => access.projectId),
+      );
+  const rows = deletedRows(orm, teamId).filter(
+    (row) =>
+      seeAll ||
+      (row.authorId === actor.userId && (!row.projectId || (visible?.has(row.projectId) ?? true))),
+  );
   const users = getUserSummaries(
     orm,
     rows.flatMap((row) => [row.authorId, row.deletedById]),

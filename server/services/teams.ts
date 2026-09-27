@@ -26,6 +26,7 @@ import {
   requireMember,
   requireOwner,
   requirePermission,
+  visibleProjectIds,
 } from './access';
 import { recordActivity } from './activity';
 import { emitAfterCommit } from './events';
@@ -179,7 +180,12 @@ export function getTeam(deps: AppDeps, actor: Actor, teamId: string): TeamDetail
 }
 
 /** Live projects of a team as cards, by name, with open task and unresolved issue counts. */
-export function listProjectCards(db: DbExecutor, teamId: string): TeamProjectCard[] {
+/** Cards of the team's live projects, only those in `visible` when given (projects one can see). */
+export function listProjectCards(
+  db: DbExecutor,
+  teamId: string,
+  visible?: ReadonlySet<string>,
+): TeamProjectCard[] {
   const projects = db
     .select({
       id: s.project.id,
@@ -192,7 +198,8 @@ export function listProjectCards(db: DbExecutor, teamId: string): TeamProjectCar
     .from(s.project)
     .where(and(eq(s.project.teamId, teamId), isNull(s.project.deletedAt)))
     .orderBy(asc(s.project.name))
-    .all();
+    .all()
+    .filter((project) => !visible || visible.has(project.id));
   if (projects.length === 0) return [];
   const ids = projects.map((project) => project.id);
   const openTasks = new Map(
@@ -237,7 +244,14 @@ export function listProjectCards(db: DbExecutor, teamId: string): TeamProjectCar
 export function getTeamOverview(deps: AppDeps, actor: Actor, teamId: string): TeamOverview {
   const { orm } = deps.db;
   const { team } = requireTeam(orm, actor, teamId);
-  return { team: toTeamDetail(orm, team), projects: listProjectCards(orm, teamId) };
+  return {
+    team: toTeamDetail(orm, team),
+    projects: listProjectCards(
+      orm,
+      teamId,
+      new Set(visibleProjectIds(orm, actor.userId, [teamId])),
+    ),
+  };
 }
 
 /** Teams the caller owns that are in Trash and not yet purged, most recently deleted first. */

@@ -1,10 +1,10 @@
 import { and, eq, gt, isNull, or } from 'drizzle-orm';
 import { isPersonalEvent, type LiveEvent } from '@shared/events';
 import type { AppDeps } from '../context';
-import { queueLiveEvent, type Tx } from '../db';
+import { queueLiveEvent, type DbExecutor, type Tx } from '../db';
 import * as s from '../db/schema';
 import { liveEvent, type RecentEvents } from '../lib/eventBus';
-import { memberTeamIds } from './access';
+import { canViewProject, listProjectMemberships, memberTeamIds } from './access';
 
 /**
  * Live events (SPEC §5). Two ways to publish, both delivered only after the data is committed:
@@ -58,6 +58,9 @@ export function userEventFilter(
   userId: string,
 ): (event: LiveEvent) => boolean {
   let teams = new Set(memberTeamIds(deps.db.orm, userId));
+  let hidden: Set<string> | null = null;
+  const hiddenProjects = () =>
+    (hidden ??= new Set(hiddenProjectIds(deps.db.orm, userId, [...teams])));
   return (event) => {
     if (isPersonalEvent(event) || event.teamId === null) return event.userId === userId;
     let visible = teams.has(event.teamId);
@@ -65,8 +68,32 @@ export function userEventFilter(
       teams = new Set(memberTeamIds(deps.db.orm, userId));
       visible ||= teams.has(event.teamId);
     }
+    if (changesProjectAccess(event)) hidden = null;
+    // Events of projects the user can't see (VIEW_PROJECT) are not delivered (design §3), except
+    // access changes, which may have just hidden the project: the client then drops it.
+    if (visible && event.projectId && event.type !== 'project_access.changed') {
+      visible = !hiddenProjects().has(event.projectId);
+    }
     return visible;
   };
+}
+
+/** Projects (deleted ones included) of the user's teams that they can't see. */
+function hiddenProjectIds(db: DbExecutor, userId: string, teamIds: readonly string[]): string[] {
+  if (teamIds.length === 0) return [];
+  return listProjectMemberships(db, userId, { teamIds, includeDeleted: true })
+    .filter((access) => !canViewProject(access))
+    .map((access) => access.projectId);
+}
+
+/** Events after which the projects a user can see may differ. */
+function changesProjectAccess(event: LiveEvent): boolean {
+  return (
+    changesMembership(event) ||
+    event.type === 'role.changed' ||
+    event.type === 'project_access.changed' ||
+    event.type === 'project.created'
+  );
 }
 
 /** How long `GET /api/events/poll` waits for an event before answering with none. */

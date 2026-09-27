@@ -330,7 +330,7 @@ test('members see only what their permissions allow, and the tasks addressing an
   const owner = await signedInUser(page);
   const other = await secondUser(browser);
   // Members can open issues and reply, but not triage, create tasks or edit others' content.
-  const team = seedTeam(owner, [other.user], ['CREATE_ISSUES', 'REPLY']);
+  const team = seedTeam(owner, [other.user], ['VIEW_PROJECT', 'CREATE_ISSUES', 'REPLY']);
   const project = await createProject(page, team, 'SEC');
   const issue = await createIssue(page, project.id, { title: 'Owner’s issue' });
   const task = await page.request.post(`/api/projects/${project.id}/tasks`, {
@@ -376,7 +376,7 @@ test('members see only what their permissions allow, and the tasks addressing an
   withDatabase((db) =>
     db
       .prepare('update role set permissions = ? where id = ?')
-      .run(JSON.stringify(['REPLY']), `${team.id}r`),
+      .run(JSON.stringify(['VIEW_PROJECT', 'REPLY']), `${team.id}r`),
   );
   await memberPage.goto(`/t/${team.slug}/p/SEC/issues`);
   await expect(memberPage.getByRole('link', { name: 'Owner’s issue' })).toBeVisible();

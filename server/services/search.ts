@@ -6,7 +6,7 @@ import type { Actor, AppDeps } from '../context';
 import type { Tx } from '../db';
 import { excerpt } from '../lib/markdown';
 import { appPaths } from '../lib/urls';
-import { memberTeamIds } from './access';
+import { memberTeamIds, visibleProjectIds } from './access';
 
 /**
  * Full-text search over tasks, issues and replies (SQLite FTS5, SPEC §1.9). The index is
@@ -132,13 +132,13 @@ interface RefRow {
 }
 
 /**
- * The live tasks and issues a ref query names, in the given teams: the project key may be the
- * current key or an old one (`project_key_alias`), as everywhere refs are accepted.
+ * The live tasks and issues a ref query names, in the given (visible) projects: the project key
+ * may be the current key or an old one (`project_key_alias`), as everywhere refs are accepted.
  */
 function refMatches(
   deps: AppDeps,
   ref: RefQuery,
-  teamIds: readonly string[],
+  projectIds: readonly string[],
   query: SearchQuery,
 ): SearchResult[] {
   const results: SearchResult[] = [];
@@ -146,7 +146,7 @@ function refMatches(
     if (!query.types.includes(kind)) continue;
     const table = kind === 'task' ? 'task' : 'issue';
     const text = kind === 'task' ? 'item.description' : 'item.body';
-    const params: unknown[] = [ref.number, ...teamIds];
+    const params: unknown[] = [ref.number, ...projectIds];
     let where = '';
     if (ref.projectKey) {
       where += ` and (p.key = ? or exists (select 1 from project_key_alias a
@@ -170,7 +170,7 @@ function refMatches(
         join project p on p.id = item.project_id and p.deleted_at is null
         join team t on t.id = item.team_id and t.deleted_at is null
         where item.deleted_at is null and item.number = ?
-          and item.team_id in (${teamIds.map(() => '?').join(', ')})${where}
+          and item.project_id in (${projectIds.map(() => '?').join(', ')})${where}
         order by t.slug, p.key
         limit ?`,
       )
@@ -206,9 +206,12 @@ export function search(deps: AppDeps, actor: Actor, query: SearchQuery): SearchR
   let teamIds = memberTeamIds(deps.db.orm, actor.userId);
   if (query.teamId) teamIds = teamIds.filter((id) => id === query.teamId);
   if (teamIds.length === 0 || query.types.length === 0) return { results: [] };
+  // Projects the caller can't see (`VIEW_PROJECT`) are left out entirely (design §3).
+  const projectIds = visibleProjectIds(deps.db.orm, actor.userId, teamIds);
+  if (projectIds.length === 0) return { results: [] };
 
   const refQuery = parseRefQuery(query.q);
-  const exact = refQuery ? refMatches(deps, refQuery, teamIds, query) : [];
+  const exact = refQuery ? refMatches(deps, refQuery, projectIds, query) : [];
   const found = new Set(exact.map((result) => `${result.entityType}:${result.entityId}`));
 
   const placeholders = (values: readonly unknown[]) => values.map(() => '?').join(', ');
@@ -237,6 +240,7 @@ export function search(deps: AppDeps, actor: Actor, query: SearchQuery): SearchR
     left join issue ri on r.parent_type = 'issue' and ri.id = r.parent_id and ri.deleted_at is null
     where search_index match ?
       and search_index.team_id in (${placeholders(teamIds)})
+      and search_index.project_id in (${placeholders(projectIds)})
       and search_index.entity_type in (${placeholders(query.types)})
       ${query.projectId ? 'and search_index.project_id = ?' : ''}
       and coalesce(tk.id, i.id, rt.id, ri.id) is not null
@@ -246,6 +250,7 @@ export function search(deps: AppDeps, actor: Actor, query: SearchQuery): SearchR
   const rows = statement.all(
     match,
     ...teamIds,
+    ...projectIds,
     ...query.types,
     ...(query.projectId ? [query.projectId] : []),
     query.limit,

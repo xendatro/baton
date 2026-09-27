@@ -17,10 +17,13 @@ import { excerpt } from '../lib/markdown';
 import { addedMentions } from '../lib/mentions';
 import {
   getMembership,
+  getProjectAccess,
   hasPermission,
   memberTeamIds,
+  projectViewerIds,
   roleMemberIds,
   teamMemberIds,
+  visibleProjectIds,
 } from './access';
 import { emitAfterCommit } from './events';
 import { subscriberIds } from './subscriptions';
@@ -78,7 +81,10 @@ export function notifyUsers(
       .all()
       .map((row) => row.userId),
   );
-  const recipients = candidates.filter((id) => members.has(id));
+  const item = itemOfTarget(tx, target);
+  // Nobody hears about a project they can't see (VIEW_PROJECT, design §3).
+  const inTeam = candidates.filter((id) => members.has(id));
+  const recipients = item.projectId ? projectViewerIds(tx, item.projectId, inTeam) : inTeam;
   if (recipients.length === 0) return [];
 
   const snippet = target.snippet ? excerpt(target.snippet, SNIPPET_LENGTH) : '';
@@ -99,7 +105,6 @@ export function notifyUsers(
     createdAt: now,
   }));
   tx.insert(s.notification).values(rows).run();
-  const item = itemOfTarget(tx, target);
   for (const row of rows) {
     notified.add(row.userId);
     emitAfterCommit(tx, {
@@ -187,7 +192,13 @@ export function notifyMentions(
 ): string[] {
   const notified = options.notified ?? new Set<string>();
   const mentions = addedMentions(body, options.previousBody);
-  const membership = actor ? getMembership(tx, target.teamId, actor.userId) : null;
+  // MENTION_EVERYONE is project-level: the actor's permission in the target's project, if any.
+  const projectId = itemOfTarget(tx, target).projectId;
+  const membership = !actor
+    ? null
+    : projectId
+      ? getProjectAccess(tx, actor.userId, projectId)
+      : getMembership(tx, target.teamId, actor.userId);
   const mentionAll = membership ? hasPermission(membership, 'MENTION_EVERYONE') : false;
 
   const direct =
@@ -326,10 +337,16 @@ const liveSubjectCondition = sql`(case ${s.notification.entityType}
 
 /** The actor's notifications from teams they still belong to, about items that aren't deleted. */
 function visibleCondition(db: DbExecutor, actor: Actor) {
+  const teamIds = memberTeamIds(db, actor.userId);
   return and(
     eq(s.notification.userId, actor.userId),
-    inArray(s.notification.teamId, memberTeamIds(db, actor.userId)),
+    inArray(s.notification.teamId, teamIds),
     liveSubjectCondition,
+    // Notifications about projects the actor can no longer see are hidden with the project.
+    or(
+      sql`${notificationProjectId} is null`,
+      inArray(notificationProjectId, visibleProjectIds(db, actor.userId, teamIds)),
+    ),
   );
 }
 

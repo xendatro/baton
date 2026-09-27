@@ -4,6 +4,7 @@ import { adminTools } from './admin';
 import { coreTools } from './core';
 import type { McpTool, ToolContext } from './define';
 import { issuesTools } from './issues';
+import { projectAccessTools } from './projectAccess';
 import { projectsTools } from './projects';
 import { tasksTools } from './tasks';
 import { teamsTools } from './teams';
@@ -16,6 +17,7 @@ export const allTools: readonly McpTool[] = [
   ...coreTools,
   ...teamsTools,
   ...projectsTools,
+  ...projectAccessTools,
   ...issuesTools,
   ...tasksTools,
   ...workTools,

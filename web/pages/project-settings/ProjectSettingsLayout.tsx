@@ -1,19 +1,27 @@
-import { KanbanSquareIcon, SlidersHorizontalIcon, TagsIcon, type LucideIcon } from 'lucide-react';
+import {
+  KanbanSquareIcon,
+  ShieldIcon,
+  SlidersHorizontalIcon,
+  TagsIcon,
+  type LucideIcon,
+} from 'lucide-react';
 import { NavLink, Outlet } from 'react-router';
 import { PageContainer } from '@web/components/common/PageContainer';
 import { useRouteContext } from '@web/lib/routeContext';
 import { cn } from '@web/lib/utils';
 
 /**
- * Project settings (`/t/:team/p/:key/settings/*`): a section nav (General, Statuses, Labels)
- * beside the section. Every member can open them; sections are read-only without the matching
- * permission (Manage projects, Manage statuses, Manage labels).
+ * Project settings (`/t/:team/p/:key/settings/*`): a section nav (General, Statuses, Labels,
+ * Access) beside the section. Every member who can see the project can open them; sections are
+ * read-only without the matching permission (Manage projects, Manage statuses, Manage labels,
+ * Manage project access).
  */
 
 const SECTIONS: ReadonlyArray<{ to: string; label: string; icon: LucideIcon }> = [
   { to: 'general', label: 'General', icon: SlidersHorizontalIcon },
   { to: 'statuses', label: 'Statuses', icon: KanbanSquareIcon },
   { to: 'labels', label: 'Labels', icon: TagsIcon },
+  { to: 'access', label: 'Access', icon: ShieldIcon },
 ];
 
 export default function ProjectSettingsLayout() {

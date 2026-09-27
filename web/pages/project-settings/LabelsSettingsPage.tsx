@@ -28,7 +28,7 @@ import { Skeleton } from '@web/components/ui/skeleton';
 import { errorMessage, isApiError } from '@web/lib/api';
 import { pluralize } from '@web/lib/format';
 import { fieldErrors } from '@web/lib/forms';
-import { useTeamAccess } from '@web/lib/permissions';
+import { useProjectAccess } from '@web/lib/permissions';
 import { useRouteContext } from '@web/lib/routeContext';
 import { useDocumentTitle } from '@web/lib/title';
 import { useCreateLabel, useDeleteLabel, useLabels, useUpdateLabel } from '../projects/queries';
@@ -55,7 +55,7 @@ function usage(label: LabelEntity): string {
 }
 
 function Labels({ teamId, projectId }: { teamId: string; projectId: string }) {
-  const access = useTeamAccess(teamId);
+  const access = useProjectAccess(teamId, projectId);
   const canManage = access.has('MANAGE_LABELS');
   const labels = useLabels(projectId);
   const remove = useDeleteLabel(projectId);

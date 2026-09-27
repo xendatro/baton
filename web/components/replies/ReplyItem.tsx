@@ -20,7 +20,7 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from '@web/components/ui/tooltip';
 import { errorMessage } from '@web/lib/api';
 import { formatDateTime } from '@web/lib/format';
-import { useTeamAccess } from '@web/lib/permissions';
+import { useProjectAccess } from '@web/lib/permissions';
 import { queryKeys } from '@web/lib/queryKeys';
 import { useDeleteAttachment, useDeleteReply, useUpdateReply } from './queries';
 
@@ -32,7 +32,7 @@ export interface ReplyItemProps {
 
 /** One reply: author (+ via key), time, "edited" marker, body, attachments, edit and delete. */
 export function ReplyItem({ reply, footer }: ReplyItemProps) {
-  const access = useTeamAccess(reply.teamId);
+  const access = useProjectAccess(reply.teamId, reply.projectId);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(reply.body);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -163,6 +163,7 @@ export function ReplyItem({ reply, footer }: ReplyItemProps) {
             targetType="reply"
             targetId={reply.id}
             teamId={reply.teamId}
+            projectId={reply.projectId}
             reactions={reply.reactions}
             queryKey={queryKeys.replies.list(reply.parentType, reply.parentId)}
           />

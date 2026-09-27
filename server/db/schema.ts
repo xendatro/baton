@@ -372,6 +372,83 @@ export const projectKeyAlias = sqliteTable(
   ],
 );
 
+/**
+ * Project roles (docs/design/agents-and-pipelines.md §3): per-project groups of members (people
+ * or agents). They carry no permissions themselves; overrides for them do.
+ */
+export const projectRole = sqliteTable(
+  'project_role',
+  {
+    id: idColumn(),
+    projectId: text('project_id')
+      .notNull()
+      .references(() => project.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    slug: text('slug').notNull(),
+    color: text('color'),
+    /** Higher ranks higher. */
+    position: integer('position').notNull(),
+    createdAt: createdAtColumn(),
+    updatedAt: updatedAtColumn(),
+  },
+  (t) => [uniqueIndex('project_role_project_slug_unique').on(t.projectId, t.slug)],
+);
+
+export const projectRoleMember = sqliteTable(
+  'project_role_member',
+  {
+    projectRoleId: text('project_role_id')
+      .notNull()
+      .references(() => projectRole.id, { onDelete: 'cascade' }),
+    userId: text('user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    createdAt: createdAtColumn(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.projectRoleId, t.userId] }),
+    index('project_role_member_user_idx').on(t.userId),
+  ],
+);
+
+export const PERMISSION_OVERRIDE_SUBJECTS = ['team_role', 'project_role', 'user'] as const;
+export type PermissionOverrideSubject = (typeof PERMISSION_OVERRIDE_SUBJECTS)[number];
+
+/**
+ * Per-project permission overrides of a team role, a project role or a member (project-level
+ * permissions only). The subject has no foreign key (three tables); services delete the rows of
+ * deleted roles and departed members.
+ */
+export const projectPermissionOverride = sqliteTable(
+  'project_permission_override',
+  {
+    id: idColumn(),
+    projectId: text('project_id')
+      .notNull()
+      .references(() => project.id, { onDelete: 'cascade' }),
+    subjectType: text('subject_type', { enum: PERMISSION_OVERRIDE_SUBJECTS }).notNull(),
+    subjectId: text('subject_id').notNull(),
+    allow: text('allow', { mode: 'json' })
+      .$type<Permission[]>()
+      .notNull()
+      .default(sql`'[]'`),
+    deny: text('deny', { mode: 'json' })
+      .$type<Permission[]>()
+      .notNull()
+      .default(sql`'[]'`),
+    createdAt: createdAtColumn(),
+    updatedAt: updatedAtColumn(),
+  },
+  (t) => [
+    uniqueIndex('project_permission_override_subject_unique').on(
+      t.projectId,
+      t.subjectType,
+      t.subjectId,
+    ),
+    index('project_permission_override_subject_idx').on(t.subjectType, t.subjectId),
+  ],
+);
+
 export const status = sqliteTable(
   'status',
   {

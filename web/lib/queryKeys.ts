@@ -75,6 +75,10 @@ export const queryKeys = {
     detail: (projectId: string) => ['projects', projectId] as const,
     statuses: (projectId: string) => ['projects', projectId, 'statuses'] as const,
     labels: (projectId: string) => ['projects', projectId, 'labels'] as const,
+    /** Project roles and their members (design §3). */
+    roles: (projectId: string) => ['projects', projectId, 'roles'] as const,
+    /** The project's permission overrides and the viewer's permissions there. */
+    permissions: (projectId: string) => ['projects', projectId, 'permissions'] as const,
   },
 
   issues: {

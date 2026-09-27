@@ -24,7 +24,7 @@ import {
   SelectValue,
 } from '@web/components/ui/select';
 import { api } from '@web/lib/api';
-import { useTeamAccess } from '@web/lib/permissions';
+import { useProjectAccess } from '@web/lib/permissions';
 import { queryKeys } from '@web/lib/queryKeys';
 import { useDebouncedValue } from '@web/lib/useDebouncedValue';
 import { cn } from '@web/lib/utils';
@@ -340,7 +340,9 @@ export interface TaskRelationsProps {
 export function TaskRelations({ task, editable, onChange }: TaskRelationsProps) {
   const blockerIds = new Set([task.id, ...task.blockedBy.map((item) => item.id)]);
   const issueIds = new Set(task.issues.map((issue) => issue.id));
-  const newLinkKind: IssueLinkKind = useTeamAccess(task.teamId).has('RESOLVE_ISSUES')
+  const newLinkKind: IssueLinkKind = useProjectAccess(task.teamId, task.projectId).has(
+    'RESOLVE_ISSUES',
+  )
     ? 'fixes'
     : 'relates';
   return (

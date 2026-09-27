@@ -23,6 +23,7 @@ import { newId } from '../lib/ids';
 import { canManageRole, hasPermission, requirePermission, type Membership } from './access';
 import { recordActivity } from './activity';
 import { emitAfterCommit } from './events';
+import { deleteOverridesOf } from './projectAccess';
 import { unassignFromTasks } from './taskAssignees';
 import { memberCounts, requireTeam } from './teams';
 
@@ -333,8 +334,9 @@ export function deleteRole(
 
   deps.db.write((tx) => {
     const unassignedTasks = unassignFromTasks(tx, actor, teamId, { roleId }, 'role_deleted');
-    // member_role rows go with the role (ON DELETE CASCADE).
+    // member_role rows go with the role (ON DELETE CASCADE); its project overrides go too.
     tx.delete(s.role).where(eq(s.role.id, roleId)).run();
+    deleteOverridesOf(tx, 'team_role', roleId);
     tx.update(s.role)
       .set({ position: sql`${s.role.position} - 1` })
       .where(and(eq(s.role.teamId, teamId), gt(s.role.position, role.position)))

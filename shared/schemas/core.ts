@@ -214,6 +214,12 @@ export const meProjectSchema = z.object({
   name: z.string(),
   icon: z.string().nullable(),
   color: z.string(),
+  /**
+   * The viewer's effective permissions in the project: team-level ones from team roles plus the
+   * project-level ones after its overrides (design §3). The server always sends it; clients treat
+   * a missing list as the team's permissions.
+   */
+  permissions: z.array(z.enum(PERMISSIONS)).optional(),
 });
 export type MeProject = z.infer<typeof meProjectSchema>;
 

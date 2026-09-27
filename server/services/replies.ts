@@ -21,7 +21,7 @@ import {
   canRestoreContent,
   requireCanDeleteContent,
   requireCanEditContent,
-  requireMember,
+  requireProjectAccess,
   requirePermission,
 } from './access';
 import { recordActivity } from './activity';
@@ -267,7 +267,7 @@ function requireReply(deps: AppDeps, actor: Actor, id: string) {
     .where(and(eq(s.reply.id, id), isNull(s.reply.deletedAt)))
     .get();
   if (!row) throw errors.notFound('Reply');
-  const membership = requireMember(orm, actor, row.teamId, 'Reply');
+  const membership = requireProjectAccess(orm, actor, row.projectId, 'Reply');
   const item = findItem(orm, row.parentType, row.parentId);
   if (!item) throw errors.notFound('Reply');
   return { row, item, membership };
@@ -559,7 +559,7 @@ export function restoreReply(deps: AppDeps, actor: Actor, id: string): void {
   const { orm } = deps.db;
   const row = orm.select().from(s.reply).where(eq(s.reply.id, id)).get();
   if (!row?.deletedAt) throw errors.notFound('Deleted reply');
-  const membership = requireMember(orm, actor, row.teamId, 'Deleted reply');
+  const membership = requireProjectAccess(orm, actor, row.projectId, 'Deleted reply');
   if (!canRestoreContent(membership, row.authorId)) {
     throw errors.forbidden('You can only restore your own replies');
   }

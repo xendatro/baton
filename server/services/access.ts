@@ -2,7 +2,10 @@ import { and, eq, inArray, isNull } from 'drizzle-orm';
 import {
   canManageRoleWith,
   canModerateMember as canModerateMemberWith,
+  combineProjectPermissions,
   effectivePermissions,
+  effectiveProjectPermissions,
+  normalizePermissions,
   hasPermission as permissionsInclude,
   type Permission,
 } from '@shared/permissions';
@@ -227,4 +230,252 @@ export function roleMemberIds(db: DbExecutor, roleIds: readonly string[]): strin
     .where(inArray(s.memberRole.roleId, [...roleIds]))
     .all();
   return rows.map((row) => row.userId);
+}
+
+// =============================================================================================
+// Project access (docs/design/agents-and-pipelines.md §3)
+// =============================================================================================
+
+/**
+ * A member's access to one project. It is a `Membership` whose `permissions` are the combined
+ * permissions in the project (team-level ones from team roles, project-level ones after the
+ * project's overrides), so every `Membership` helper above (`hasPermission`, `canEditContent`, …)
+ * works on it unchanged.
+ */
+export interface ProjectMembership extends Membership {
+  projectId: string;
+  /** The team membership: team-level permissions from team roles only. */
+  membership: Membership;
+  /** Effective project-level permissions (every project permission for owners and admins). */
+  projectPermissions: Permission[];
+}
+
+type OverrideRow = typeof s.projectPermissionOverride.$inferSelect;
+
+function overrideSets(row: OverrideRow | undefined) {
+  if (!row) return null;
+  return { allow: normalizePermissions(row.allow), deny: normalizePermissions(row.deny) };
+}
+
+/**
+ * Project access of `userId` in projects of their live teams (all of them, or `projectIds`).
+ * Deleted projects are included only with `includeDeleted`. A handful of queries whatever the
+ * number of projects. Agents (`user.kind = 'agent'`) are capped by their owner: their project
+ * permissions are intersected with the owner's in the same project (design §1, §3).
+ */
+export function listProjectMemberships(
+  db: DbExecutor,
+  userId: string,
+  options: {
+    projectIds?: readonly string[];
+    teamIds?: readonly string[];
+    includeDeleted?: boolean;
+  } = {},
+): ProjectMembership[] {
+  if (options.projectIds?.length === 0) return [];
+  const memberships = listMemberships(db, userId, options.teamIds);
+  if (memberships.length === 0) return [];
+  const byTeam = new Map(memberships.map((membership) => [membership.teamId, membership]));
+  const projects = db
+    .select({ id: s.project.id, teamId: s.project.teamId })
+    .from(s.project)
+    .where(
+      and(
+        inArray(s.project.teamId, [...byTeam.keys()]),
+        options.projectIds ? inArray(s.project.id, [...options.projectIds]) : undefined,
+        options.includeDeleted ? undefined : isNull(s.project.deletedAt),
+      ),
+    )
+    .all();
+  if (projects.length === 0) return [];
+  const projectIds = projects.map((project) => project.id);
+
+  const overrides = db
+    .select()
+    .from(s.projectPermissionOverride)
+    .where(inArray(s.projectPermissionOverride.projectId, projectIds))
+    .all();
+  const myProjectRoles = db
+    .select({ roleId: s.projectRole.id, projectId: s.projectRole.projectId })
+    .from(s.projectRoleMember)
+    .innerJoin(s.projectRole, eq(s.projectRole.id, s.projectRoleMember.projectRoleId))
+    .where(
+      and(eq(s.projectRoleMember.userId, userId), inArray(s.projectRole.projectId, projectIds)),
+    )
+    .all();
+  const everyoneRoles = new Map(
+    db
+      .select({ id: s.role.id, teamId: s.role.teamId })
+      .from(s.role)
+      .where(and(inArray(s.role.teamId, [...byTeam.keys()]), eq(s.role.isEveryone, true)))
+      .all()
+      .map((role) => [role.teamId, role.id]),
+  );
+
+  const own = projects.flatMap((project): ProjectMembership[] => {
+    const membership = byTeam.get(project.teamId);
+    if (!membership) return [];
+    const mine = overrides.filter((row) => row.projectId === project.id);
+    const find = (type: OverrideRow['subjectType'], id: string | undefined) =>
+      id === undefined
+        ? undefined
+        : mine.find((row) => row.subjectType === type && row.subjectId === id);
+    const teamRoleIds = new Set(membership.roleIds);
+    const projectRoleIds = new Set(
+      myProjectRoles.filter((row) => row.projectId === project.id).map((row) => row.roleId),
+    );
+    const roles = mine
+      .filter(
+        (row) =>
+          (row.subjectType === 'team_role' && teamRoleIds.has(row.subjectId)) ||
+          (row.subjectType === 'project_role' && projectRoleIds.has(row.subjectId)),
+      )
+      .map((row) => overrideSets(row) ?? { allow: [], deny: [] });
+    const projectPermissions = effectiveProjectPermissions({
+      isOwner: membership.isOwner,
+      teamPermissions: membership.permissions,
+      everyone: overrideSets(find('team_role', everyoneRoles.get(project.teamId))),
+      roles,
+      user: overrideSets(find('user', userId)),
+    });
+    return [projectMembership(membership, project.id, projectPermissions)];
+  });
+
+  const ownerId = agentOwnerOf(db, userId);
+  if (!ownerId) return own;
+  const owner = new Map(
+    listProjectMemberships(db, ownerId, {
+      projectIds,
+      includeDeleted: options.includeDeleted,
+    }).map((access) => [access.projectId, access]),
+  );
+  return own.map((access) => {
+    const cap = owner.get(access.projectId);
+    const within = (permissions: readonly Permission[]) =>
+      permissions.filter((permission) => cap?.permissions.includes(permission) ?? false);
+    return {
+      ...access,
+      projectPermissions: within(access.projectPermissions),
+      // An agent's combined permissions never exceed its owner's (ADMINISTRATOR included).
+      permissions: within(access.permissions),
+    };
+  });
+}
+
+function projectMembership(
+  membership: Membership,
+  projectId: string,
+  projectPermissions: Permission[],
+): ProjectMembership {
+  return {
+    ...membership,
+    projectId,
+    membership,
+    projectPermissions,
+    permissions: combineProjectPermissions(membership.permissions, projectPermissions),
+  };
+}
+
+/** The owner of an agent member (`user.agent_owner_id`), or null for people. */
+function agentOwnerOf(db: DbExecutor, userId: string): string | null {
+  const row = db
+    .select({ kind: s.user.kind, ownerId: s.user.agentOwnerId })
+    .from(s.user)
+    .where(eq(s.user.id, userId))
+    .get();
+  return row?.kind === 'agent' ? (row.ownerId ?? null) : null;
+}
+
+/**
+ * The user's access to a project of one of their live teams (deleted projects included), or null
+ * when they are not a member of its team. Visibility is not checked: see `canViewProject`.
+ */
+export function getProjectAccess(
+  db: DbExecutor,
+  userId: string,
+  projectId: string,
+): ProjectMembership | null {
+  return (
+    listProjectMemberships(db, userId, { projectIds: [projectId], includeDeleted: true })[0] ?? null
+  );
+}
+
+export function canViewProject(access: Membership): boolean {
+  return hasPermission(access, 'VIEW_PROJECT');
+}
+
+/**
+ * The actor's access to a project, or `not_found` (named after `what`) when the actor is not a
+ * member of its team or can't see it (`VIEW_PROJECT`): a hidden project doesn't exist for them.
+ * Liveness of the project is left to the caller.
+ */
+export function requireProjectAccess(
+  db: DbExecutor,
+  actor: Actor,
+  projectId: string,
+  what = 'Project',
+): ProjectMembership {
+  const access = getProjectAccess(db, actor.userId, projectId);
+  if (!access || !canViewProject(access)) throw errors.notFound(what);
+  return access;
+}
+
+/** Project access for project content, team membership for team-level things (no project). */
+export function requireScopedAccess(
+  db: DbExecutor,
+  actor: Actor,
+  teamId: string,
+  projectId: string | null,
+  what = 'Team',
+): Membership {
+  return projectId
+    ? requireProjectAccess(db, actor, projectId, what)
+    : requireMember(db, actor, teamId, what);
+}
+
+export function hasProjectPermission(access: ProjectMembership, permission: Permission): boolean {
+  return hasPermission(access, permission);
+}
+
+/** Throws 403 unless the member has `permission` in the project. */
+export function requireProjectPermission(
+  access: ProjectMembership,
+  permission: Permission,
+  message?: string,
+): void {
+  requirePermission(access, permission, message);
+}
+
+/**
+ * May the member manage the project's roles and overrides? `MANAGE_PROJECT_ACCESS` in the
+ * project, or the team's `MANAGE_PROJECTS` (owners and administrators always).
+ */
+export function canManageProjectAccess(access: ProjectMembership): boolean {
+  return (
+    hasPermission(access, 'MANAGE_PROJECT_ACCESS') ||
+    hasPermission(access.membership, 'MANAGE_PROJECTS')
+  );
+}
+
+/** Ids of the live projects (of live teams) the user can see, optionally within `teamIds`. */
+export function visibleProjectIds(
+  db: DbExecutor,
+  userId: string,
+  teamIds?: readonly string[],
+): string[] {
+  return listProjectMemberships(db, userId, { teamIds })
+    .filter(canViewProject)
+    .map((access) => access.projectId);
+}
+
+/** Those of `userIds` who can see the project (members of its team with `VIEW_PROJECT`). */
+export function projectViewerIds(
+  db: DbExecutor,
+  projectId: string,
+  userIds: Iterable<string>,
+): string[] {
+  return [...new Set(userIds)].filter((userId) => {
+    const access = getProjectAccess(db, userId, projectId);
+    return access !== null && canViewProject(access);
+  });
 }

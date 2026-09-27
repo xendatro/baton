@@ -10,6 +10,7 @@ import { canModerateMember, getMembership, hasPermission, type Membership } from
 import { recordActivity } from './activity';
 import { emitAfterCommit } from './events';
 import { revokeInvitesOf } from './invites';
+import { clearProjectAccess } from './projectAccess';
 import { requireRole, teamRoles, type RoleRow } from './roles';
 import { unassignFromTasks } from './taskAssignees';
 import { requireTeam } from './teams';
@@ -155,6 +156,7 @@ function clearMembership(
     .where(and(eq(s.teamMember.teamId, teamId), eq(s.teamMember.userId, userId)))
     .run();
   const revokedInvites = revokeInvitesOf(tx, actor, teamId, userId);
+  clearProjectAccess(tx, teamId, userId);
   return { unassignedTasks, revokedInvites };
 }
 

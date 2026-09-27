@@ -12,7 +12,7 @@ import type { Actor, AppDeps } from '../context';
 import type { DbExecutor } from '../db';
 import * as s from '../db/schema';
 import { appPaths } from '../lib/urls';
-import { canRestoreContent, hasPermission, type Membership } from './access';
+import { canRestoreContent, hasPermission, visibleProjectIds, type Membership } from './access';
 import { toActivityEntries, type ActivityRow } from './activity';
 import { canSeeAttachmentHistory } from './attachments';
 import { trashedItem, trashedReply, type TrashEntry } from './items';
@@ -75,7 +75,11 @@ function assignedCounts(
  * history (issues, tasks, replies, files) whose item is live, or in Trash for its author and
  * `MANAGE_TRASH` (the rule `GET /api/activity` applies).
  */
-function createVisibility(db: DbExecutor, memberships: readonly Membership[]) {
+function createVisibility(
+  db: DbExecutor,
+  memberships: readonly Membership[],
+  visibleProjects: ReadonlySet<string>,
+) {
   const byTeam = new Map(memberships.map((membership) => [membership.teamId, membership]));
   const trashCache = new Map<string, TrashEntry | null>();
   const trashEntry = (type: 'issue' | 'task' | 'reply', id: string) => {
@@ -89,6 +93,8 @@ function createVisibility(db: DbExecutor, memberships: readonly Membership[]) {
     const membership = row.teamId ? byTeam.get(row.teamId) : undefined;
     if (!membership) return false;
     if (hasPermission(membership, 'VIEW_AUDIT_LOG')) return true;
+    // Rows of projects the member can't see are hidden like the projects (design §3).
+    if (row.projectId && !visibleProjects.has(row.projectId)) return false;
     switch (row.entityType) {
       case 'issue':
       case 'task':
@@ -104,12 +110,25 @@ function createVisibility(db: DbExecutor, memberships: readonly Membership[]) {
   };
 }
 
-/** The newest activity rows across the caller's teams that they may see. */
+/**
+ * The newest activity rows across the caller's teams that they may see. `visibleProjects` (the
+ * projects they can see) defaults to looking them up.
+ */
 export function recentActivity(
   db: DbExecutor,
   memberships: readonly Membership[],
   limit: number = DASHBOARD_ACTIVITY_LIMIT,
+  visibleProjects?: ReadonlySet<string>,
 ): ActivityRow[] {
+  const [first] = memberships;
+  if (!first) return [];
+  visibleProjects ??= new Set(
+    visibleProjectIds(
+      db,
+      first.userId,
+      memberships.map((membership) => membership.teamId),
+    ),
+  );
   const streams = memberships.map((membership) =>
     teamActivityStream(
       db,
@@ -117,7 +136,7 @@ export function recentActivity(
       hasPermission(membership, 'VIEW_AUDIT_LOG') ? null : MEMBER_VISIBLE_TYPES,
     ),
   );
-  const visible = createVisibility(db, memberships);
+  const visible = createVisibility(db, memberships, visibleProjects);
   const found: ActivityRow[] = [];
   for (let scanned = 0; scanned < ACTIVITY_SCAN_LIMIT && found.length < limit; scanned += 1) {
     // Merge the teams' streams: take the newest head row among them.
@@ -200,7 +219,11 @@ function isNewer(a: ActivityRow, b: ActivityRow): boolean {
 }
 
 /** The caller's live teams by name, with member counts and project cards. */
-function teamsWithProjects(db: DbExecutor, teamIds: readonly string[]): DashboardTeam[] {
+function teamsWithProjects(
+  db: DbExecutor,
+  teamIds: readonly string[],
+  visibleProjects: ReadonlySet<string>,
+): DashboardTeam[] {
   if (teamIds.length === 0) return [];
   const teams = db
     .select()
@@ -220,7 +243,7 @@ function teamsWithProjects(db: DbExecutor, teamIds: readonly string[]): Dashboar
     color: team.color,
     memberCount: members.get(team.id) ?? 0,
     url: appPaths.team(team.slug),
-    projects: listProjectCards(db, team.id).map((project) => ({
+    projects: listProjectCards(db, team.id, visibleProjects).map((project) => ({
       ...project,
       url: appPaths.project(team.slug, project.key),
     })),
@@ -264,6 +287,7 @@ export function getDashboard(
     );
 
   const claimedWhere = claimedByCondition(scope, now);
+  const visibleProjects = new Set(scope.projectIds);
   return {
     today,
     counts: { ...assignedCounts(orm, scope, today), claimed: countTasks(orm, claimedWhere) },
@@ -274,7 +298,10 @@ export function getDashboard(
       taskOrder('due'),
     ),
     claimed: list(claimedWhere, [desc(s.task.claimedAt), asc(s.task.id)], CLAIMED_LIMIT),
-    activity: toActivityEntries(orm, recentActivity(orm, scope.memberships)),
-    teams: teamsWithProjects(orm, scope.teamIds),
+    activity: toActivityEntries(
+      orm,
+      recentActivity(orm, scope.memberships, DASHBOARD_ACTIVITY_LIMIT, visibleProjects),
+    ),
+    teams: teamsWithProjects(orm, scope.teamIds, visibleProjects),
   };
 }

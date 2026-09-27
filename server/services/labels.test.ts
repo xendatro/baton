@@ -94,7 +94,7 @@ describe('labels', () => {
   it('refuses labels without MANAGE_LABELS and hides the project from outsiders', () => {
     ctx.db.orm
       .update(s.role)
-      .set({ permissions: [] })
+      .set({ permissions: ['VIEW_PROJECT'] })
       .where(eq(s.role.id, team.everyoneRole.id))
       .run();
     expect(() =>

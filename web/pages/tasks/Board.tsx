@@ -41,6 +41,7 @@ import { StatusIcon } from '@web/components/common/StatusBadge';
 import { Button } from '@web/components/ui/button';
 import { Skeleton } from '@web/components/ui/skeleton';
 import { cn } from '@web/lib/utils';
+import { ColumnMenu } from './CustomizeMenu';
 import { columnOfItem, COLUMN_PREFIX, dropTarget, layoutOf, type Layout } from './helpers';
 import type { MoveVariables } from './queries';
 import { TaskCardBody } from './TaskCard';
@@ -97,6 +98,8 @@ export interface BoardProps {
    * yet), so the columns stay visible behind a small prompt rather than a page-wide empty state.
    */
   hint?: ReactNode;
+  /** Where a column's "Edit statuses" goes; no column menu without it. */
+  editStatusHref?: (statusId: string) => string;
 }
 
 export function Board({
@@ -107,6 +110,7 @@ export function Board({
   onQuickAdd,
   filtered,
   hint,
+  editStatusHref,
 }: BoardProps) {
   const [dragLayout, setDragLayout] = useState<Layout | null>(null);
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -292,6 +296,7 @@ export function Board({
             onQuickAdd={onQuickAdd}
             filtered={filtered}
             hint={index === 0 ? hint : undefined}
+            editStatusHref={editStatusHref}
           />
         ))}
       </div>
@@ -344,6 +349,7 @@ interface ColumnProps {
   onQuickAdd: (statusId: string) => void;
   filtered: boolean;
   hint?: ReactNode;
+  editStatusHref?: (statusId: string) => string;
 }
 
 function Column({
@@ -355,6 +361,7 @@ function Column({
   onQuickAdd,
   filtered,
   hint,
+  editStatusHref,
 }: ColumnProps) {
   const { status } = column;
   const { setNodeRef, isOver } = useDroppable({ id: `${COLUMN_PREFIX}${status.id}` });
@@ -363,7 +370,7 @@ function Column({
   return (
     <section
       aria-labelledby={headingId}
-      className="flex max-h-full w-[85vw] max-w-[18.5rem] shrink-0 snap-start flex-col rounded-xl bg-muted/50 sm:w-72 dark:bg-muted/30"
+      className="group/column flex max-h-full w-[85vw] max-w-[18.5rem] shrink-0 snap-start flex-col rounded-xl bg-muted/50 sm:w-72 dark:bg-muted/30"
     >
       <header className="flex items-center gap-2 px-3 pt-3 pb-2">
         <StatusIcon status={status} />
@@ -386,6 +393,13 @@ function Column({
           >
             <PlusIcon aria-hidden="true" />
           </Button>
+        ) : null}
+        {editStatusHref ? (
+          <ColumnMenu
+            statusName={status.name}
+            editHref={editStatusHref(status.id)}
+            className={canCreate ? '-ml-1' : 'ml-auto'}
+          />
         ) : null}
       </header>
       <SortableContext id={status.id} items={ids} strategy={verticalListSortingStrategy}>

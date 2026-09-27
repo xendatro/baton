@@ -32,7 +32,7 @@ import { useProjectAccess } from '@web/lib/permissions';
 import { useRouteContext } from '@web/lib/routeContext';
 import { useDocumentTitle } from '@web/lib/title';
 import { useCreateLabel, useDeleteLabel, useLabels, useUpdateLabel } from '../projects/queries';
-import { ReadOnlyNotice, SettingsCard, SettingsHeader } from './common';
+import { BoardBackLink, ReadOnlyNotice, SettingsCard, SettingsHeader } from './common';
 
 /**
  * Project settings → Labels: the labels its issues and tasks share, with how often each is used.
@@ -42,7 +42,12 @@ export default function LabelsSettingsPage() {
   const { team, project } = useRouteContext();
   useDocumentTitle(['Labels', project?.name]);
   if (!team || !project) return null;
-  return <Labels key={project.id} teamId={team.id} projectId={project.id} />;
+  return (
+    <>
+      <BoardBackLink team={team} project={project} />
+      <Labels key={project.id} teamId={team.id} projectId={project.id} />
+    </>
+  );
 }
 
 type Editing = { mode: 'create' } | { mode: 'edit'; label: LabelEntity } | null;

@@ -23,7 +23,8 @@ import {
   Trash2Icon,
   WorkflowIcon,
 } from 'lucide-react';
-import { useId, useState, type FormEvent, type KeyboardEvent } from 'react';
+import { useEffect, useId, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
+import { useSearchParams } from 'react-router';
 import { toast } from 'sonner';
 import { COLOR_PALETTE, LIMITS } from '@shared/constants';
 import { DEFAULT_STAGE_RULES } from '@shared/schemas/pipelines';
@@ -69,7 +70,7 @@ import {
   useStatuses,
   useUpdateStatus,
 } from '../projects/queries';
-import { ReadOnlyNotice, SettingsCard, SettingsHeader } from './common';
+import { BoardBackLink, ReadOnlyNotice, SettingsCard, SettingsHeader } from './common';
 import { CopyPipelineDialog } from './CopyPipelineDialog';
 import { usePrincipalOptions } from './pipelineQueries';
 import { StageRulesDialog } from './StageRulesDialog';
@@ -81,13 +82,19 @@ import { countRules } from './stageRules';
  * the default for new tasks, add and delete (moving the tasks elsewhere). What a stage does —
  * hand-off, on-enter effects, blocking, claiming, exit rules — is its rules, edited in a dialog;
  * "Copy pipeline from…" copies another project's statuses and rules.
+ * `?status=<id>` (a board column's "Edit statuses") scrolls to that status and highlights it.
  */
 
 export default function StatusesSettingsPage() {
   const { team, project } = useRouteContext();
   useDocumentTitle(['Statuses', project?.name]);
   if (!team || !project) return null;
-  return <Statuses key={project.id} teamId={team.id} projectId={project.id} />;
+  return (
+    <>
+      <BoardBackLink team={team} project={project} />
+      <Statuses key={project.id} teamId={team.id} projectId={project.id} />
+    </>
+  );
 }
 
 function Statuses({ teamId, projectId }: { teamId: string; projectId: string }) {
@@ -101,6 +108,8 @@ function Statuses({ teamId, projectId }: { teamId: string; projectId: string }) 
   const [copying, setCopying] = useState(false);
   const principals = usePrincipalOptions(teamId, projectId);
   const me = useMe();
+  const [searchParams] = useSearchParams();
+  const targetId = searchParams.get('status');
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
@@ -207,6 +216,7 @@ function Statuses({ teamId, projectId }: { teamId: string; projectId: string }) 
                       projectId={projectId}
                       canManage={canManage}
                       isOnly={items.length === 1}
+                      targeted={status.id === targetId}
                       onDelete={() => setDeleting(status)}
                       onEditRules={() => setEditingRules(status)}
                     />
@@ -252,6 +262,7 @@ function StatusRow({
   projectId,
   canManage,
   isOnly,
+  targeted,
   onDelete,
   onEditRules,
 }: {
@@ -259,6 +270,8 @@ function StatusRow({
   projectId: string;
   canManage: boolean;
   isOnly: boolean;
+  /** Linked to with `?status=`: scrolled into view, briefly highlighted, name focused. */
+  targeted: boolean;
   onDelete: () => void;
   onEditRules: () => void;
 }) {
@@ -279,6 +292,19 @@ function StatusRow({
     setSavedName(status.name);
     setName(status.name);
   }
+  const nameRef = useRef<HTMLInputElement>(null);
+  const [highlight, setHighlight] = useState(targeted);
+  useEffect(() => {
+    if (!targeted) return;
+    const input = nameRef.current;
+    input?.scrollIntoView?.({ block: 'center' });
+    // Focus the name for keyboard and mouse users; on touch screens that would pop the keyboard.
+    if (canManage && window.matchMedia?.('(pointer: fine)').matches) {
+      input?.focus({ preventScroll: true });
+    }
+    const timer = window.setTimeout(() => setHighlight(false), 2500);
+    return () => window.clearTimeout(timer);
+  }, [targeted, canManage]);
 
   const commitName = () => {
     const parsed = statusNameSchema.safeParse(name);
@@ -314,8 +340,10 @@ function StatusRow({
       className={cn(
         'grid grid-cols-[2rem_2rem_minmax(0,1fr)_4.5rem] items-center gap-x-2 gap-y-2 border-b bg-card px-3 py-2 last:border-b-0 sm:grid-cols-[2rem_2rem_minmax(0,1fr)_4.5rem_5rem_4.5rem]',
         isDragging && 'relative z-10 rounded-md shadow-lg ring-1 ring-border',
+        highlight && 'bg-primary/5 ring-2 ring-primary/40 ring-inset',
       )}
       data-testid="status-row"
+      data-targeted={targeted || undefined}
     >
       <button
         type="button"
@@ -344,6 +372,7 @@ function StatusRow({
         </button>
       </StatusIconPicker>
       <Input
+        ref={nameRef}
         value={name}
         onChange={(event) => setName(event.target.value)}
         onBlur={commitName}

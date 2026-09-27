@@ -1,6 +1,23 @@
 import { LockIcon } from 'lucide-react';
 import type { ReactNode } from 'react';
+import type { MeProject, MeTeam } from '@shared/schemas/core';
+import { BackLink } from '@web/components/common/BackLink';
 import { cn } from '@web/lib/utils';
+import { tasksViewPath, useTaskView } from '../tasks/filters';
+
+/**
+ * "← Board" above the Statuses and Labels sections: back to the project's board (or list, as the
+ * viewer last left it, filters included), so a detour from the Tasks page is a round trip.
+ */
+export function BoardBackLink({ team, project }: { team: MeTeam; project: MeProject }) {
+  const [view] = useTaskView(project.id);
+  return (
+    <BackLink
+      to={tasksViewPath(`/t/${team.slug}/p/${project.key}`, project.id)}
+      label={view === 'list' ? 'List' : 'Board'}
+    />
+  );
+}
 
 /** Title row of a project settings section. */
 export function SettingsHeader({

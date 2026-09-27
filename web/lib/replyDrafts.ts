@@ -6,7 +6,8 @@ import { attachmentSchema } from '@shared/schemas/core';
  * Unsent reply drafts (UX-13): the reply composer keeps its text and pending files in
  * sessionStorage per thread, so following a link away, Back or a reload doesn't lose them. Drafts
  * belong to the signed-in user: the key carries their id, so someone else signing in in the same
- * tab never gets them, and signing out removes them all.
+ * tab never gets them, and signing out removes them all. An answer to a reply (BAT-13) has its own
+ * draft, keyed by the reply it answers.
  */
 
 const replyDraftSchema = z.object({ body: z.string(), attachments: z.array(attachmentSchema) });
@@ -18,18 +19,21 @@ export function replyDraftKey(
   userId: string,
   parentType: ReplyParentType,
   parentId: string,
+  parentReplyId?: string,
 ): string {
-  return `${PREFIX}${userId}:${parentType}:${parentId}`;
+  const base = `${PREFIX}${userId}:${parentType}:${parentId}`;
+  return parentReplyId ? `${base}:${parentReplyId}` : base;
 }
 
-/** The user's saved draft for a thread, or null. */
+/** The user's saved draft for a thread (or an answer to `parentReplyId`), or null. */
 export function readReplyDraft(
   userId: string,
   parentType: ReplyParentType,
   parentId: string,
+  parentReplyId?: string,
 ): ReplyDraft | null {
   try {
-    const raw = sessionStorage.getItem(replyDraftKey(userId, parentType, parentId));
+    const raw = sessionStorage.getItem(replyDraftKey(userId, parentType, parentId, parentReplyId));
     if (!raw) return null;
     const parsed = replyDraftSchema.safeParse(JSON.parse(raw));
     return parsed.success ? parsed.data : null;
@@ -44,9 +48,10 @@ export function writeReplyDraft(
   parentType: ReplyParentType,
   parentId: string,
   draft: ReplyDraft,
+  parentReplyId?: string,
 ): void {
   try {
-    const key = replyDraftKey(userId, parentType, parentId);
+    const key = replyDraftKey(userId, parentType, parentId, parentReplyId);
     if (!draft.body.trim() && draft.attachments.length === 0) sessionStorage.removeItem(key);
     else sessionStorage.setItem(key, JSON.stringify(draft));
   } catch {

@@ -107,6 +107,8 @@ export const replySchema = z.object({
   projectId: z.string(),
   parentType: z.enum(REPLY_PARENT_TYPES),
   parentId: z.string(),
+  /** The reply this one answers (BAT-13); null for a top-level comment. */
+  parentReplyId: z.string().nullable(),
   /** Markdown. */
   body: z.string(),
   author: userSummarySchema.nullable(),
@@ -345,18 +347,62 @@ export type AttachmentListResponse = z.infer<typeof attachmentListResponseSchema
 // Replies: /api/replies
 // ---------------------------------------------------------------------------------------------
 
+/** Reddit's defaults for a comment tree: comments on first load, and levels shown. */
+export const REPLY_TREE = { limit: 200, maxLimit: 1000, depth: 10, maxExpand: 50 } as const;
+
+/** Comma-separated ids in a query string. */
+const idListSchema = z
+  .string()
+  .transform((value) => value.split(',').filter(Boolean))
+  .pipe(z.array(idSchema).max(REPLY_TREE.maxExpand));
+
 export const listRepliesQuerySchema = z.object({
   parentType: z.enum(REPLY_PARENT_TYPES),
   parentId: idSchema,
+  /** Show only this reply and its answers ("Continue this thread"). */
+  root: idSchema.optional(),
+  /** Comments to include, oldest first (default 200). */
+  limit: z.coerce.number().int().min(1).max(REPLY_TREE.maxLimit).optional(),
+  /** Replies whose answers are all wanted ("N more replies"), comma-separated. */
+  expand: idListSchema.optional(),
+  /**
+   * Replies to load with their ancestors whatever the limits, comma-separated: a `#reply-<id>`
+   * link, replies the viewer just posted.
+   */
+  include: idListSchema.optional(),
 });
 export type ListRepliesQuery = z.infer<typeof listRepliesQuerySchema>;
 
-export const replyListResponseSchema = z.object({ items: z.array(replySchema) });
+/**
+ * A comment in a reply tree: a live reply, or a `deleted` placeholder (empty body, no author) kept
+ * because answers to it are still there.
+ */
+export const replyNodeSchema = replySchema.extend({
+  deleted: z.boolean(),
+  /** Answers shown in the tree (live replies and placeholders), loaded or not. */
+  replyCount: z.number().int(),
+  /** Level below the tree's root: 0 for top-level comments (or the `root` reply). */
+  depth: z.number().int(),
+});
+export type ReplyNode = z.infer<typeof replyNodeSchema>;
+
+export const replyListResponseSchema = z.object({
+  /** Parents before their answers; siblings oldest first. */
+  items: z.array(replyNodeSchema),
+  /** Comments in the tree (or under `root`), loaded or not. */
+  total: z.number().int(),
+  /** Top-level comments (answers to `root`), loaded or not. */
+  topLevelCount: z.number().int(),
+  /** Ancestors of `root`, outermost first (empty without `root`). */
+  ancestors: z.array(z.string()),
+});
 export type ReplyListResponse = z.infer<typeof replyListResponseSchema>;
 
 export const createReplyInputSchema = z.object({
   parentType: z.enum(REPLY_PARENT_TYPES),
   parentId: idSchema,
+  /** The reply this one answers, on the same item; omit for a top-level comment. */
+  parentReplyId: idSchema.optional(),
   body: z.string().trim().min(LIMITS.replyBody.min, 'Required').max(LIMITS.replyBody.max),
   /** Pending uploads to attach to the new reply. */
   attachmentIds: z.array(idSchema).max(LIMITS.attachmentsPerItem).optional(),

@@ -189,7 +189,7 @@ const getIssueTool = defineTool({
   name: 'get_issue',
   title: 'Get issue',
   description:
-    'Everything about an issue: title, markdown body, labels, author (and the key they used), resolved state, attachments, the tasks addressing it ("fixes" resolves it when the task is done), whether you are subscribed, the latest 20 replies in order (replyCount says how many there are; list_replies pages through them all) and a summary of its latest history.',
+    'Everything about an issue: title, markdown body, labels, author (and the key they used), resolved state, attachments, the tasks addressing it ("fixes" resolves it when the task is done), whether you are subscribed, the latest 20 replies in order, each with parentReplyId (the reply it answers, null for a top-level comment) (replyCount says how many there are; list_replies pages through them all) and a summary of its latest history.',
   input: toolInput({ issue: issueRef }),
   annotations: { readOnlyHint: true },
   handler: (ctx, input) => {

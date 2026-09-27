@@ -4,8 +4,8 @@ import { EmptyState } from '@web/components/common/EmptyState';
 import { ErrorState } from '@web/components/common/ErrorState';
 import { Skeleton } from '@web/components/ui/skeleton';
 import { useScrollToHash } from '@web/lib/useScrollToHash';
-import { useReplies } from './queries';
-import { ReplyItem } from './ReplyItem';
+import { FocusedThreadBanner, ReplyBranch, ReplyTreeProvider } from './ReplyTree';
+import { useReplyTree } from './threadState';
 
 export function ThreadSkeleton() {
   return (
@@ -29,10 +29,11 @@ export interface ThreadProps {
   parentId: string;
 }
 
-/** Replies only, oldest first. */
+/** Replies only, oldest first, answers nested under what they answer (BAT-13). */
 export function ReplyThread({ parentType, parentId }: ThreadProps) {
-  const replies = useReplies(parentType, parentId);
-  useScrollToHash(replies.isSuccess);
+  const tree = useReplyTree(parentType, parentId);
+  const replies = tree.query;
+  useScrollToHash(tree.ready);
   if (replies.isPending) return <ThreadSkeleton />;
   if (replies.isError) {
     return (
@@ -43,7 +44,7 @@ export function ReplyThread({ parentType, parentId }: ThreadProps) {
       />
     );
   }
-  if (replies.data.length === 0) {
+  if (!tree.forest || tree.forest.roots.length === 0) {
     return (
       <EmptyState
         icon={MessageSquareIcon}
@@ -53,10 +54,17 @@ export function ReplyThread({ parentType, parentId }: ThreadProps) {
     );
   }
   return (
-    <div className="space-y-3">
-      {replies.data.map((reply) => (
-        <ReplyItem key={reply.id} reply={reply} />
-      ))}
-    </div>
+    <ReplyTreeProvider value={tree.context}>
+      <div className="space-y-3">
+        {tree.focus ? <FocusedThreadBanner ancestors={replies.data.ancestors} /> : null}
+        <ol className="space-y-3" aria-label="Replies">
+          {tree.forest.roots.map((node) => (
+            <li key={node.reply.id}>
+              <ReplyBranch node={node} />
+            </li>
+          ))}
+        </ol>
+      </div>
+    </ReplyTreeProvider>
   );
 }

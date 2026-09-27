@@ -1,5 +1,5 @@
 import { MoreHorizontalIcon, PencilIcon, Trash2Icon } from 'lucide-react';
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { toast } from 'sonner';
 import type { Reply } from '@shared/schemas/core';
 import { AttachmentList } from '@web/components/attachments/AttachmentList';
@@ -26,10 +26,12 @@ import { useDeleteAttachment, useDeleteReply, useUpdateReply } from './queries';
 
 export interface ReplyItemProps {
   reply: Reply;
+  /** Actions under the reply, such as Reply in a threaded view (BAT-13). */
+  footer?: ReactNode;
 }
 
 /** One reply: author (+ via key), time, "edited" marker, body, attachments, edit and delete. */
-export function ReplyItem({ reply }: ReplyItemProps) {
+export function ReplyItem({ reply, footer }: ReplyItemProps) {
   const access = useTeamAccess(reply.teamId);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(reply.body);
@@ -155,6 +157,7 @@ export function ReplyItem({ reply }: ReplyItemProps) {
             toast.success('Attachment moved to Trash');
           }}
         />
+        {editing ? null : footer}
         <ReactionBar
           targetType="reply"
           targetId={reply.id}

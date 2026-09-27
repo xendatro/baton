@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import type { ReplyParentType } from '@shared/constants';
-import type { Attachment } from '@shared/schemas/core';
+import type { Attachment, Reply } from '@shared/schemas/core';
 import { AttachmentList } from '@web/components/attachments/AttachmentList';
 import { AttachmentUploader } from '@web/components/attachments/AttachmentUploader';
 import { Kbd } from '@web/components/common/Kbd';
@@ -22,13 +22,25 @@ export interface ReplyComposerProps {
   /** The task or issue replied to: its agent, and those of its replies, can be `@`-mentioned. */
   item?: ThreadWrite;
   placeholder?: string;
-  onSent?: () => void;
+  /** Answer this reply (BAT-13) instead of posting a top-level comment. */
+  parentReplyId?: string;
+  /** Accessible name of the editor (default "Reply"). */
+  label?: string;
+  autoFocus?: boolean;
+  /** Shows a Cancel button (inline answers). */
+  onCancel?: () => void;
+  onSent?: (reply: Reply) => void;
 }
 
 /** Reply box with mentions, uploads and Ctrl/Cmd+Enter to send. Hidden without `REPLY`. */
 export function ReplyComposer(props: ReplyComposerProps) {
-  // A fresh composer (and draft) per thread.
-  return <Composer key={`${props.parentType}:${props.parentId}`} {...props} />;
+  // A fresh composer (and draft) per thread, and per answered reply.
+  return (
+    <Composer
+      key={`${props.parentType}:${props.parentId}:${props.parentReplyId ?? ''}`}
+      {...props}
+    />
+  );
 }
 
 function Composer({
@@ -37,6 +49,10 @@ function Composer({
   teamId,
   item,
   placeholder = 'Write a reply… Type / for blocks, @ to mention.',
+  parentReplyId,
+  label = 'Reply',
+  autoFocus,
+  onCancel,
   onSent,
 }: ReplyComposerProps) {
   const access = useTeamAccess(teamId);
@@ -44,22 +60,24 @@ function Composer({
   // Unsent text survives leaving the thread (UX-13); drafts belong to the signed-in user.
   const userId = useSession().data?.user.id ?? null;
   const saveDraft = (draft: ReplyDraft) => {
-    if (userId) writeReplyDraft(userId, parentType, parentId, draft);
+    if (userId) writeReplyDraft(userId, parentType, parentId, draft, parentReplyId);
   };
-  const [saved] = useState(() => (userId ? readReplyDraft(userId, parentType, parentId) : null));
+  const [saved] = useState(() =>
+    userId ? readReplyDraft(userId, parentType, parentId, parentReplyId) : null,
+  );
   const [body, setBody] = useState(saved?.body ?? '');
   const [attachments, setAttachments] = useState<Attachment[]>(saved?.attachments ?? []);
   const create = useCreateReply(parentType, parentId);
   // BAT-12: the thread's agents lead the @ suggestions (the timeline already loads the replies).
   const replies = useReplies(parentType, parentId).data;
   const agents = useMemo(
-    () => threadAgents([...(item ? [item] : []), ...(replies ?? [])]),
+    () => threadAgents([...(item ? [item] : []), ...(replies?.items ?? [])]),
     [item, replies],
   );
   // Following a link away from the thread used to discard the text silently (UX-13).
   useEffect(() => {
-    if (userId) writeReplyDraft(userId, parentType, parentId, { body, attachments });
-  }, [userId, parentType, parentId, body, attachments]);
+    if (userId) writeReplyDraft(userId, parentType, parentId, { body, attachments }, parentReplyId);
+  }, [userId, parentType, parentId, parentReplyId, body, attachments]);
 
   if (access.isMember && !access.has('REPLY')) {
     return (
@@ -76,15 +94,19 @@ function Composer({
     // must not offer the posted text again. A failed send saves it back.
     saveDraft({ body: '', attachments: [] });
     create.mutate(
-      { body: text, attachmentIds: attachments.length ? attachments.map((a) => a.id) : undefined },
+      {
+        body: text,
+        attachmentIds: attachments.length ? attachments.map((a) => a.id) : undefined,
+        parentReplyId,
+      },
       {
         onError: () => saveDraft({ body, attachments }),
-        onSuccess: () => {
+        onSuccess: (reply) => {
           setBody('');
           setAttachments([]);
           editor.current?.clear();
           toast.success('Reply posted');
-          onSent?.();
+          onSent?.(reply);
         },
       },
     );
@@ -105,7 +127,8 @@ function Composer({
         mentionAgents={agents}
         onAttach={addAttachment}
         onSubmit={send}
-        label="Reply"
+        label={label}
+        autoFocus={autoFocus}
       />
       <AttachmentList
         attachments={attachments}
@@ -126,6 +149,19 @@ function Composer({
           <span className="hidden text-xs text-muted-foreground sm:inline-flex sm:items-center sm:gap-1">
             <Kbd keys="mod+enter" /> to send
           </span>
+          {onCancel ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                // Cancelling discards the answer.
+                saveDraft({ body: '', attachments: [] });
+                onCancel();
+              }}
+            >
+              Cancel
+            </Button>
+          ) : null}
           <Button size="sm" onClick={send} disabled={!body.trim() || create.isPending}>
             {create.isPending ? <Spinner /> : null}
             Reply

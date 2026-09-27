@@ -1,10 +1,12 @@
-import { and, asc, count, desc, eq, gt, isNull, lt, or, type SQL } from 'drizzle-orm';
-import type {
-  CreateReplyInput,
-  ListRepliesQuery,
-  Reply,
-  ReplyListResponse,
-  UpdateReplyInput,
+import { and, asc, count, desc, eq, gt, inArray, isNull, lt, or, type SQL } from 'drizzle-orm';
+import {
+  REPLY_TREE,
+  type CreateReplyInput,
+  type ListRepliesQuery,
+  type Reply,
+  type ReplyListResponse,
+  type ReplyNode,
+  type UpdateReplyInput,
 } from '@shared/schemas/core';
 import type { Actor, AppDeps } from '../context';
 import type { DbExecutor, Tx } from '../db';
@@ -30,10 +32,12 @@ import { findItem, itemResolvers, requireItem, type ItemInfo } from './items';
 import {
   notifyMentions,
   notifyReply,
+  notifyUsers,
   refreshNotificationText,
   type NotificationTarget,
 } from './notifications';
 import { reactionsByTarget } from './reactions';
+import { ReplyTree } from './replyTree';
 import { indexSearch } from './search';
 import { autoSubscribe } from './subscriptions';
 import { getUserSummaries, getViaKeys } from './users';
@@ -72,6 +76,7 @@ export function toReplies(db: DbExecutor, rows: readonly ReplyRow[], viewerId: s
     projectId: row.projectId,
     parentType: row.parentType,
     parentId: row.parentId,
+    parentReplyId: row.parentReplyId,
     body: row.body,
     author: row.authorId ? (authors.get(row.authorId) ?? null) : null,
     via: row.viaKeyId ? (keys.get(row.viaKeyId) ?? null) : null,
@@ -104,30 +109,99 @@ function withContext(deps: AppDeps, reply: Reply, item: ItemInfo): ReplyWithCont
   };
 }
 
-/** Thread of an issue or task, oldest first (deleted replies excluded). */
+/**
+ * The comment tree of an issue or task (BAT-13), Reddit style: the oldest 200 comments (`limit`)
+ * within 10 levels, parents before their answers and siblings oldest first. `root` shows one reply
+ * and its answers ("Continue this thread"), `expand` adds the answers of those replies ("N more
+ * replies") and `include` replies with their ancestors (a `#reply-<id>` link, the viewer's new
+ * replies). A deleted reply that
+ * still has answers stays as a `deleted` placeholder without its text or author.
+ */
 export function listReplies(
   deps: AppDeps,
   actor: Actor,
   query: ListRepliesQuery,
 ): ReplyListResponse {
   const { orm } = deps.db;
-  requireItem(orm, actor, query.parentType, query.parentId);
-  const rows = orm
-    .select()
+  const { item } = requireItem(orm, actor, query.parentType, query.parentId);
+  const skeleton = orm
+    .select({
+      id: s.reply.id,
+      parentReplyId: s.reply.parentReplyId,
+      createdAt: s.reply.createdAt,
+      deletedAt: s.reply.deletedAt,
+    })
     .from(s.reply)
-    .where(
-      and(
-        eq(s.reply.parentType, query.parentType),
-        eq(s.reply.parentId, query.parentId),
-        isNull(s.reply.deletedAt),
-      ),
-    )
-    .orderBy(asc(s.reply.createdAt), asc(s.reply.id))
-    .all();
-  return { items: toReplies(orm, rows, actor.userId) };
+    .where(and(eq(s.reply.parentType, item.type), eq(s.reply.parentId, item.id)))
+    .all()
+    .map((row) => ({ ...row, deleted: row.deletedAt !== null }));
+  const view = new ReplyTree(skeleton).view({
+    root: query.root,
+    limit: query.limit ?? REPLY_TREE.limit,
+    depth: REPLY_TREE.depth,
+    expand: query.expand,
+    include: query.include,
+  });
+  if (!view) throw errors.notFound('Reply');
+
+  const ids = view.nodes.map((node) => node.id);
+  const rows: ReplyRow[] = [];
+  for (let index = 0; index < ids.length; index += 500) {
+    rows.push(
+      ...orm
+        .select()
+        .from(s.reply)
+        .where(inArray(s.reply.id, ids.slice(index, index + 500)))
+        .all(),
+    );
+  }
+  const byId = new Map(rows.map((row) => [row.id, row]));
+  const live = new Map(
+    toReplies(
+      orm,
+      rows.filter((row) => row.deletedAt === null),
+      actor.userId,
+    ).map((reply) => [reply.id, reply]),
+  );
+  const items: ReplyNode[] = [];
+  for (const node of view.nodes) {
+    const extra = { replyCount: node.replyCount, depth: node.depth };
+    const reply = live.get(node.id);
+    const row = byId.get(node.id);
+    if (reply) items.push({ ...reply, deleted: false, ...extra });
+    else if (row) items.push({ ...placeholder(row), ...extra });
+  }
+  return {
+    items,
+    total: view.total,
+    topLevelCount: view.topLevelCount,
+    ancestors: view.ancestors,
+  };
 }
 
-export interface ReplyPageQuery extends ListRepliesQuery {
+/** A deleted reply that still has answers: its place in the tree, without text or author. */
+function placeholder(row: ReplyRow): Reply & { deleted: true } {
+  const at = row.createdAt.toISOString();
+  return {
+    id: row.id,
+    teamId: row.teamId,
+    projectId: row.projectId,
+    parentType: row.parentType,
+    parentId: row.parentId,
+    parentReplyId: row.parentReplyId,
+    body: '',
+    author: null,
+    via: null,
+    attachments: [],
+    reactions: [],
+    createdAt: at,
+    updatedAt: at,
+    editedAt: null,
+    deleted: true,
+  };
+}
+
+export interface ReplyPageQuery extends Pick<ListRepliesQuery, 'parentType' | 'parentId'> {
   limit: number;
   /** `nextCursor` of the previous page. */
   cursor?: string | undefined;
@@ -225,13 +299,14 @@ function derivedText(body: string) {
   return { plain: markdownToPlainText(body), excerpt: excerpt(body, EXCERPT_LENGTH) };
 }
 
-function activityMeta(item: ItemInfo, bodyExcerpt: string) {
+function activityMeta(item: ItemInfo, bodyExcerpt: string, parentReplyId?: string | null) {
   return {
     parentType: item.type,
     parentId: item.id,
     parentRef: item.ref,
     parentTitle: item.title,
     excerpt: bodyExcerpt,
+    ...(parentReplyId ? { parentReplyId } : {}),
   };
 }
 
@@ -243,12 +318,39 @@ export interface PreparedReply {
 }
 
 /**
- * Checks a new reply before the write (`REPLY` permission on a live item) and derives its search
- * text and excerpt, so `insertReply` can post it inside any transaction.
+ * The live reply a new reply answers (`parentReplyId`): it must belong to the same issue or task
+ * and must not be deleted.
+ */
+function answeredReply(db: DbExecutor, item: ItemInfo, parentReplyId: string) {
+  const row = db
+    .select({
+      id: s.reply.id,
+      authorId: s.reply.authorId,
+      parentType: s.reply.parentType,
+      parentId: s.reply.parentId,
+      deletedAt: s.reply.deletedAt,
+    })
+    .from(s.reply)
+    .where(eq(s.reply.id, parentReplyId))
+    .get();
+  if (row?.parentType !== item.type || row.parentId !== item.id) {
+    throw errors.validation(`You can only answer a reply on this ${item.type}`, {
+      field: 'parentReplyId',
+    });
+  }
+  if (row.deletedAt) throw errors.conflict('The reply you are answering was deleted');
+  return row;
+}
+
+/**
+ * Checks a new reply before the write (`REPLY` permission on a live item, and the reply it
+ * answers) and derives its search text and excerpt, so `insertReply` can post it inside any
+ * transaction.
  */
 export function prepareReply(deps: AppDeps, actor: Actor, input: CreateReplyInput): PreparedReply {
   const { item, membership } = requireItem(deps.db.orm, actor, input.parentType, input.parentId);
   requirePermission(membership, 'REPLY', "You don't have permission to reply here");
+  if (input.parentReplyId) answeredReply(deps.db.orm, item, input.parentReplyId);
   return { item, input, text: derivedText(input.body) };
 }
 
@@ -259,6 +361,8 @@ export function prepareReply(deps: AppDeps, actor: Actor, input: CreateReplyInpu
  */
 export function insertReply(tx: Tx, actor: Actor, prepared: PreparedReply): ReplyRow {
   const { item, input, text } = prepared;
+  // Checked again inside the write: the answered reply may have been deleted meanwhile.
+  const answered = input.parentReplyId ? answeredReply(tx, item, input.parentReplyId) : null;
   const now = new Date();
   const reply = tx
     .insert(s.reply)
@@ -268,6 +372,7 @@ export function insertReply(tx: Tx, actor: Actor, prepared: PreparedReply): Repl
       projectId: item.projectId,
       parentType: item.type,
       parentId: item.id,
+      parentReplyId: answered?.id ?? null,
       authorId: actor.userId,
       viaKeyId: actor.key?.id ?? null,
       body: input.body,
@@ -295,7 +400,7 @@ export function insertReply(tx: Tx, actor: Actor, prepared: PreparedReply): Repl
     entityType: 'reply',
     entityId: reply.id,
     action: 'reply.created',
-    meta: activityMeta(item, text.excerpt),
+    meta: activityMeta(item, text.excerpt, answered?.id),
   });
   indexSearch(tx, {
     entityType: 'reply',
@@ -308,6 +413,8 @@ export function insertReply(tx: Tx, actor: Actor, prepared: PreparedReply): Repl
   const target = notificationTarget(item, reply.id, reply.body);
   const notified = new Set<string>();
   notifyMentions(tx, actor, target, reply.body, { notified });
+  // The author of the answered reply hears about it even without a subscription (like Reddit).
+  if (answered?.authorId) notifyUsers(tx, actor, 'reply', [answered.authorId], target, notified);
   notifyReply(tx, actor, { type: item.type, id: item.id }, target, notified);
   recordAgentMentions(tx, actor, {
     id: reply.id,

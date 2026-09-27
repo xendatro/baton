@@ -627,6 +627,11 @@ export const reply = sqliteTable(
       .references(() => project.id, { onDelete: 'cascade' }),
     parentType: text('parent_type', { enum: REPLY_PARENT_TYPES }).notNull(),
     parentId: text('parent_id').notNull(),
+    /**
+     * The reply this one answers (BAT-13), on the same item; null for a top-level comment. Purging
+     * a deleted parent from Trash turns its replies into top-level comments.
+     */
+    parentReplyId: text('parent_reply_id'),
     authorId: text('author_id').references(() => user.id, { onDelete: 'set null' }),
     viaKeyId: text('via_key_id').references(() => apiKey.id, { onDelete: 'set null' }),
     /** Markdown. */
@@ -638,6 +643,12 @@ export const reply = sqliteTable(
   },
   (t) => [
     index('reply_parent_idx').on(t.parentType, t.parentId, t.createdAt),
+    foreignKey({
+      name: 'reply_parent_reply_fk',
+      columns: [t.parentReplyId],
+      foreignColumns: [t.id],
+    }).onDelete('set null'),
+    index('reply_parent_reply_idx').on(t.parentReplyId),
     index('reply_team_idx').on(t.teamId),
     index('reply_project_idx').on(t.projectId),
     index('reply_author_idx').on(t.authorId),

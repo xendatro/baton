@@ -325,6 +325,7 @@ function StageMoves({
             size="sm"
             variant="outline"
             onClick={() => setSending(true)}
+            disabled={Boolean(moving)}
             className="border-amber-500/60 text-amber-700 hover:bg-amber-500/10 hover:text-amber-800 dark:text-amber-400 dark:hover:text-amber-300"
           >
             <UndoIcon aria-hidden="true" />

@@ -805,7 +805,9 @@ function TaskView({ task, team, project }: { task: Task; team: MeTeam; project: 
               <StagePanel
                 task={{ ...task, stage: task.stage }}
                 teamId={team.id}
-                moving={update.isPending}
+                // Also while the shown status is ahead of the stage (an optimistic move): the
+                // stage's buttons would act on the stage the task is leaving.
+                moving={update.isPending || task.status.id !== task.stage.status.id}
                 onMoveOn={
                   task.stage.next
                     ? () => changeStatus(task.stage?.next?.id ?? task.status.id)

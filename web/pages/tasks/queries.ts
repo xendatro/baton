@@ -126,9 +126,15 @@ function refreshTasks(queryClient: QueryClient, projectId: string) {
   ]);
 }
 
-/** Writes a fresh task into its detail query and every board/list that shows it. */
-export function storeTask(queryClient: QueryClient, task: Task) {
-  queryClient.setQueryData(queryKeys.tasks.detail(task.projectId, task.number), task);
+/**
+ * Writes a fresh task into its detail query. A refetch still in flight (e.g. started by the live
+ * event of an earlier move) is cancelled first: it would otherwise land after this answer and put
+ * the older stage back, so the stage buttons would act on the stage the task already left.
+ */
+export async function storeTask(queryClient: QueryClient, task: Task) {
+  const key = queryKeys.tasks.detail(task.projectId, task.number);
+  await queryClient.cancelQueries({ queryKey: key, exact: true });
+  queryClient.setQueryData(key, task);
 }
 
 /** Every cached board of the project, for optimistic moves. */
@@ -204,7 +210,7 @@ export function useCreateTask(projectId: string) {
     mutationFn: (input: CreateTaskInput) =>
       api.post(`/api/projects/${enc(projectId)}/tasks`, input, { schema: taskSchema }),
     onSuccess: async (task) => {
-      storeTask(queryClient, task);
+      void storeTask(queryClient, task);
       await refreshTasks(queryClient, projectId);
     },
     meta: { suppressErrorToast: true },
@@ -323,7 +329,7 @@ export function useToggleAssignee(task: Pick<Task, 'id' | 'projectId' | 'number'
       );
     },
     onSuccess: (updated) => {
-      if (lastInFlight()) storeTask(queryClient, updated);
+      if (lastInFlight()) void storeTask(queryClient, updated);
     },
     onSettled: () => (lastInFlight() ? refreshTasks(queryClient, task.projectId) : undefined),
   });
@@ -344,7 +350,7 @@ export function useDeleteTask(projectId: string) {
  */
 export async function restoreDeletedTask(queryClient: QueryClient, task: Pick<Task, 'id'>) {
   const restored = await api.post(`/api/tasks/${enc(task.id)}/restore`, {}, { schema: taskSchema });
-  storeTask(queryClient, restored);
+  void storeTask(queryClient, restored);
   await refreshTasks(queryClient, restored.projectId);
   return restored;
 }

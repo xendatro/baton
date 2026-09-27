@@ -4,6 +4,7 @@ import {
   MoreHorizontalIcon,
   Settings2Icon,
   TagsIcon,
+  WorkflowIcon,
 } from 'lucide-react';
 import { Link } from 'react-router';
 import { Button } from '@web/components/ui/button';
@@ -27,6 +28,8 @@ export interface CustomizeMenuProps {
   projectBase: string;
   canManageStatuses: boolean;
   canManageLabels: boolean;
+  /** BAT-25: the board's pipeline tab ("Edit statuses" opens its stages). */
+  pipelineId?: string | undefined;
 }
 
 /** The toolbar's "Customize" menu; hidden from viewers who can change neither. */
@@ -34,6 +37,7 @@ export function CustomizeMenu({
   projectBase,
   canManageStatuses,
   canManageLabels,
+  pipelineId,
 }: CustomizeMenuProps) {
   if (!canManageStatuses && !canManageLabels) return null;
   return (
@@ -50,9 +54,17 @@ export function CustomizeMenu({
         </DropdownMenuLabel>
         {canManageStatuses ? (
           <DropdownMenuItem asChild>
-            <Link to={projectSettingsPath(projectBase, 'statuses')}>
+            <Link to={projectSettingsPath(projectBase, 'statuses', undefined, pipelineId)}>
               <KanbanSquareIcon aria-hidden="true" />
               Edit statuses
+            </Link>
+          </DropdownMenuItem>
+        ) : null}
+        {canManageStatuses ? (
+          <DropdownMenuItem asChild>
+            <Link to={projectSettingsPath(projectBase, 'statuses')}>
+              <WorkflowIcon aria-hidden="true" />
+              Manage pipelines
             </Link>
           </DropdownMenuItem>
         ) : null}

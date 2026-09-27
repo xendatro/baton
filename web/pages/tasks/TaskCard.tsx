@@ -29,6 +29,15 @@ export function TaskCardBody({ task }: { task: TaskCardData }) {
     <div className="flex flex-col gap-2">
       <div className="flex items-center gap-2">
         <span className="font-mono text-xs text-muted-foreground tabular-nums">{task.ref}</span>
+        {/* BAT-25: a task outside the default pipeline says which one it is in. */}
+        {task.status.pipeline && !task.status.pipeline.isDefault ? (
+          <span
+            className="max-w-24 truncate rounded-sm border px-1 text-[11px] leading-4 text-muted-foreground"
+            title={`Pipeline: ${task.status.pipeline.name}`}
+          >
+            {task.status.pipeline.name}
+          </span>
+        ) : null}
         <UnreadBadge count={task.unreadCount} />
         {task.blocked ? <BlockedBadge blockers={task.blockers} /> : null}
         <PriorityIcon value={task.priority} className="ml-auto" />

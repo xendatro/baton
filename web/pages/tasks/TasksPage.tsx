@@ -8,6 +8,7 @@ import {
   TagsIcon,
   UserIcon,
 } from 'lucide-react';
+import { useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router';
 import { toast } from 'sonner';
 import type { MeProject, MeTeam } from '@shared/schemas/core';
@@ -90,7 +91,34 @@ function Tasks({ team, project }: { team: MeTeam; project: MeProject }) {
   const pipelines = usePipelines(project.id);
   const pipelineList = pipelines.data ?? [];
   const pipeline = pipelineList.find((candidate) => candidate.id === params.get('pipeline'));
-  const selectPipeline = (pipelineId: string | null) =>
+  // The last tab is remembered per project (this browser only).
+  const storageKey = `baton.pipelineTab.${project.id}`;
+  const hasParam = params.has('pipeline');
+  const remembered = (() => {
+    try {
+      return window.localStorage.getItem(storageKey);
+    } catch {
+      return null;
+    }
+  })();
+  useEffect(() => {
+    if (hasParam || !remembered || remembered === 'all') return;
+    if (!pipelines.data?.some((candidate) => candidate.id === remembered)) return;
+    setParams(
+      (current) => {
+        const next = new URLSearchParams(current);
+        next.set('pipeline', remembered);
+        return next;
+      },
+      { replace: true },
+    );
+  }, [hasParam, remembered, pipelines.data, setParams]);
+  const selectPipeline = (pipelineId: string | null) => {
+    try {
+      window.localStorage.setItem(storageKey, pipelineId ?? 'all');
+    } catch {
+      // Storage unavailable: the tab just isn't remembered.
+    }
     setParams(
       (current) => {
         const next = new URLSearchParams(current);
@@ -101,6 +129,7 @@ function Tasks({ team, project }: { team: MeTeam; project: MeProject }) {
       },
       { replace: true },
     );
+  };
   const query = {
     ...filtersToQuery(filters),
     ...(pipeline ? { pipeline: pipeline.id } : {}),
@@ -178,9 +207,28 @@ function Tasks({ team, project }: { team: MeTeam; project: MeProject }) {
             group: 'Board',
             icon: KanbanSquareIcon,
             keywords: ['customize board', 'columns', 'workflow', 'status settings'],
+            perform: () =>
+              void navigate(projectSettingsPath(projectBase, 'statuses', undefined, pipeline?.id)),
+          },
+          {
+            id: `tasks.${project.id}.pipelines`,
+            label: 'Manage pipelines',
+            group: 'Board',
+            icon: KanbanSquareIcon,
+            keywords: ['pipelines', 'workflows', 'boards'],
             perform: () => void navigate(projectSettingsPath(projectBase, 'statuses')),
           },
         ]
+      : []),
+    ...(pipelineList.length > 1
+      ? [null, ...pipelineList].map((item) => ({
+          id: `tasks.${project.id}.pipeline.${item?.id ?? 'all'}`,
+          label: item ? `Show the ${item.name} pipeline` : 'Show all pipelines',
+          group: 'Board',
+          icon: SquareKanbanIcon,
+          keywords: ['pipeline', 'tab', item?.name ?? 'all'],
+          perform: () => selectPipeline(item?.id ?? null),
+        }))
       : []),
     ...(canManageLabels
       ? [
@@ -233,6 +281,7 @@ function Tasks({ team, project }: { team: MeTeam; project: MeProject }) {
         projectBase={projectBase}
         canManageStatuses={canManageStatuses}
         canManageLabels={canManageLabels}
+        pipelineId={pipeline?.id}
       />
       {canCreate && createAvailable ? (
         <Button size="sm" onClick={() => newTask()}>
@@ -297,7 +346,16 @@ function Tasks({ team, project }: { team: MeTeam; project: MeProject }) {
         hint={nothingYet && onCreate ? <NoTasksHint onCreate={onCreate} /> : undefined}
         editStatusHref={
           canManageStatuses
-            ? (statusId) => projectSettingsPath(projectBase, 'statuses', statusId)
+            ? (statusId) =>
+                projectSettingsPath(
+                  projectBase,
+                  'statuses',
+                  statusId,
+                  pipelineList.length > 1
+                    ? board.data?.columns.find((column) => column.status.id === statusId)?.status
+                        .pipelineId
+                    : undefined,
+                )
             : undefined
         }
         onQuickAdd={(statusId) => newTask(statusId)}

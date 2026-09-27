@@ -475,27 +475,23 @@ export function mergeRules(
   }
   const merged = parsed.data;
   const statusIds = new Set(projectStatuses(db, scope.projectId).map((row) => row.id));
+  // Stages a rule names are stages of the same pipeline (BAT-25).
+  const pipelineOf = (id: string) =>
+    db.select({ pipelineId: s.status.pipelineId }).from(s.status).where(eq(s.status.id, id)).get()
+      ?.pipelineId;
+  const own = pipelineOf(statusId);
+  const samePipeline = (id: string) =>
+    statusIds.has(id) && (own === undefined || pipelineOf(id) === own);
   if (merged.nextStatusId !== null) {
     if (merged.nextStatusId === statusId) {
       throw errors.validation('A stage can’t be its own next stage');
     }
-    // The next stage is one of the same pipeline (BAT-25).
-    const own = db
-      .select({ pipelineId: s.status.pipelineId })
-      .from(s.status)
-      .where(eq(s.status.id, statusId))
-      .get();
-    const next = db
-      .select({ pipelineId: s.status.pipelineId })
-      .from(s.status)
-      .where(eq(s.status.id, merged.nextStatusId))
-      .get();
-    if (!statusIds.has(merged.nextStatusId) || (own && next?.pipelineId !== own.pipelineId)) {
+    if (!samePipeline(merged.nextStatusId)) {
       throw errors.validation('The next stage must be a stage of the same pipeline');
     }
   }
-  if (merged.handoff.mode === 'stage_holder' && !statusIds.has(merged.handoff.statusId ?? '')) {
-    throw errors.validation('The hand-off stage must be a status of this project');
+  if (merged.handoff.mode === 'stage_holder' && !samePipeline(merged.handoff.statusId ?? '')) {
+    throw errors.validation('The hand-off stage must be a stage of the same pipeline');
   }
   validatePrincipals(db, scope, merged);
   return merged;

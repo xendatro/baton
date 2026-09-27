@@ -75,6 +75,12 @@ export const user = sqliteTable('user', {
   username: text('username').unique(),
   displayUsername: text('display_username'),
   theme: text('theme', { enum: THEMES }).default('system').notNull(),
+  /** `agent`: the AI member of `agentOwnerId` (docs/design/agents-and-pipelines.md §1). */
+  kind: text('kind', { enum: ['human', 'agent'] })
+    .default('human')
+    .notNull(),
+  /** For agents: the human who owns it (one agent per human). */
+  agentOwnerId: text('agent_owner_id').unique(),
 });
 
 export const session = sqliteTable(

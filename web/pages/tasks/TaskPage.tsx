@@ -172,7 +172,9 @@ function TaskView({ task, team, project }: { task: Task; team: MeTeam; project: 
   const isAuthor = task.author?.id === viewerId;
   const canEditText = access.canEdit(task.author?.id);
   const canUpdate = isAuthor || access.has('UPDATE_TASKS');
-  const canDelete = access.canDelete(task.author?.id);
+  // A person and their agent count as one author (the server's rule): I may delete what my agent wrote.
+  const byMyAgent = viewerId !== null && task.author?.agentOwner?.id === viewerId;
+  const canDelete = byMyAgent || access.canDelete(task.author?.id);
   const [picker, setPicker] = useState<Picker>(null);
   const [editingTitle, setEditingTitle] = useState(false);
   const [editingDescription, setEditingDescription] = useState(false);
@@ -438,6 +440,7 @@ function TaskView({ task, team, project }: { task: Task; team: MeTeam; project: 
                 </h1>
               )}
             </div>
+            {canDelete ? <DeleteTaskButton onDelete={() => setConfirmDelete(true)} /> : null}
             <TaskMenu
               task={task}
               canEditText={canEditText}
@@ -861,7 +864,13 @@ function TaskView({ task, team, project }: { task: Task; team: MeTeam; project: 
         open={confirmDelete}
         onOpenChange={setConfirmDelete}
         title={`Delete ${task.ref}?`}
-        description="It moves to the team’s Trash, where it can be restored for 30 days."
+        description={
+          <>
+            It moves to the team’s Trash, where it can be restored for 30 days. Its claim is
+            released, agents working on it are stopped and their jobs cancelled, and tasks it blocks
+            stop waiting for it.
+          </>
+        }
         confirmLabel="Delete task"
         destructive
         onConfirm={deleteTask}
@@ -1023,6 +1032,22 @@ function DescriptionEditor({
   );
 }
 
+/** BAT-33: deleting is a visible button in the header, not only an item of the actions menu. */
+function DeleteTaskButton({ onDelete }: { onDelete: () => void }) {
+  return (
+    <Button
+      variant="outline"
+      size="icon"
+      aria-label="Delete task"
+      title="Delete task"
+      className="mt-4 shrink-0 text-muted-foreground hover:text-destructive"
+      onClick={onDelete}
+    >
+      <Trash2Icon aria-hidden="true" />
+    </Button>
+  );
+}
+
 function TaskMenu({
   task,
   canEditText,
@@ -1043,7 +1068,13 @@ function TaskMenu({
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="icon" aria-label="Task actions" className="mt-4 shrink-0">
+        <Button
+          variant="outline"
+          size="icon"
+          aria-label="Task actions"
+          title="More actions"
+          className="mt-4 shrink-0"
+        >
           <MoreHorizontalIcon aria-hidden="true" />
         </Button>
       </DropdownMenuTrigger>

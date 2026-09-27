@@ -714,7 +714,7 @@ const deleteTaskTool = defineTool({
   name: 'delete_task',
   title: 'Delete task',
   description:
-    'Moves a task to Trash (author, or DELETE_ANY_CONTENT). It can be restored for 30 days with restore_task.',
+    'Moves a task to Trash (author, or DELETE_ANY_CONTENT). Its claim is released, agent jobs about it are cancelled and it stops blocking other tasks. It can be restored for 30 days with restore_task.',
   input: toolInput({ task: taskRef }),
   annotations: { destructiveHint: true },
   handler: (ctx, input) => {

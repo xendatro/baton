@@ -786,6 +786,59 @@ describe('delete and restore', () => {
     );
   });
 
+  it('lets the author, DELETE_ANY_CONTENT, administrators and the owner delete (BAT-33)', () => {
+    const admin = createUser(ctx.db, { username: 'ada' });
+    addMember(ctx.db, { teamId: team.team.id, userId: admin.id, roleIds: [team.adminRole.id] });
+    const moderator = createUser(ctx.db, { username: 'mod' });
+    const moderators = createRole(ctx.db, {
+      teamId: team.team.id,
+      permissions: ['DELETE_ANY_CONTENT'],
+    });
+    addMember(ctx.db, { teamId: team.team.id, userId: moderator.id, roleIds: [moderators.id] });
+    const deleters = [web(mia), web(admin), web(moderator), web(owner)];
+    for (const [index, actor] of deleters.entries()) {
+      const task = newTask(`Task ${index}`, {}, web(mia));
+      // A member without the permission can't, and an outsider doesn't even see it.
+      expect(() => deleteTask(ctx.deps, web(bob), task.id)).toThrow(/your own/);
+      expect(() => deleteTask(ctx.deps, web(outsider), task.id)).toThrow(/not found/);
+      deleteTask(ctx.deps, actor, task.id);
+      expect(() => getTask(ctx.deps, web(owner), task.id)).toThrow(/not found/);
+    }
+  });
+
+  it('stops blocking its dependents and drops its claim, and comes back whole (BAT-33)', () => {
+    const blocker = newTask('Blocker');
+    const waiting = newTask('Waiting', { blockedByTaskIds: [blocker.id] });
+    expect(getTask(ctx.deps, web(owner), waiting.id).blocked).toBe(true);
+    updateTask(ctx.deps, web(owner), blocker.id, { assigneeUsers: { add: [mia.id] } });
+    ctx.db.orm
+      .update(s.task)
+      .set({
+        claimedById: mia.id,
+        claimedAt: new Date(),
+        claimExpiresAt: new Date(Date.now() + 60_000),
+      })
+      .where(eq(s.task.id, blocker.id))
+      .run();
+    deleteTask(ctx.deps, web(owner), blocker.id);
+    const after = getTask(ctx.deps, web(owner), waiting.id);
+    expect(after.blocked).toBe(false);
+    expect(after.blockedBy).toEqual([]);
+    expect(
+      listTasks(
+        ctx.deps,
+        web(owner),
+        project.project.id,
+        listTasksQuerySchema.parse({ blocked: 'yes' }),
+      ).items,
+    ).toEqual([]);
+
+    const restored = restoreTask(ctx.deps, web(owner), blocker.id);
+    expect(restored.claim).toBeNull();
+    expect(restored.assignees.users.map((user) => user.username)).toEqual(['mia']);
+    expect(getTask(ctx.deps, web(owner), waiting.id).blocked).toBe(true);
+  });
+
   it("won't restore a task whose project is in Trash", () => {
     const task = newTask('Inside');
     deleteTask(ctx.deps, web(owner), task.id);

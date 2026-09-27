@@ -267,7 +267,7 @@ test.describe('audit log', () => {
       new RegExp(`^audit-log-${seed.slug}-\\d{4}-\\d{2}-\\d{2}\\.csv$`),
     );
     const csv = fs.readFileSync((await download.path()) ?? '', 'utf8');
-    expect(csv).toContain('time,actor_username,actor_name,source,via_key,action,summary');
+    expect(csv).toContain('time,actor_username,actor_name,source,via_key,via_agent,action,summary');
     expect(csv).toContain(`edited a reply on ${seed.key}#1`);
     expect(csv.trim().split('\r\n')).toHaveLength(4);
   });

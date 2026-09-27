@@ -48,6 +48,14 @@ import {
 } from './notifications';
 import { canTriageIssue } from './issues';
 import { queueLinkedIssueEvents } from './linkEvents';
+import {
+  dismissStageApprovals,
+  enterStage,
+  guardStageMove,
+  recordForced,
+  saveEvidence,
+  type GuardResult,
+} from './pipelines';
 import { requireProject } from './projects';
 import { indexSearch } from './search';
 import { requireSignoff } from './signoff';
@@ -614,6 +622,18 @@ export function createTask(
         ...(options.fromIssue ? { fromIssue: options.fromIssue } : {}),
       },
     });
+    const notified = new Set<string>();
+    // The first stage's entry rules; a hand-off never overrides assignees chosen on creation.
+    enterStage(
+      tx,
+      actor,
+      { task: row, projectKey: project.key, teamSlug: team.slug },
+      null,
+      status,
+      now,
+      notified,
+      { keepAssignees: users.length > 0 || roles.length > 0 },
+    );
     indexSearch(tx, {
       entityType: 'task',
       entityId: row.id,
@@ -623,7 +643,6 @@ export function createTask(
       text: text.plain,
     });
     const target = notificationTarget(row, project, team, description);
-    const notified = new Set<string>();
     notifyAssigned(
       tx,
       actor,
@@ -825,6 +844,12 @@ function hasWorkflowFields(input: UpdateTaskData): boolean {
   );
 }
 
+/** Does the update change anything besides evidence (and the force flags)? */
+function hasOtherFields(input: UpdateTaskData): boolean {
+  const { evidence: _evidence, force: _force, reason: _reason, ...rest } = input;
+  return Object.values(rest).some((value) => value !== undefined);
+}
+
 /**
  * Updates a task. Lists (assignees, labels, blockers, issue links) take `set`, or `add`/`remove`.
  * A new status puts the task at the end of that column (see `moveTask` for exact placement).
@@ -850,6 +875,13 @@ export function updateTask(
   ) {
     throw errors.forbidden("You can't add files to this task");
   }
+  if (input.evidence && Object.keys(input.evidence).length > 0) {
+    // Evidence is saved on its own first: a move that is still blocked keeps it.
+    saveEvidence(deps, actor, taskId, input.evidence, {
+      autoAdvance: input.statusId === undefined,
+    });
+    if (!hasOtherFields(input)) return getTask(deps, actor, taskId);
+  }
   const descriptionChanged =
     input.description !== undefined && input.description !== task.description;
   const newText = descriptionChanged ? describe(input.description ?? '') : null;
@@ -871,7 +903,11 @@ export function updateTask(
       changes.description = change(oldExcerpt, newText.excerpt);
       patch.description = input.description;
     }
-    if (patch.title !== undefined || patch.description !== undefined) patch.editedAt = now;
+    if (patch.title !== undefined || patch.description !== undefined) {
+      patch.editedAt = now;
+      // `dismissOnChange`: an edit makes the stage's approvals stale (before any move is checked).
+      dismissStageApprovals(tx, actor, current, project.key, 'edited', now);
+    }
     if (input.priority !== undefined && input.priority !== current.priority) {
       changes.priority = change(priorityLabel(current.priority), priorityLabel(input.priority));
       patch.priority = input.priority;
@@ -885,6 +921,10 @@ export function updateTask(
     const users = listDiff(currentIds(tx, s.taskAssigneeUser, taskId), input.assigneeUsers);
     const roles = listDiff(currentIds(tx, s.taskAssigneeRole, taskId), input.assigneeRoles);
     const labels = listDiff(currentIds(tx, s.taskLabel, taskId), input.labels);
+    // Assigning someone takes the task out of its stage's pool.
+    if (current.poolRule && (users.after.length > 0 || roles.after.length > 0)) {
+      patch.poolRule = null;
+    }
     const addedUsers = memberRefs(tx, team.id, users.added);
     const addedRoles = roleRefs(tx, team.id, roles.added);
     labelRefs(tx, project.id, labels.added);
@@ -921,9 +961,15 @@ export function updateTask(
       );
     }
 
+    let move: { from: StatusRow; to: StatusRow; guard: GuardResult } | null = null;
     if (input.statusId !== undefined && input.statusId !== current.statusId) {
       const from = statusOfProject(tx, project.id, current.statusId);
       const to = statusOfProject(tx, project.id, input.statusId);
+      move = {
+        from,
+        to,
+        guard: guardStageMove(tx, actor, { task: current, project, membership }, from, to, input),
+      };
       changes.status = change(from.name, to.name);
       patch.statusId = to.id;
       patch.position = appendPosition(tx, to.id);
@@ -978,6 +1024,27 @@ export function updateTask(
       meta: taskMeta(updated, project.key),
     });
     transition?.recordRelease();
+    if (move) {
+      recordForced(
+        tx,
+        actor,
+        updated,
+        project.key,
+        move.from,
+        move.to,
+        move.guard.bypassed,
+        input.reason,
+      );
+      enterStage(
+        tx,
+        actor,
+        { task: updated, projectKey: project.key, teamSlug: team.slug },
+        move.from,
+        move.to,
+        now,
+        notified,
+      );
+    }
     if (changes.title || changes.description) {
       indexSearch(tx, {
         entityType: 'task',
@@ -1052,10 +1119,17 @@ function roleNames(tx: Tx, ids: readonly string[]): NamedRef[] {
 export function moveTask(deps: AppDeps, actor: Actor, taskId: string, input: MoveTaskInput): Task {
   const { orm } = deps.db;
   const { task, project, team, membership } = requireTask(orm, actor, taskId);
-  requireCanUpdateTask(membership, task, "You don't have permission to move tasks");
   if (input.afterId === taskId || input.beforeId === taskId) {
     throw errors.validation('A task can’t be placed next to itself');
   }
+  if (input.evidence && Object.keys(input.evidence).length > 0) {
+    // Evidence is saved on its own first: a move that is still blocked keeps it.
+    saveEvidence(deps, actor, taskId, input.evidence, {
+      autoAdvance: input.statusId === undefined,
+    });
+    if (!input.statusId && !input.afterId && !input.beforeId) return getTask(deps, actor, taskId);
+  }
+  requireCanUpdateTask(membership, task, "You don't have permission to move tasks");
 
   deps.db.write((tx) => {
     const now = new Date();
@@ -1077,7 +1151,9 @@ export function moveTask(deps: AppDeps, actor: Actor, taskId: string, input: Mov
     const patch: Partial<TaskRow> = {};
     const notified = new Set<string>();
     let transition: StatusTransition | null = null;
+    let guard: GuardResult | null = null;
     if (to.id !== from.id) {
+      guard = guardStageMove(tx, actor, { task: current, project, membership }, from, to, input);
       changes.status = change(from.name, to.name);
       patch.statusId = to.id;
       transition = applyStatusTransition(
@@ -1113,6 +1189,18 @@ export function moveTask(deps: AppDeps, actor: Actor, taskId: string, input: Mov
       meta: { ...taskMeta(updated, project.key), status: to.name },
     });
     transition?.recordRelease();
+    if (guard) {
+      recordForced(tx, actor, updated, project.key, from, to, guard.bypassed, input.reason);
+      enterStage(
+        tx,
+        actor,
+        { task: updated, projectKey: project.key, teamSlug: team.slug },
+        from,
+        to,
+        now,
+        notified,
+      );
+    }
     emitTaskChange(tx, 'task.updated', updated, actor);
   });
   return getTask(deps, actor, taskId);

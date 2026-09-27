@@ -7,6 +7,7 @@ import {
   type QueryKey,
 } from '@tanstack/react-query';
 import { okResponseSchema } from '@shared/schemas/common';
+import type { ApprovalInput, EvidenceInput } from '@shared/schemas/pipelines';
 import {
   subscriptionResponseSchema,
   type RoleSummary,
@@ -324,5 +325,29 @@ export function useClaimAction(task: Pick<Task, 'id' | 'projectId'>) {
     },
     onSuccess: (updated) => storeTask(queryClient, updated),
     onSettled: () => refreshTasks(queryClient, task.projectId),
+  });
+}
+
+/** Evidence for the current stage's exit criteria (design §5): criterion id → text. */
+export function useSaveEvidence(task: Pick<Task, 'id' | 'projectId'>) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (evidence: EvidenceInput) =>
+      api.put(`/api/tasks/${enc(task.id)}/evidence`, { evidence }, { schema: taskSchema }),
+    onSuccess: (updated) => storeTask(queryClient, updated),
+    onSettled: () => refreshTasks(queryClient, task.projectId),
+    meta: { suppressErrorToast: true },
+  });
+}
+
+/** Approve / Request changes on the task's stage (design §5). */
+export function useDecideApproval(task: Pick<Task, 'id' | 'projectId'>) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: ApprovalInput) =>
+      api.post(`/api/tasks/${enc(task.id)}/approvals`, input, { schema: taskSchema }),
+    onSuccess: (updated) => storeTask(queryClient, updated),
+    onSettled: () => refreshTasks(queryClient, task.projectId),
+    meta: { suppressErrorToast: true },
   });
 }

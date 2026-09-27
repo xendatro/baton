@@ -334,6 +334,8 @@ export const NOTIFICATION_TYPES = [
   'task_done',
   /** An agent asks its owner to sign off a destructive action (design §6); always delivered. */
   'agent_action_request',
+  /** A task entered a pipeline stage whose `notify` rule names you (design §5). */
+  'stage_entered',
 ] as const;
 export type NotificationType = (typeof NOTIFICATION_TYPES)[number];
 

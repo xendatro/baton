@@ -10,6 +10,7 @@ import type { DbExecutor, Tx } from '../db';
 import * as s from '../db/schema';
 import { PendingApproval } from '../lib/errors';
 import { newId } from '../lib/ids';
+import { queueJobs } from './agentJobs';
 import { assertAgentsNotPaused } from './agents';
 import { emitAfterCommit } from './events';
 import { notifyUsers } from './notifications';
@@ -204,6 +205,18 @@ export function emitActionRequestChanged(
  * Wave 2C wires it to queue an `action_result` job for the agent (design §4); a no-op until then.
  */
 export function onActionRequestResolved(tx: Tx, request: AgentActionRequestRow): void {
-  void tx;
-  void request;
+  // The agent hears the outcome through its listener (design §4 `action_result`). Team-level
+  // requests have no project, and jobs are per project: those are read with get_action_request.
+  if (!request.projectId) return;
+  queueJobs(tx, [
+    {
+      agentUserId: request.agentUserId,
+      teamId: request.teamId,
+      projectId: request.projectId,
+      kind: 'action_result',
+      targetType: 'action_request',
+      targetId: request.id,
+      payload: { action: request.action, status: request.status },
+    },
+  ]);
 }

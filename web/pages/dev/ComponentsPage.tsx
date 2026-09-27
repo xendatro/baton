@@ -238,11 +238,7 @@ function Gallery() {
             via={{ keyId: 'k', keyName: 'Claude on laptop' }}
             claimedAt={minutesAgo(4)}
           />
-          <ClaimBadge
-            holder={fixtures.ada}
-            via={null}
-            claimedAt={minutesAgo(90)}
-          />
+          <ClaimBadge holder={fixtures.ada} via={null} claimedAt={minutesAgo(90)} />
           <ClaimBadge
             holder={fixtures.ethanAi}
             via={{ keyId: 'k3', keyName: 'MSI', agentName: 'Claude' }}

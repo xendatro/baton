@@ -15,10 +15,18 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { GripVerticalIcon, KanbanSquareIcon, PlusIcon, Trash2Icon } from 'lucide-react';
+import {
+  CopyIcon,
+  GripVerticalIcon,
+  KanbanSquareIcon,
+  PlusIcon,
+  Trash2Icon,
+  WorkflowIcon,
+} from 'lucide-react';
 import { useId, useState, type FormEvent, type KeyboardEvent } from 'react';
 import { toast } from 'sonner';
 import { COLOR_PALETTE, LIMITS, type StatusCategory } from '@shared/constants';
+import { DEFAULT_STAGE_RULES } from '@shared/schemas/pipelines';
 import { statusNameSchema, type Status } from '@shared/schemas/projects';
 import { EmptyState } from '@web/components/common/EmptyState';
 import { ErrorState } from '@web/components/common/ErrorState';
@@ -47,6 +55,7 @@ import {
 import { Skeleton } from '@web/components/ui/skeleton';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@web/components/ui/tooltip';
 import { errorMessage, isApiError } from '@web/lib/api';
+import { useMe } from '@web/lib/auth';
 import { pluralize } from '@web/lib/format';
 import { useProjectAccess } from '@web/lib/permissions';
 import { useRouteContext } from '@web/lib/routeContext';
@@ -60,11 +69,16 @@ import {
   useUpdateStatus,
 } from '../projects/queries';
 import { ReadOnlyNotice, SettingsCard, SettingsHeader } from './common';
+import { CopyPipelineDialog } from './CopyPipelineDialog';
+import { usePrincipalOptions } from './pipelineQueries';
+import { StageRulesDialog } from './StageRulesDialog';
+import { countRules } from './stageRules';
 
 /**
  * Project settings → Statuses: the board's columns. Drag to reorder (or use the keyboard: focus a
  * handle, Space, arrows, Space), rename in place, pick a color and a category, choose the default
- * for new tasks, add and delete (moving the tasks elsewhere).
+ * for new tasks, add and delete (moving the tasks elsewhere). Each status's pipeline rules (design
+ * §5) open in a dialog, and "Copy pipeline from…" copies another project's statuses and rules.
  */
 
 const CATEGORY_LABELS: Record<StatusCategory, string> = { open: 'Open', done: 'Done' };
@@ -83,6 +97,10 @@ function Statuses({ teamId, projectId }: { teamId: string; projectId: string }) 
   const reorder = useReorderStatuses(projectId);
   const update = useUpdateStatus(projectId);
   const [deleting, setDeleting] = useState<Status | null>(null);
+  const [editingRules, setEditingRules] = useState<Status | null>(null);
+  const [copying, setCopying] = useState(false);
+  const principals = usePrincipalOptions(teamId, projectId);
+  const me = useMe();
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
@@ -94,8 +112,17 @@ function Statuses({ teamId, projectId }: { teamId: string; projectId: string }) 
       description={
         <>
           The columns of the board, in order. Tasks in a <strong>Done</strong> status count as
-          finished: they aren’t overdue, can’t be claimed, and resolve the issues they fix.
+          finished: they aren’t overdue, can’t be claimed, and resolve the issues they fix. Each
+          status can have pipeline rules: hand-offs, exit criteria, approvals.
         </>
+      }
+      actions={
+        canManage ? (
+          <Button variant="outline" size="sm" onClick={() => setCopying(true)}>
+            <CopyIcon aria-hidden="true" />
+            Copy pipeline from…
+          </Button>
+        ) : null
       }
     />
   );
@@ -129,7 +156,7 @@ function Statuses({ teamId, projectId }: { teamId: string; projectId: string }) 
       {header}
       {canManage ? null : <ReadOnlyNotice permission="Manage statuses" />}
       <SettingsCard>
-        <div className="hidden grid-cols-[2rem_2rem_minmax(0,1fr)_7.5rem_4.5rem_5rem_2rem] items-center gap-2 border-b px-3 py-2 text-xs font-medium text-muted-foreground sm:grid">
+        <div className="hidden grid-cols-[2rem_2rem_minmax(0,1fr)_7.5rem_4.5rem_5rem_4.5rem] items-center gap-2 border-b px-3 py-2 text-xs font-medium text-muted-foreground sm:grid">
           <span />
           <span />
           <span>Name</span>
@@ -181,6 +208,7 @@ function Statuses({ teamId, projectId }: { teamId: string; projectId: string }) 
                       canManage={canManage}
                       isOnly={items.length === 1}
                       onDelete={() => setDeleting(status)}
+                      onEditRules={() => setEditingRules(status)}
                     />
                   ))}
                 </ul>
@@ -196,6 +224,25 @@ function Statuses({ teamId, projectId }: { teamId: string; projectId: string }) 
         statuses={items}
         onClose={() => setDeleting(null)}
       />
+      <StageRulesDialog
+        status={editingRules}
+        statuses={items}
+        options={principals.options}
+        canManage={canManage}
+        onClose={() => setEditingRules(null)}
+        onSave={(rules) =>
+          editingRules
+            ? update.mutateAsync({ id: editingRules.id, input: { rules } })
+            : Promise.resolve()
+        }
+      />
+      <CopyPipelineDialog
+        open={copying}
+        onOpenChange={setCopying}
+        projectId={projectId}
+        teams={me.data?.teams ?? []}
+        options={principals.options}
+      />
     </div>
   );
 }
@@ -206,13 +253,16 @@ function StatusRow({
   canManage,
   isOnly,
   onDelete,
+  onEditRules,
 }: {
   status: Status;
   projectId: string;
   canManage: boolean;
   isOnly: boolean;
   onDelete: () => void;
+  onEditRules: () => void;
 }) {
+  const ruleCount = countRules(status.rules ?? DEFAULT_STAGE_RULES);
   const update = useUpdateStatus(projectId);
   const {
     attributes,
@@ -262,7 +312,7 @@ function StatusRow({
       ref={setNodeRef}
       style={{ transform: CSS.Transform.toString(transform), transition }}
       className={cn(
-        'grid grid-cols-[2rem_2rem_minmax(0,1fr)_2rem] items-center gap-x-2 gap-y-2 border-b bg-card px-3 py-2 last:border-b-0 sm:grid-cols-[2rem_2rem_minmax(0,1fr)_7.5rem_4.5rem_5rem_2rem]',
+        'grid grid-cols-[2rem_2rem_minmax(0,1fr)_4.5rem] items-center gap-x-2 gap-y-2 border-b bg-card px-3 py-2 last:border-b-0 sm:grid-cols-[2rem_2rem_minmax(0,1fr)_7.5rem_4.5rem_5rem_4.5rem]',
         isDragging && 'relative z-10 rounded-md shadow-lg ring-1 ring-border',
       )}
       data-testid="status-row"
@@ -303,26 +353,43 @@ function StatusRow({
         aria-label={`Name of status ${status.name}`}
         className="h-8 border-transparent bg-transparent px-2 shadow-none hover:border-input focus-visible:border-ring disabled:cursor-default disabled:opacity-100 dark:bg-transparent"
       />
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <span className="flex justify-end sm:order-last">
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-sm"
-              onClick={onDelete}
-              disabled={!canManage || isOnly}
-              aria-label={`Delete ${status.name}`}
-              className="text-muted-foreground hover:text-destructive"
-            >
-              <Trash2Icon aria-hidden="true" />
-            </Button>
-          </span>
-        </TooltipTrigger>
-        {isOnly && canManage ? (
-          <TooltipContent>A project needs at least one status</TooltipContent>
-        ) : null}
-      </Tooltip>
+      <div className="flex items-center justify-end gap-0.5 sm:order-last">
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          onClick={onEditRules}
+          aria-label={`Rules of ${status.name}${ruleCount ? ` (${ruleCount} set)` : ''}`}
+          className={cn('h-8 gap-1 px-1.5 text-muted-foreground', ruleCount > 0 && 'text-primary')}
+        >
+          <WorkflowIcon aria-hidden="true" />
+          {ruleCount > 0 ? (
+            <span className="text-xs tabular-nums" aria-hidden="true">
+              {ruleCount}
+            </span>
+          ) : null}
+        </Button>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span className="flex">
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                onClick={onDelete}
+                disabled={!canManage || isOnly}
+                aria-label={`Delete ${status.name}`}
+                className="text-muted-foreground hover:text-destructive"
+              >
+                <Trash2Icon aria-hidden="true" />
+              </Button>
+            </span>
+          </TooltipTrigger>
+          {isOnly && canManage ? (
+            <TooltipContent>A project needs at least one status</TooltipContent>
+          ) : null}
+        </Tooltip>
+      </div>
       <div className="col-span-4 flex flex-wrap items-center gap-x-4 gap-y-2 pl-[4.5rem] sm:contents sm:pl-0">
         <Select
           value={status.category}

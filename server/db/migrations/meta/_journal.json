@@ -78,6 +78,13 @@
       "when": 1790479628774,
       "tag": "0010_agent_signoff",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "6",
+      "when": 1790479797805,
+      "tag": "0011_pipelines",
+      "breakpoints": true
     }
   ]
 }

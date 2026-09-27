@@ -3,6 +3,7 @@ import { LIMITS, STATUS_CATEGORIES } from '../constants';
 import { PROJECT_KEY_PATTERN } from '../refs';
 import { emojiSchema, hexColorSchema, idSchema, projectKeySchema, timestampSchema } from './common';
 import { userSummarySchema } from './core';
+import { stageRulesPatchSchema, stageRulesSchema } from './pipelines';
 
 /**
  * Wire contracts of the projects module (SPEC §1.4–1.6): projects, their task statuses and labels.
@@ -120,6 +121,11 @@ export const statusSchema = z.object({
   isDefault: z.boolean(),
   /** Tasks currently in this status (not counting deleted ones). */
   taskCount: z.number().int().nonnegative(),
+  /**
+   * Pipeline rules of the stage (design §5); the defaults change nothing. Always sent by the
+   * server (optional for older fixtures and clients).
+   */
+  rules: stageRulesSchema.optional(),
 });
 export type Status = z.infer<typeof statusSchema>;
 
@@ -273,6 +279,8 @@ export const createStatusInputSchema = z.object({
   category: statusCategorySchema.default('open'),
   /** Make it the default status for new tasks. */
   isDefault: z.boolean().optional(),
+  /** Pipeline rules (design §5). */
+  rules: stageRulesPatchSchema.optional(),
 });
 export type CreateStatusInput = z.infer<typeof createStatusInputSchema>;
 
@@ -284,6 +292,8 @@ export const updateStatusInputSchema = z
     category: statusCategorySchema.optional(),
     /** Only `true`: make another status the default to unset this one. */
     isDefault: z.literal(true).optional(),
+    /** Pipeline rules (design §5): only the rules given change. */
+    rules: stageRulesPatchSchema.optional(),
   })
   .refine((value) => Object.values(value).some((field) => field !== undefined), {
     message: 'Nothing to update',

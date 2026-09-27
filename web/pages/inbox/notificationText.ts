@@ -8,6 +8,7 @@ import {
   SquareCheckBigIcon,
   UserPlusIcon,
   UsersIcon,
+  WorkflowIcon,
   type LucideIcon,
 } from 'lucide-react';
 import type { NotificationType } from '@shared/constants';
@@ -74,6 +75,12 @@ export const NOTIFICATION_KINDS: Record<NotificationType, NotificationKind> = {
     verb: 'needs your sign-off',
     label: 'Sign-off request',
     tone: 'text-amber-600 dark:text-amber-400',
+  },
+  stage_entered: {
+    icon: WorkflowIcon,
+    verb: 'moved a task into a stage you follow',
+    label: 'Stage',
+    tone: 'text-indigo-600 dark:text-indigo-400',
   },
 };
 

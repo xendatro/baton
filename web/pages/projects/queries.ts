@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { useSyncExternalStore } from 'react';
 import { okResponseSchema } from '@shared/schemas/common';
+import { DEFAULT_STAGE_RULES } from '@shared/schemas/pipelines';
 import {
   deleteLabelResponseSchema,
   deleteStatusResponseSchema,
@@ -280,6 +281,9 @@ export function useUpdateStatus(projectId: string) {
                 ...(input.color !== undefined ? { color: input.color } : {}),
                 ...(input.category !== undefined ? { category: input.category } : {}),
                 ...(input.isDefault ? { isDefault: true } : {}),
+                ...(input.rules
+                  ? { rules: { ...(status.rules ?? DEFAULT_STAGE_RULES), ...input.rules } }
+                  : {}),
               };
             }
             return input.isDefault ? { ...status, isDefault: false } : status;

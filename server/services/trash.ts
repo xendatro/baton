@@ -191,7 +191,8 @@ export function listTrash(
   const rows = deletedRows(orm, teamId).filter(
     (row) =>
       seeAll ||
-      (isOwnContent(membership, row.authorId) && (!row.projectId || (visible?.has(row.projectId) ?? true))),
+      (isOwnContent(membership, row.authorId) &&
+        (!row.projectId || (visible?.has(row.projectId) ?? true))),
   );
   const users = getUserSummaries(
     orm,

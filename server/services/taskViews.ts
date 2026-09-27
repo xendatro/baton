@@ -25,6 +25,7 @@ import type { Membership } from './access';
 import { attachmentsByParent } from './attachments';
 import { isClaimValid } from './claimLease';
 import { unreadCountsByItem } from './notifications';
+import { pipelineSummaries, stageOf } from './pipelines';
 import { reactionsOf } from './reactions';
 import { statusesOf } from './statuses';
 import { blockersOf, blockingOf, linkedIssuesOf, openBlockerRefs } from './taskLinks';
@@ -155,6 +156,7 @@ export function toTaskCards(
     claimed.map((row) => row.claimedViaKeyId),
   );
   const blockers = openBlockerRefs(db, ids);
+  const pipelines = pipelineSummaries(db, rows);
 
   return rows.flatMap((row): TaskCard[] => {
     const project = projects.get(row.projectId);
@@ -194,6 +196,7 @@ export function toTaskCards(
         createdAt: row.createdAt.toISOString(),
         completedAt: row.completedAt?.toISOString() ?? null,
         path: appPaths.task(project.slug, project.key, row.number),
+        ...(pipelines.has(row.id) ? { pipeline: pipelines.get(row.id) } : {}),
       },
     ];
   });
@@ -247,6 +250,7 @@ export function toTask(db: DbExecutor, viewer: Actor, row: TaskRow, now: Date = 
     ? (getUserSummaries(db, [row.authorId]).get(row.authorId) ?? null)
     : null;
   const via = row.viaKeyId ? (getViaKeys(db, [row.viaKeyId]).get(row.viaKeyId) ?? null) : null;
+  const stage = stageOf(db, viewer, row);
   return {
     ...card,
     description: row.description,
@@ -262,6 +266,7 @@ export function toTask(db: DbExecutor, viewer: Actor, row: TaskRow, now: Date = 
     attachments: attachmentsByParent(db, 'task', [row.id]).get(row.id) ?? [],
     reactions: reactionsOf(db, 'task', row.id, viewer.userId),
     subscribed: isSubscribed(db, viewer.userId, row.id),
+    ...(stage ? { stage } : {}),
   };
 }
 

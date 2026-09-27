@@ -1,4 +1,5 @@
-import { MessageSquareIcon } from 'lucide-react';
+import { HandIcon, ListChecksIcon, MessageSquareIcon, ShieldCheckIcon } from 'lucide-react';
+import type { TaskPipelineSummary } from '@shared/schemas/pipelines';
 import type { TaskCard as TaskCardData } from '@shared/schemas/tasks';
 import { BlockedBadge } from '@web/components/common/BlockedBadge';
 import { ClaimBadge } from '@web/components/common/ClaimBadge';
@@ -35,6 +36,7 @@ export function TaskCardBody({ task }: { task: TaskCardData }) {
       >
         {task.title}
       </p>
+      {task.pipeline ? <PipelineBadges pipeline={task.pipeline} /> : null}
       {task.labels.length > 0 ? (
         <div className="flex flex-wrap gap-1">
           {task.labels.map((label) => (
@@ -85,6 +87,44 @@ export function TaskCardBody({ task }: { task: TaskCardData }) {
             ) : null}
           </span>
         </div>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * What blocks the card in its pipeline stage (design §5): "Approvals 1/2", "Criteria 2/3" (while
+ * short) and "Claimable" (waiting in a pool). Text, not just color.
+ */
+export function PipelineBadges({ pipeline }: { pipeline: TaskPipelineSummary }) {
+  const { approvals, criteria, claimable } = pipeline;
+  const approvalsShort = approvals && approvals.approved < approvals.required;
+  const criteriaShort = criteria && criteria.done < criteria.total;
+  if (!approvalsShort && !criteriaShort && !claimable) return null;
+  const chip =
+    'inline-flex items-center gap-1 rounded-sm border px-1.5 py-0.5 text-[11px] leading-none text-muted-foreground';
+  return (
+    <div className="flex flex-wrap gap-1">
+      {approvalsShort ? (
+        <span className={chip} title="Approvals given / needed to move on">
+          <ShieldCheckIcon className="size-3" aria-hidden="true" />
+          Approvals {approvals.approved}/{approvals.required}
+        </span>
+      ) : null}
+      {criteriaShort ? (
+        <span className={chip} title="Exit criteria with evidence / all">
+          <ListChecksIcon className="size-3" aria-hidden="true" />
+          Criteria {criteria.done}/{criteria.total}
+        </span>
+      ) : null}
+      {claimable ? (
+        <span
+          className={cn(chip, 'border-indigo-500/40 text-indigo-700 dark:text-indigo-300')}
+          title="Waiting in a pool: its members can claim it"
+        >
+          <HandIcon className="size-3" aria-hidden="true" />
+          Claimable
+        </span>
       ) : null}
     </div>
   );

@@ -476,7 +476,7 @@ const createTaskTool = defineTool({
   name: 'create_task',
   title: 'Create task',
   description:
-    'Creates a task in a project (needs CREATE_TASKS). It goes to the default status (or `status`) at the end of its column and gets the next number (KEY-n). Assignees (members and roles) are notified, @mentions in the description too; you and the assigned members are subscribed to replies.',
+    'Creates a task in a project (needs CREATE_TASKS). It goes to the default status, else the first stage that accepts new tasks (or `status`, which must accept them: allowCreate in list_statuses), at the end of its column and gets the next number (KEY-n). Assignees (members and roles) are notified, @mentions in the description too; you and the assigned members are subscribed to replies.',
   input: toolInput({
     project: projectRef,
     title: z.string().min(1).max(LIMITS.title.max).describe('Short title'),
@@ -490,7 +490,9 @@ const createTaskTool = defineTool({
       .describe('Pipeline it starts in (default: the project’s default pipeline)'),
     status: statusRef
       .optional()
-      .describe('Initial status (default: the default status of its pipeline)'),
+      .describe(
+        'Initial status, one that accepts new tasks (default: the default status of its pipeline, else its first that does)',
+      ),
     priority: priorityField.optional(),
     dueDate: dueDateField.optional(),
     assignees: usernames.optional(),

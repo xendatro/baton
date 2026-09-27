@@ -39,6 +39,8 @@ async function setup(page: Page) {
   });
   const review = await api<{ id: string }>(page, 'post', `/api/projects/${project.id}/statuses`, {
     name: 'Review',
+    // BAT-34: the test starts a task straight in it.
+    rules: { allowCreate: true },
   });
   const [open, done] = project.statuses;
   await api(page, 'put', `/api/projects/${project.id}/statuses/order`, {

@@ -88,9 +88,11 @@ beforeEach(() => {
   const o = web(owner);
   const inProgress = createStatus(ctx.deps, o, project.project.id, {
     name: 'In Progress',
+    rules: { allowCreate: true },
   });
   const inReview = createStatus(ctx.deps, o, project.project.id, {
     name: 'In Review',
+    rules: { allowCreate: true },
   });
   const ordered = reorderStatuses(ctx.deps, o, project.project.id, {
     statusIds: [open.id, inProgress.id, inReview.id, closed.id],
@@ -305,6 +307,7 @@ describe('hand-off on enter', () => {
     setRules(review, { handoff: { mode: 'least_busy', rule: rule([user(ben), user(cal)]) } });
     newTask({ assignees: [ben.id] });
     newTask({ assignees: [ben.id] });
+    setRules(done, { allowCreate: true });
     newTask({ assignees: [cal.id], statusId: done.id }); // done: doesn't count
     const task = newTask({ statusId: doing.id });
     move(owner, task.id, review);

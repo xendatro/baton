@@ -116,6 +116,19 @@ test('creates tasks from the dialog and a column quick-add', async ({ page }) =>
   await expect(open.getByRole('link', { name: /Launch checklist/ })).toBeVisible();
   await expect(open.getByRole('link', { name: /Write the press release/ })).toBeVisible();
 
+  // BAT-34: only stages new tasks can start in have a +; Done doesn't until it's turned on.
+  await expect(
+    column(page, 'Open').getByRole('button', { name: 'New task in Open' }),
+  ).toBeVisible();
+  await expect(column(page, 'Done').getByRole('button', { name: 'New task in Done' })).toHaveCount(
+    0,
+  );
+  const doneId = project.statuses.find((status) => status.name === 'Done')?.id;
+  const allowed = await page.request.patch(`/api/statuses/${doneId}`, {
+    data: { rules: { allowCreate: true } },
+    headers: ORIGIN,
+  });
+  expect(allowed.status(), await allowed.text()).toBe(200);
   await page.getByRole('button', { name: 'New task in Done' }).click();
   await expect(dialog.getByRole('button', { name: 'Status: Done' })).toBeVisible();
   await dialog.getByPlaceholder('Task title').fill('Pick a launch date');

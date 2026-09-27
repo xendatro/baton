@@ -254,6 +254,12 @@ const stageFields = {
     .boolean()
     .optional()
     .describe('claim_next_task / claim_task may take tasks here (default true)'),
+  allowCreate: z
+    .boolean()
+    .optional()
+    .describe(
+      'New tasks can start here (default false for a new stage; making a stage the default turns it on). create_task without a status starts in the default stage when it allows this, else the first stage that does.',
+    ),
   category: z
     .enum(STATUS_CATEGORIES)
     .optional()
@@ -308,6 +314,7 @@ function stageRulesPatch(input: {
     | undefined;
   blocksDependents?: boolean | undefined;
   claimable?: boolean | undefined;
+  allowCreate?: boolean | undefined;
   sendBackTo?: string[] | undefined;
 }) {
   const onEnter = input.onEnter
@@ -318,6 +325,7 @@ function stageRulesPatch(input: {
     ...(onEnter ? { onEnter } : {}),
     ...(input.blocksDependents !== undefined ? { blocksDependents: input.blocksDependents } : {}),
     ...(input.claimable !== undefined ? { claimable: input.claimable } : {}),
+    ...(input.allowCreate !== undefined ? { allowCreate: input.allowCreate } : {}),
     ...(input.sendBackTo !== undefined ? { sendBackTo: input.sendBackTo } : {}),
   };
   return Object.keys(patch).length > 0 ? patch : undefined;
@@ -327,7 +335,7 @@ const listStatusesTool = defineTool({
   name: 'list_statuses',
   title: 'List statuses',
   description:
-    'Task statuses (stages) of a project in board order, pipeline by pipeline (pipelineId; see list_pipelines): name, color, icon, whether it is the default for new tasks of its pipeline, how many tasks it holds, and its rules (hand-off, onEnter effects such as resolving fixed issues or releasing the claim, blocksDependents, claimable, exit criteria, approvals).',
+    'Task statuses (stages) of a project in board order, pipeline by pipeline (pipelineId; see list_pipelines): name, color, icon, whether it is the default for new tasks of its pipeline, how many tasks it holds, and its rules (hand-off, onEnter effects such as resolving fixed issues or releasing the claim, blocksDependents, claimable, allowCreate (new tasks can start here), exit criteria, approvals).',
   input: toolInput({
     project: projectRef,
     pipeline: pipelineRef.optional().describe('Only the stages of this pipeline'),
@@ -420,7 +428,7 @@ const createStatusTool = defineTool({
   name: 'create_status',
   title: 'Create status',
   description:
-    'Adds a task status (stage) at the end of the board (needs MANAGE_STATUSES). A stage is just a column unless you give it rules: e.g. a finishing stage has handoff nobody, onEnter { resolveIssues, releaseClaim, notifyAuthor, notifyPreviousHolder }, blocksDependents false and claimable false.',
+    'Adds a task status (stage) at the end of the board (needs MANAGE_STATUSES). A stage is just a column unless you give it rules: e.g. a finishing stage has handoff nobody, onEnter { resolveIssues, releaseClaim, notifyAuthor, notifyPreviousHolder }, blocksDependents false and claimable false. New tasks can only start in stages with allowCreate (off unless given or isDefault).',
   input: toolInput({
     project: projectRef,
     name: z.string().min(1).max(LIMITS.statusName.max).describe('Status name, e.g. In review'),
@@ -438,6 +446,7 @@ const createStatusTool = defineTool({
       onEnter,
       blocksDependents,
       claimable,
+      allowCreate,
       sendBackTo,
       defaultDifficulty,
       ...fields
@@ -451,6 +460,7 @@ const createStatusTool = defineTool({
       onEnter,
       blocksDependents,
       claimable,
+      allowCreate,
       sendBackTo: sendBackIds(ctx, projectId, sendBackTo, pipelineId),
     });
     const parsed = parseInput(createStatusInputSchema, {
@@ -488,6 +498,7 @@ const updateStatusTool = defineTool({
       onEnter,
       blocksDependents,
       claimable,
+      allowCreate,
       sendBackTo,
       defaultDifficulty,
       ...fields
@@ -500,6 +511,7 @@ const updateStatusTool = defineTool({
       onEnter,
       blocksDependents,
       claimable,
+      allowCreate,
       sendBackTo: sendBackIds(ctx, projectId, sendBackTo, row.pipelineId),
     });
     const parsed = parseInput(updateStatusInputSchema, {

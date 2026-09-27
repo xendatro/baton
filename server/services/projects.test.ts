@@ -233,6 +233,11 @@ describe('creating projects', () => {
     expect(project.pipelines?.map((pipeline) => [pipeline.name, pipeline.isDefault])).toEqual([
       ['Development', true],
     ]);
+    // Its Open is where new tasks start (BAT-34).
+    expect(project.statuses.map((status) => [status.name, status.rules?.allowCreate])).toEqual([
+      ['Open', true],
+      ['Done', false],
+    ]);
     expect(
       project.statuses.every((status) => status.pipelineId === project.pipelines?.[0]?.id),
     ).toBe(true);

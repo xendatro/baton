@@ -23,6 +23,7 @@ import { RelativeTime } from '@web/components/common/RelativeTime';
 import { Spinner } from '@web/components/common/Spinner';
 import { UserName } from '@web/components/common/UserName';
 import { usePaletteCommands } from '@web/components/palette/registry';
+import { ActivitySheet } from '@web/components/replies/ActivitySheet';
 import { ReplyComposer } from '@web/components/replies/ReplyComposer';
 import { Timeline } from '@web/components/replies/Timeline';
 import { Button } from '@web/components/ui/button';
@@ -244,6 +245,13 @@ function IssueDetail({
                   {issue.resolved ? 'Reopen' : 'Resolve'}
                 </Button>
               ) : null}
+              <ActivitySheet
+                parentType="issue"
+                parentId={issue.id}
+                itemRef={issue.ref}
+                group="Issue"
+                className="h-8"
+              />
               <IssueMenu
                 canDelete={canDelete}
                 onCopyLink={() => void copyText(link)}

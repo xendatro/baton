@@ -2,41 +2,34 @@ import { ErrorState } from '@web/components/common/ErrorState';
 import { Spinner } from '@web/components/common/Spinner';
 import { Button } from '@web/components/ui/button';
 import { useScrollToHash } from '@web/lib/useScrollToHash';
-import { ActivityRow } from './ActivityRow';
-import { useActivity } from './queries';
 import { ThreadSkeleton, type ThreadProps } from './ReplyThread';
 import { FocusedThreadBanner, ReplyBranch, ReplyTreeProvider } from './ReplyTree';
 import { useReplyTree } from './threadState';
-import { mergeTimeline } from './mergeTimeline';
 
 /**
- * Top-level replies interleaved with the item's history, each with its answers nested under it
- * (BAT-13); live through query invalidation. `?thread=<replyId>` shows one sub-thread instead.
+ * The conversation: top-level replies, each with its answers nested under it (BAT-13); live through
+ * query invalidation. `?thread=<replyId>` shows one sub-thread instead. The item's history is not
+ * mixed in: it lives in the Activity drawer (`ActivitySheet`).
  */
 export function Timeline({ parentType, parentId }: ThreadProps) {
   const tree = useReplyTree(parentType, parentId);
   const replies = tree.query;
-  const activity = useActivity(parentType, parentId);
-  useScrollToHash(tree.ready && activity.isSuccess);
-  if (replies.isPending || activity.isPending) return <ThreadSkeleton />;
-  if (replies.isError || activity.isError) {
+  useScrollToHash(tree.ready);
+  if (replies.isPending) return <ThreadSkeleton />;
+  if (replies.isError) {
     return (
       <div className="space-y-3">
         {tree.focus ? <FocusedThreadBanner ancestors={[]} /> : null}
         <ErrorState
           title={tree.focus ? 'Couldn’t load this thread' : 'Couldn’t load the conversation'}
-          error={replies.error ?? activity.error}
-          onRetry={() => {
-            void replies.refetch();
-            void activity.refetch();
-          }}
+          error={replies.error}
+          onRetry={() => void replies.refetch()}
         />
       </div>
     );
   }
   const forest = tree.forest;
   if (!forest) return <ThreadSkeleton />;
-  const roots = new Map(forest.roots.map((node) => [node.reply.id, node]));
 
   if (tree.focus) {
     return (
@@ -55,29 +48,21 @@ export function Timeline({ parentType, parentId }: ThreadProps) {
     );
   }
 
-  const items = mergeTimeline(
-    forest.roots.map((node) => node.reply),
-    activity.data,
-    parentId,
-  );
-  if (items.length === 0) {
-    return <p className="py-2 text-sm text-muted-foreground">No replies or changes yet.</p>;
+  if (forest.roots.length === 0) {
+    return (
+      <p className="py-2 text-sm text-muted-foreground">
+        No replies yet. Start the conversation below.
+      </p>
+    );
   }
   return (
     <ReplyTreeProvider value={tree.context}>
-      <ol className="space-y-2" aria-label="Replies and history">
-        {items.map((item) => {
-          const node = item.kind === 'reply' ? roots.get(item.reply.id) : undefined;
-          return (
-            <li key={item.kind === 'reply' ? item.reply.id : item.entry.id}>
-              {item.kind === 'activity' ? (
-                <ActivityRow entry={item.entry} className="px-3" />
-              ) : node ? (
-                <ReplyBranch node={node} />
-              ) : null}
-            </li>
-          );
-        })}
+      <ol className="space-y-2" aria-label="Conversation">
+        {forest.roots.map((node) => (
+          <li key={node.reply.id}>
+            <ReplyBranch node={node} />
+          </li>
+        ))}
       </ol>
       {tree.moreComments > 0 && tree.canLoadMore ? (
         <Button

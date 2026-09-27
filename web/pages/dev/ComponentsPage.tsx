@@ -34,6 +34,8 @@ import { LabelPicker } from '@web/components/pickers/LabelPicker';
 import { PriorityPicker } from '@web/components/pickers/PriorityPicker';
 import { StatusPicker } from '@web/components/pickers/StatusPicker';
 import { DEFAULT_REPLY_VIEW, replyTreeKey } from '@web/components/replies/queries';
+import { ActivityRow } from '@web/components/replies/ActivityRow';
+import { ActivitySheet } from '@web/components/replies/ActivitySheet';
 import { ReplyComposer } from '@web/components/replies/ReplyComposer';
 import { Timeline } from '@web/components/replies/Timeline';
 import { Button } from '@web/components/ui/button';
@@ -338,7 +340,13 @@ function Gallery() {
         />
       </Section>
 
-      <Section title="Replies & history">
+      <Section title="Conversation & activity">
+        <ActivitySheet parentType="task" parentId="task_dev" itemRef="DEV-1" group="Task" />
+        <div>
+          {fixtures.activity.map((entry) => (
+            <ActivityRow key={entry.id} entry={entry} />
+          ))}
+        </div>
         <Timeline parentType="task" parentId="task_dev" />
         <ReplyComposer parentType="task" parentId="task_dev" teamId={fixtures.TEAM_ID} />
       </Section>

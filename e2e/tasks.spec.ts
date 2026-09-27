@@ -364,7 +364,6 @@ test('task page: edit the title, change status, claim, release, delete and undo'
   await page.getByRole('option', { name: 'Done' }).click();
   const details = page.getByRole('complementary', { name: 'Task details' });
   await expect(details.getByRole('button', { name: 'Status: Done' })).toBeVisible();
-  await expect(page.getByText(/moved from Open to Done/)).toBeVisible();
   // The picker closes with a short animation; shortcuts wait until it has.
   await expect(page.getByRole('listbox')).toBeHidden();
   await page.keyboard.press('s');
@@ -377,9 +376,14 @@ test('task page: edit the title, change status, claim, release, delete and undo'
 
   await details.getByRole('button', { name: 'Claim', exact: true }).click();
   await expect(details.getByText('(web)')).toBeVisible();
-  await expect(
-    page.getByRole('list', { name: 'Replies and history' }).getByText(/claimed this task/),
-  ).toBeVisible();
+  // `h` opens the Activity drawer with the history; Esc closes it.
+  await page.keyboard.press('h');
+  const history = page.getByRole('list', { name: 'History' });
+  await expect(history.getByText(/claimed this task/)).toBeVisible();
+  await expect(history.getByText(/moved from Open to Done/)).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(history).toBeHidden();
+  await expect(page.getByRole('list', { name: 'Conversation' })).not.toContainText('claimed');
   await details.getByRole('button', { name: 'Release' }).click();
   await expect(details.getByText('Nobody is working on this.')).toBeVisible();
 

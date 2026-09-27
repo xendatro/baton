@@ -1,0 +1,40 @@
+# Render Blueprint (docs/DEPLOY-RENDER.md): one web service with a persistent disk.
+# Baton keeps live connections, agent listeners and its event bus in memory, so it runs as exactly
+# one instance (a service with a disk can't scale out anyway). SQLite and uploads live on the disk.
+services:
+  - type: web
+    name: baton
+    runtime: node
+    plan: starter
+    region: oregon
+    branch: main
+    autoDeploy: true
+    # devDependencies (Vite, esbuild…) are needed to build, even with NODE_ENV=production.
+    buildCommand: npm ci --include=dev && npm run build
+    startCommand: node --enable-source-maps dist/server/index.js
+    healthCheckPath: /healthz
+    disk:
+      name: baton-data
+      mountPath: /var/data
+      sizeGB: 5
+    envVars:
+      - key: NODE_VERSION
+        value: '24'
+      - key: NODE_ENV
+        value: production
+      # Render routes to $PORT on all interfaces (it sets PORT itself).
+      - key: HOST
+        value: 0.0.0.0
+      - key: DATA_DIR
+        value: /var/data
+      - key: TRUST_PROXY
+        value: render
+      # Secrets and per-deployment values: asked for when the Blueprint is created.
+      - key: BASE_URL
+        sync: false
+      - key: BETTER_AUTH_SECRET
+        sync: false
+      - key: SMTP_URL
+        sync: false
+      - key: MAIL_FROM
+        sync: false

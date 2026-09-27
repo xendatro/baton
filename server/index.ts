@@ -9,6 +9,7 @@ import { runMigrations } from './db/migrate';
 import { createAppDeps } from './deps';
 import { EnvError, loadDotEnv, parseEnv, type Env } from './env';
 import { startJobs } from './jobs';
+import { importPendingData } from './lib/dataImport';
 import { dataPaths, ensureDataDirs } from './lib/paths';
 import { createLogger } from './logger';
 import { VERSION } from './version';
@@ -48,6 +49,9 @@ if (env.usesDevelopmentSecret) {
   );
 }
 const paths = dataPaths(env.dataDir);
+// A snapshot copied into DATA_DIR/import/ (moving hosts) replaces the data before it is opened.
+const replaced = importPendingData(paths);
+if (replaced) logger.warn({ replaced }, 'Imported DATA_DIR/import; the previous data was kept');
 ensureDataDirs(paths);
 
 const deps = createAppDeps({ env, logger, databaseFile: paths.database });

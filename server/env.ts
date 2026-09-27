@@ -40,7 +40,7 @@ const envSchema = z
     SIGNUPS_ENABLED: booleanString.default(true),
     MAX_UPLOAD_MB: z.coerce.number().int().min(1).max(2048).default(25),
     TEAM_STORAGE_QUOTA_MB: z.coerce.number().int().min(1).default(5120),
-    TRUST_PROXY: z.enum(['none', 'cloudflare']).default('none'),
+    TRUST_PROXY: z.enum(['none', 'cloudflare', 'render']).default('none'),
     LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).optional(),
     /** Test-only: also write every outgoing email as JSON into DATA_DIR/mailbox/. */
     E2E_MAILBOX: booleanString.default(false),
@@ -105,7 +105,7 @@ export interface Env {
   signupsEnabled: boolean;
   maxUploadMb: number;
   teamStorageQuotaMb: number;
-  trustProxy: 'none' | 'cloudflare';
+  trustProxy: 'none' | 'cloudflare' | 'render';
   logLevel: LogLevel;
   /** Test-only: write outgoing emails as JSON files into `DATA_DIR/mailbox/` (e2e tests read them). */
   e2eMailbox: boolean;

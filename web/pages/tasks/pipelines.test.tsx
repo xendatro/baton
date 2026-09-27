@@ -224,6 +224,61 @@ describe('StagePanel', () => {
     expect(onSendBack).toHaveBeenCalledWith({ statusId: 's-open', reason: 'Wrong approach' });
   });
 
+  it('moves on or sends back with a difficulty for that stage (BAT-28)', async () => {
+    mockApi({});
+    const levels = [
+      { id: 'd-easy', name: 'Easy' },
+      { id: 'd-normal', name: 'Normal' },
+      { id: 'd-hard', name: 'Hard' },
+    ];
+    const onMoveWithDifficulty = vi.fn(() => Promise.resolve());
+    const onSendBack = vi.fn(() => Promise.resolve());
+    const user = userEvent.setup();
+    renderWith(
+      <StagePanel
+        task={{
+          ...task,
+          stage: {
+            ...stage,
+            criteria: [],
+            approvals: null,
+            missing: [],
+            canMove: true,
+            canMoveTo: {
+              forward: { id: 's-done', name: 'Done', missing: [], difficultyId: 'd-normal' },
+              back: [{ id: 's-doing', name: 'In Progress', difficultyId: 'd-easy' }],
+            },
+          },
+        }}
+        teamId="team1"
+        onMoveOn={vi.fn()}
+        onSendBack={onSendBack}
+        onMoveWithDifficulty={onMoveWithDifficulty}
+        difficulties={levels}
+      />,
+    );
+    await user.click(screen.getByRole('button', { name: 'Move with difficulty…' }));
+    const popover = await screen.findByTestId('move-with-difficulty');
+    const select = within(popover).getByRole('combobox', { name: 'Difficulty for Done' });
+    expect(select).toHaveValue('d-normal');
+    await user.selectOptions(select, 'd-hard');
+    await user.click(within(popover).getByRole('button', { name: 'Move to Done' }));
+    expect(onMoveWithDifficulty).toHaveBeenCalledWith('d-hard');
+
+    await user.click(screen.getByRole('button', { name: /Send back…/ }));
+    const dialog = await screen.findByTestId('send-back-dialog');
+    const difficulty = within(dialog).getByRole('combobox', { name: 'Difficulty for In Progress' });
+    expect(difficulty).toHaveValue('d-easy');
+    await user.selectOptions(difficulty, 'd-hard');
+    await user.type(within(dialog).getByRole('textbox', { name: 'Reason' }), 'Failed review');
+    await user.click(within(dialog).getByRole('button', { name: /Send back to In Progress/ }));
+    expect(onSendBack).toHaveBeenCalledWith({
+      statusId: 's-doing',
+      reason: 'Failed review',
+      difficultyId: 'd-hard',
+    });
+  });
+
   it('is read-only for people who may not give evidence or approve', () => {
     mockApi({});
     renderWith(

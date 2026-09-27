@@ -31,6 +31,7 @@ import { Label } from '@web/components/ui/label';
 import { errorMessage } from '@web/lib/api';
 import { FINISHED_STAGE_RULES, LIMITS } from '@shared/constants';
 import { cn } from '@web/lib/utils';
+import { DifficultySelect, type DifficultyLevel } from '../tasks/DifficultySelect';
 import {
   approvalsSentence,
   CUSTOM_HANDOFF_LABELS,
@@ -59,6 +60,8 @@ export interface StatusDialogProps {
   onClose: () => void;
   onCreate: (input: CreateStatusInput) => Promise<Status>;
   onUpdate: (id: string, input: UpdateStatusInput) => Promise<unknown>;
+  /** BAT-28: the project's difficulty levels, easiest first (for the default difficulty). */
+  difficulties?: readonly DifficultyLevel[] | undefined;
 }
 
 const SECTIONS = [
@@ -76,6 +79,8 @@ interface Draft {
   icon: StatusIconShape;
   color: string;
   isDefault: boolean;
+  /** BAT-28: the difficulty of a task's first visit. */
+  defaultDifficultyId: string | null;
   rules: StageRules;
 }
 
@@ -147,7 +152,11 @@ function pickRules(section: Exclude<SectionId, 'basics'>, rules: StageRules): St
 function sameSection(section: SectionId, a: Draft, b: Draft): boolean {
   if (section === 'basics') {
     return (
-      a.name === b.name && a.icon === b.icon && a.color === b.color && a.isDefault === b.isDefault
+      a.name === b.name &&
+      a.icon === b.icon &&
+      a.color === b.color &&
+      a.isDefault === b.isDefault &&
+      a.defaultDifficultyId === b.defaultDifficultyId
     );
   }
   return (
@@ -163,6 +172,7 @@ function withSection(section: SectionId, base: Draft, from: Draft): Draft {
       icon: from.icon,
       color: from.color,
       isDefault: from.isDefault,
+      defaultDifficultyId: from.defaultDifficultyId,
     };
   }
   return { ...base, rules: { ...base.rules, ...pickRules(section, from.rules) } as StageRules };
@@ -215,6 +225,7 @@ function StatusForm({
   onDirtyChange,
   confirmingClose,
   onKeepEditing,
+  difficulties,
 }: Omit<StatusDialogProps, 'state'> & {
   state: NonNullable<StatusDialogState>;
   onDirtyChange: (dirty: boolean) => void;
@@ -230,6 +241,7 @@ function StatusForm({
         icon: 'circle',
         color: suggestColor(statuses),
         isDefault: false,
+        defaultDifficultyId: null,
         // A new stage goes last: by default it can send tasks back to every stage before it.
         rules: {
           ...DEFAULT_STAGE_RULES,
@@ -246,6 +258,7 @@ function StatusForm({
       icon: status.icon,
       color: status.color,
       isDefault: status.isDefault,
+      defaultDifficultyId: status.defaultDifficultyId ?? null,
       rules: { ...rules, sendBackTo: rules.sendBackTo.filter((id) => earlier.has(id)) },
     };
   });
@@ -304,6 +317,7 @@ function StatusForm({
       icon: draft.icon,
       color: draft.color,
       ...(draft.isDefault ? { isDefault: true } : {}),
+      ...(draft.defaultDifficultyId ? { defaultDifficultyId: draft.defaultDifficultyId } : {}),
       rules: cleanRules(draft.rules),
     }).then(
       (created) => {
@@ -333,6 +347,9 @@ function StatusForm({
         icon: draft.icon,
         color: draft.color,
         ...(draft.isDefault && !saved.isDefault ? { isDefault: true as const } : {}),
+        ...(draft.defaultDifficultyId !== saved.defaultDifficultyId
+          ? { defaultDifficultyId: draft.defaultDifficultyId }
+          : {}),
       };
     } else {
       input = { rules: pickRules(section, cleanRules(draft.rules)) };
@@ -461,6 +478,7 @@ function StatusForm({
               canManage={canManage}
               isFinal={isFinal(draft.rules)}
               onMakeFinal={makeFinal}
+              difficulties={difficulties}
             />
           ) : section === 'instructions' ? (
             <InstructionsSection
@@ -597,6 +615,7 @@ function BasicsSection({
   canManage,
   isFinal: final,
   onMakeFinal,
+  difficulties,
 }: {
   draft: Draft;
   setDraft: (update: (current: Draft) => Draft) => void;
@@ -605,8 +624,10 @@ function BasicsSection({
   canManage: boolean;
   isFinal: boolean;
   onMakeFinal: () => void;
+  difficulties?: readonly DifficultyLevel[] | undefined;
 }) {
   const nameId = useId();
+  const difficultyId = useId();
   return (
     <div className="grid max-w-md gap-5">
       <div className="grid gap-1.5">
@@ -640,6 +661,27 @@ function BasicsSection({
           </Button>
         </StatusIconPicker>
       </div>
+      {difficulties && difficulties.length > 0 ? (
+        <div className="grid gap-1.5">
+          <div className="flex items-center gap-1.5">
+            <Label htmlFor={difficultyId}>Default difficulty</Label>
+            <HelpTip topic="Default difficulty">
+              The difficulty a task gets the first time it enters this stage (it picks the models
+              agents run). Coming back, it keeps the difficulty it had here last time. No
+              difficulty: it keeps the one it came with.
+            </HelpTip>
+          </div>
+          <DifficultySelect
+            id={difficultyId}
+            levels={difficulties}
+            value={draft.defaultDifficultyId}
+            onChange={(value) =>
+              setDraft((current) => ({ ...current, defaultDifficultyId: value }))
+            }
+            className="max-w-sm"
+          />
+        </div>
+      ) : null}
       <CheckRow
         label="Default for new tasks"
         help={

@@ -36,11 +36,17 @@ import {
   type RefObject,
 } from 'react';
 import { Link } from 'react-router';
-import type { BoardColumn, BoardResponse, TaskCard } from '@shared/schemas/tasks';
+import {
+  taskSchema,
+  type BoardColumn,
+  type BoardResponse,
+  type TaskCard,
+} from '@shared/schemas/tasks';
 import { FinishedMark } from '@web/components/common/FinishedMark';
 import { StatusIcon } from '@web/components/common/StatusBadge';
 import { Button } from '@web/components/ui/button';
 import { Skeleton } from '@web/components/ui/skeleton';
+import { api } from '@web/lib/api';
 import { cn } from '@web/lib/utils';
 import { ColumnMenu } from './CustomizeMenu';
 import {
@@ -52,7 +58,8 @@ import {
   type Layout,
 } from './helpers';
 import type { MoveVariables } from './queries';
-import { SendBackDialog } from './SendBackDialog';
+import type { DifficultyLevel } from './DifficultySelect';
+import { SendBackDialog, type SendBackStage } from './SendBackDialog';
 import { TaskCardBody } from './TaskCard';
 
 /**
@@ -114,6 +121,8 @@ export interface BoardProps {
   editStatusHref?: (statusId: string) => string;
   /** BAT-25, the "All" view of several pipelines: each column's pipeline, above its name. */
   pipelineNameOf?: (pipelineId: string | undefined) => string | undefined;
+  /** BAT-28: the project's difficulty levels, for the difficulty of a move back. */
+  difficulties?: readonly DifficultyLevel[] | undefined;
 }
 
 export function Board({
@@ -126,6 +135,7 @@ export function Board({
   hint,
   editStatusHref,
   pipelineNameOf,
+  difficulties,
 }: BoardProps) {
   const [dragLayout, setDragLayout] = useState<Layout | null>(null);
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -153,7 +163,7 @@ export function Board({
   const [sendingBack, setSendingBack] = useState<{
     move: MoveVariables;
     from: string;
-    back: Array<{ id: string; name: string }>;
+    back: SendBackStage[];
   } | null>(null);
   const forbidden = (statusId: string | undefined) =>
     Boolean(moves && statusId && !moves.allowed.has(statusId));
@@ -300,8 +310,35 @@ export function Board({
       setSendingBack({
         move: { taskId: card.id, ...move },
         from: card.status.name,
-        back: targets.back.map((status) => ({ id: status.id, name: status.name })),
+        back: targets.back.map((status) => ({
+          id: status.id,
+          name: status.name,
+          difficultyId: status.defaultDifficultyId ?? card.difficulty?.id ?? null,
+        })),
       });
+      // BAT-28: the exact difficulty each stage would give it (its last one there) comes with the task.
+      if (difficulties?.length) {
+        void api.get(`/api/tasks/${encodeURIComponent(card.id)}`, { schema: taskSchema }).then(
+          (full) => {
+            const exact = full.stage?.canMoveTo?.back;
+            if (!exact) return;
+            setSendingBack((current) =>
+              current?.move.taskId === card.id
+                ? {
+                    ...current,
+                    back: current.back.map((stage) => ({
+                      ...stage,
+                      difficultyId:
+                        exact.find((item) => item.id === stage.id)?.difficultyId ??
+                        stage.difficultyId,
+                    })),
+                  }
+                : current,
+            );
+          },
+          () => undefined,
+        );
+      }
       return;
     }
     setSettling(move ? { layout: after, board } : null);
@@ -360,7 +397,8 @@ export function Board({
         from={sendingBack?.from ?? ''}
         stages={sendingBack?.back ?? []}
         initialStageId={sendingBack?.move.statusId}
-        onConfirm={({ statusId, reason }) => {
+        difficulties={difficulties?.length ? difficulties : undefined}
+        onConfirm={({ statusId, reason, difficultyId }) => {
           const pending = sendingBack;
           if (!pending) return Promise.resolve();
           onMove({
@@ -374,6 +412,7 @@ export function Board({
                 }
               : {}),
             reason,
+            ...(difficultyId !== undefined ? { difficultyId } : {}),
           });
           return Promise.resolve();
         }}

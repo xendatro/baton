@@ -625,6 +625,14 @@ export const status = sqliteTable(
       .$type<string[]>()
       .notNull()
       .default(sql`'[]'`),
+    /**
+     * BAT-28: the difficulty a task gets on its first visit to this stage (a level of the same
+     * project; null: none, it keeps the difficulty it had in the stage it came from).
+     */
+    defaultDifficultyId: text('default_difficulty_id').references(
+      (): AnySQLiteColumn => difficulty.id,
+      { onDelete: 'set null' },
+    ),
     createdAt: createdAtColumn(),
     updatedAt: updatedAtColumn(),
   },
@@ -945,6 +953,8 @@ export const taskStageEntry = sqliteTable(
     returnedFromStatusId: text('returned_from_status_id').references(() => status.id, {
       onDelete: 'set null',
     }),
+    /** BAT-28: the task's difficulty in this stage during the visit (stage history). */
+    difficultyId: text('difficulty_id').references(() => difficulty.id, { onDelete: 'set null' }),
   },
   (t) => [
     index('task_stage_entry_task_idx').on(t.taskId, t.statusId, t.enteredAt),
@@ -954,6 +964,31 @@ export const taskStageEntry = sqliteTable(
     index('task_stage_entry_returned_by_idx').on(t.returnedById),
     index('task_stage_entry_returned_via_key_idx').on(t.returnedViaKeyId),
     index('task_stage_entry_returned_from_idx').on(t.returnedFromStatusId),
+    index('task_stage_entry_difficulty_idx').on(t.difficultyId),
+  ],
+);
+
+/**
+ * BAT-28: a task's difficulty in a stage, like its assignments there. The row exists once the
+ * task has been in the stage (null: no difficulty there); returning to the stage restores it.
+ * `task.difficulty_id` mirrors the value of the task's current stage.
+ */
+export const taskStageDifficulty = sqliteTable(
+  'task_stage_difficulty',
+  {
+    taskId: text('task_id')
+      .notNull()
+      .references(() => task.id, { onDelete: 'cascade' }),
+    statusId: text('status_id')
+      .notNull()
+      .references(() => status.id, { onDelete: 'cascade' }),
+    difficultyId: text('difficulty_id').references(() => difficulty.id, { onDelete: 'set null' }),
+    updatedAt: updatedAtColumn(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.taskId, t.statusId] }),
+    index('task_stage_difficulty_status_idx').on(t.statusId),
+    index('task_stage_difficulty_difficulty_idx').on(t.difficultyId),
   ],
 );
 

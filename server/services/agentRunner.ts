@@ -568,6 +568,32 @@ function sentBackSection(job: JobRow, stage: TaskStage | null): string[] {
   ];
 }
 
+/**
+ * BAT-28: the difficulty of the stage a job is for — the task's difficulty in `payload.statusId`
+ * when the job names another stage it has been in, else its current stage's.
+ */
+function jobDifficultyId(
+  db: DbExecutor,
+  job: Pick<JobRow, 'payload'>,
+  task: { id: string; statusId: string; difficultyId: string | null },
+): string | null {
+  const statusId = typeof job.payload.statusId === 'string' ? job.payload.statusId : null;
+  if (statusId && statusId !== task.statusId) {
+    const row = db
+      .select({ difficultyId: s.taskStageDifficulty.difficultyId })
+      .from(s.taskStageDifficulty)
+      .where(
+        and(
+          eq(s.taskStageDifficulty.taskId, task.id),
+          eq(s.taskStageDifficulty.statusId, statusId),
+        ),
+      )
+      .get();
+    if (row) return row.difficultyId;
+  }
+  return task.difficultyId;
+}
+
 function recentReplies(
   db: DbExecutor,
   item: { type: string; id: string },
@@ -629,7 +655,11 @@ export function jobBrief(
     .from(s.difficulty)
     .where(eq(s.difficulty.projectId, job.projectId))
     .all();
-  const level = task?.difficultyId ? levels.find((row) => row.id === task.difficultyId) : undefined;
+  // BAT-28: the difficulty of the stage the job is for.
+  const difficultyId = task ? jobDifficultyId(orm, job, task) : null;
+  const level = difficultyId ? levels.find((row) => row.id === difficultyId) : undefined;
+  const jobStage =
+    typeof job.payload.stage === 'string' ? job.payload.stage : (context.target.status ?? null);
   const mappings = orm
     .select({ defaultMapping: s.agentSettings.defaultMapping })
     .from(s.agentSettings)
@@ -692,7 +722,11 @@ export function jobBrief(
       ...(pipeline && !pipeline.isDefault ? [`- Pipeline: ${pipeline.name}`] : []),
       ...(context.target.status ? [`- Status: ${context.target.status}`] : []),
       ...(task ? [`- Priority: ${PRIORITIES[task.priority]?.label ?? 'None'}`] : []),
-      ...(task ? [`- Difficulty: ${level?.name ?? 'none'}`] : []),
+      ...(task
+        ? [
+            `- Difficulty: ${level?.name ?? 'none'}${jobStage ? ` (the task’s difficulty in ${jobStage}; it picked your model)` : ''}`,
+          ]
+        : []),
     ];
     sections.push(
       `## ${item.type === 'task' ? 'Task' : 'Issue'} ${ref}: ${item.title}\n\n${facts.join('\n')}\n\n### ${
@@ -812,16 +846,17 @@ export function recordUsage(
   const task =
     item?.type === 'task'
       ? orm
-          .select({ difficultyId: s.task.difficultyId })
+          .select({ id: s.task.id, statusId: s.task.statusId, difficultyId: s.task.difficultyId })
           .from(s.task)
           .where(eq(s.task.id, item.id))
           .get()
       : undefined;
-  const level = task?.difficultyId
+  const difficultyId = task ? jobDifficultyId(orm, job, task) : null;
+  const level = difficultyId
     ? orm
         .select({ name: s.difficulty.name })
         .from(s.difficulty)
-        .where(eq(s.difficulty.id, task.difficultyId))
+        .where(eq(s.difficulty.id, difficultyId))
         .get()
     : undefined;
   const now = new Date();

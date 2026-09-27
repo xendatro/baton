@@ -184,10 +184,15 @@ function TaskView({ task, team, project }: { task: Task; team: MeTeam; project: 
   /** BAT-27: a status picked from the earlier stages it may go back to (asks for the reason). */
   const [sendingBack, setSendingBack] = useState<string | null>(null);
   const stageMove = useStageMove(task);
-  const sendBack = ({ statusId, reason }: SendBackResult) =>
+  const sendBack = ({ statusId, reason, difficultyId }: SendBackResult) =>
     stageMove
-      .mutateAsync({ statusId, reason })
+      .mutateAsync({ statusId, reason, ...(difficultyId !== undefined ? { difficultyId } : {}) })
       .then((updated) => toast.success(`Sent back to ${updated.status.name}`));
+  /** BAT-28: the green button's ▾, moving on with a difficulty for the next stage. */
+  const moveWithDifficulty = (difficultyId: string | null) =>
+    stageMove
+      .mutateAsync({ statusId: task.stage?.next?.id ?? task.status.id, difficultyId })
+      .then((updated) => toast.success(`Moved to ${updated.status.name}`));
 
   const save = (input: UpdateTaskInput, optimistic?: Partial<Task>, success?: string) =>
     update.mutateAsync({ input, optimistic }).then(
@@ -759,6 +764,8 @@ function TaskView({ task, team, project }: { task: Task; team: MeTeam; project: 
                     : undefined
                 }
                 onSendBack={canUpdate || task.stage.approvals?.canApprove ? sendBack : undefined}
+                onMoveWithDifficulty={task.stage.next && canUpdate ? moveWithDifficulty : undefined}
+                difficulties={difficulties.data ?? []}
               />
             </div>
           ) : null}
@@ -883,6 +890,7 @@ function TaskView({ task, team, project }: { task: Task; team: MeTeam; project: 
         from={task.status.name}
         stages={task.stage?.canMoveTo?.back ?? []}
         initialStageId={sendingBack ?? undefined}
+        difficulties={difficulties.data?.length ? difficulties.data : undefined}
         onConfirm={sendBack}
       />
       <ConfirmDialog

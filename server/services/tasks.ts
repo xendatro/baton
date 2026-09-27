@@ -59,6 +59,7 @@ import {
   returnOf,
   rulesOf,
   saveEvidence,
+  setStageDifficulty,
   type GuardResult,
 } from './pipelines';
 import { canSeeStatus, defaultPipeline, pipelineRow, requireCreateIn } from './projectPipelines';
@@ -593,7 +594,8 @@ export function createTask(
         description,
         statusId: status.id,
         priority: input.priority ?? 0,
-        difficultyId: level?.id ?? null,
+        // BAT-28: set by entering the first stage (the creator's choice, else its default).
+        difficultyId: null,
         dueDate: input.dueDate ?? null,
         position: appendPosition(tx, status.id),
         authorId: actor.userId,
@@ -660,7 +662,10 @@ export function createTask(
       status,
       now,
       notified,
-      { keepAssignees: users.length > 0 || roles.length > 0 },
+      {
+        keepAssignees: users.length > 0 || roles.length > 0,
+        ...(level ? { difficultyId: level.id } : {}),
+      },
     );
     indexSearch(tx, {
       entityType: 'task',
@@ -886,7 +891,20 @@ export function updateTask(
       changes.priority = change(priorityLabel(current.priority), priorityLabel(input.priority));
       patch.priority = input.priority;
     }
-    if (input.difficultyId !== undefined && input.difficultyId !== current.difficultyId) {
+    // BAT-28: moving, the difficulty is the new stage's (set on entering it); otherwise the
+    // current stage's.
+    const moving = input.statusId !== undefined && input.statusId !== current.statusId;
+    const difficultyForMove =
+      moving && input.difficultyId !== undefined
+        ? input.difficultyId
+          ? resolveDifficulty(tx, current.projectId, input.difficultyId).id
+          : null
+        : undefined;
+    if (
+      !moving &&
+      input.difficultyId !== undefined &&
+      input.difficultyId !== current.difficultyId
+    ) {
       const next = input.difficultyId
         ? resolveDifficulty(tx, current.projectId, input.difficultyId)
         : null;
@@ -1011,6 +1029,9 @@ export function updateTask(
       .where(eq(s.task.id, taskId))
       .returning()
       .get();
+    if (patch.difficultyId !== undefined) {
+      setStageDifficulty(tx, taskId, current.statusId, patch.difficultyId, now);
+    }
     recordActivity(tx, actor, {
       teamId: team.id,
       projectId: project.id,
@@ -1044,6 +1065,7 @@ export function updateTask(
         {
           ...(assigneesChanged ? { assignees: { users: users.after, roles: roles.after } } : {}),
           ...returnOf(move.guard),
+          ...(difficultyForMove !== undefined ? { difficultyId: difficultyForMove } : {}),
         },
       );
     }
@@ -1162,6 +1184,19 @@ export function moveTask(deps: AppDeps, actor: Actor, taskId: string, input: Mov
     const notified = new Set<string>();
     let transition: StatusTransition | null = null;
     let guard: GuardResult | null = null;
+    // BAT-28: a difficulty goes with a move to another stage, for that stage.
+    if (input.difficultyId !== undefined && to.id === from.id) {
+      throw errors.validation(
+        'A difficulty goes with a move to another stage (for that stage); use update_task to change the current one',
+        { field: 'difficultyId' },
+      );
+    }
+    const difficultyForMove =
+      input.difficultyId === undefined
+        ? undefined
+        : input.difficultyId
+          ? resolveDifficulty(tx, project.id, input.difficultyId).id
+          : null;
     if (to.id !== from.id) {
       guard = guardStageMove(tx, actor, { task: current, project, membership }, from, to, input);
       if (approverSendBack && guard.direction !== 'backward') {
@@ -1213,7 +1248,10 @@ export function moveTask(deps: AppDeps, actor: Actor, taskId: string, input: Mov
         to,
         now,
         notified,
-        returnOf(guard),
+        {
+          ...returnOf(guard),
+          ...(difficultyForMove !== undefined ? { difficultyId: difficultyForMove } : {}),
+        },
       );
     }
     emitTaskChange(tx, 'task.updated', updated, actor);

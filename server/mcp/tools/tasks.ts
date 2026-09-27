@@ -222,6 +222,12 @@ function pipelineId(ctx: ToolContext, projectId: string, ref: string | undefined
   return ref === undefined ? undefined : resolvePipeline(ctx.deps.db.orm, projectId, ref).id;
 }
 
+/** A difficulty level ref as its id (null: none; undefined: not given). */
+function difficultyIdOf(ctx: ToolContext, projectId: string, ref: string | null | undefined) {
+  if (ref === undefined) return undefined;
+  return ref === null ? null : resolveDifficulty(ctx.deps.db.orm, projectId, ref).id;
+}
+
 function priorityOf(value: z.infer<typeof priorityField> | undefined) {
   return value === undefined ? undefined : parseToolInput(priorityInputSchema, value, {});
 }
@@ -572,7 +578,9 @@ const updateTaskTool = defineTool({
       .min(1)
       .nullable()
       .optional()
-      .describe('Difficulty level (name), or null to clear it'),
+      .describe(
+        'Difficulty level (name), or null to clear it: of the current stage, or with `status` of the stage it moves to',
+      ),
     blockedBy: listChange(
       z.string().min(1),
       'Blocking tasks of the same project (KEY-12)',
@@ -659,6 +667,14 @@ const moveTaskTool = defineTool({
       .optional()
       .describe('Place right before this task (KEY-12) of the target column'),
     evidence: evidenceField.optional(),
+    difficulty: z
+      .string()
+      .min(1)
+      .nullable()
+      .optional()
+      .describe(
+        'Difficulty (level name or id; null: none) for the stage it moves to, instead of the default (its last difficulty there, else the stage’s default, else the current one)',
+      ),
     force: forceField.optional(),
     reason: reasonField
       .optional()
@@ -676,6 +692,7 @@ const moveTaskTool = defineTool({
         afterId: input.after ? taskOf(ctx, input.after).task.id : undefined,
         beforeId: input.before ? taskOf(ctx, input.before).task.id : undefined,
         evidence: evidenceOf(input.evidence),
+        difficultyId: difficultyIdOf(ctx, project.id, input.difficulty),
         force: input.force,
         reason: input.reason,
       },
@@ -707,6 +724,14 @@ const approveTaskTool = defineTool({
       .describe(
         'Request changes: the earlier stage to send it back to (default: the nearest one it may go back to)',
       ),
+    difficulty: z
+      .string()
+      .min(1)
+      .nullable()
+      .optional()
+      .describe(
+        'Request changes: the difficulty (level name or id; null: none) for the stage it goes back to, e.g. Hard after a failed review',
+      ),
   }),
   annotations: { destructiveHint: false },
   handler: (ctx, input) => {
@@ -717,6 +742,7 @@ const approveTaskTool = defineTool({
         decision: input.decision === 'changes' ? 'request_changes' : input.decision,
         comment: input.comment,
         sendBackTo: statusId(ctx, project.id, input.sendBackTo, pipelineOfTask(ctx, task)),
+        difficultyId: difficultyIdOf(ctx, project.id, input.difficulty),
       }),
     );
   },

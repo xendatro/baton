@@ -360,6 +360,23 @@ export function copyPipeline(
       });
     }
 
+    // BAT-28: default difficulties go to the target's level of the same name (none without one).
+    const levelsOf = (projectId: string) =>
+      tx
+        .select({ id: s.difficulty.id, name: s.difficulty.name })
+        .from(s.difficulty)
+        .where(eq(s.difficulty.projectId, projectId))
+        .all();
+    const sourceLevels = new Map(
+      levelsOf(source.project.id).map((level) => [level.id, level.name]),
+    );
+    const targetLevels = new Map(
+      levelsOf(target.project.id).map((level) => [level.name.toLowerCase(), level.id]),
+    );
+    const levelIn = (id: string | null) => {
+      const name = id ? sourceLevels.get(id) : undefined;
+      return name ? (targetLevels.get(name.toLowerCase()) ?? null) : null;
+    };
     for (const row of sourceStatuses) {
       const targetId = idMap.get(row.id);
       if (!targetId) continue;
@@ -395,7 +412,11 @@ export function copyPipeline(
         .where(eq(s.status.id, targetId))
         .get();
       tx.update(s.status)
-        .set({ ...ruleColumns(valid), updatedAt: now })
+        .set({
+          ...ruleColumns(valid),
+          defaultDifficultyId: levelIn(row.defaultDifficultyId),
+          updatedAt: now,
+        })
         .where(eq(s.status.id, targetId))
         .run();
       // Its tasks' completion follows whether the stage blocks its dependents.

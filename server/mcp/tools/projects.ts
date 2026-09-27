@@ -16,6 +16,7 @@ import {
 } from '@shared/schemas/projects';
 import { parseInput } from '../../lib/validate';
 import { createLabel, deleteLabel, listLabels, updateLabel } from '../../services/labels';
+import { resolveDifficulty } from '../../services/difficulties';
 import {
   createProject,
   deleteProject,
@@ -252,6 +253,14 @@ const stageFields = {
     .enum(STATUS_CATEGORIES)
     .optional()
     .describe('Deprecated and ignored: statuses have no open/done category any more'),
+  defaultDifficulty: z
+    .string()
+    .min(1)
+    .nullable()
+    .optional()
+    .describe(
+      'Difficulty (level name or id) a task gets on its first visit to this stage; null for none (it keeps the one it had)',
+    ),
   sendBackTo: z
     .array(z.string().min(1))
     .max(50)
@@ -260,6 +269,15 @@ const stageFields = {
       'Earlier stages of the same pipeline (names or ids) tasks may be sent back to from this one, with a reason; [] for none. A new stage can send back to every earlier stage by default.',
     ),
 };
+
+/** `{ defaultDifficultyId }` for a level ref (null: none), or nothing when not given. */
+function defaultDifficultyOf(ctx: ToolContext, projectId: string, ref: string | null | undefined) {
+  if (ref === undefined) return {};
+  return {
+    defaultDifficultyId:
+      ref === null ? null : resolveDifficulty(ctx.deps.db.orm, projectId, ref).id,
+  };
+}
 
 /** Send-back stage refs as ids of the pipeline's stages. */
 function sendBackIds(
@@ -416,6 +434,7 @@ const createStatusTool = defineTool({
       blocksDependents,
       claimable,
       sendBackTo,
+      defaultDifficulty,
       ...fields
     } = input;
     const projectId = projectContext(ctx, project).id;
@@ -433,6 +452,7 @@ const createStatusTool = defineTool({
       ...fields,
       ...(rules ? { rules } : {}),
       ...(pipelineId ? { pipelineId } : {}),
+      ...defaultDifficultyOf(ctx, projectId, defaultDifficulty),
     });
     return createStatus(ctx.deps, ctx.actor, projectId, parsed);
   },
@@ -464,6 +484,7 @@ const updateStatusTool = defineTool({
       blocksDependents,
       claimable,
       sendBackTo,
+      defaultDifficulty,
       ...fields
     } = input;
     const projectId = projectContext(ctx, project).id;
@@ -476,7 +497,11 @@ const updateStatusTool = defineTool({
       claimable,
       sendBackTo: sendBackIds(ctx, projectId, sendBackTo, row.pipelineId),
     });
-    const parsed = parseInput(updateStatusInputSchema, { ...fields, ...(rules ? { rules } : {}) });
+    const parsed = parseInput(updateStatusInputSchema, {
+      ...fields,
+      ...(rules ? { rules } : {}),
+      ...defaultDifficultyOf(ctx, projectId, defaultDifficulty),
+    });
     return updateStatus(ctx.deps, ctx.actor, statusId, parsed);
   },
 });

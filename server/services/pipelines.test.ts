@@ -161,7 +161,7 @@ describe('a project without rules', () => {
   it('moves strictly too (BAT-27): on to the next stage, back with a reason', () => {
     const task = newTask();
     expect(task.stage?.canMoveTo).toEqual({
-      forward: { id: doing.id, name: 'In Progress', missing: [] },
+      forward: { id: doing.id, name: 'In Progress', missing: [], difficultyId: null },
       back: [],
     });
     expect(failure(() => move(ben, task.id, done)).message).toBe(

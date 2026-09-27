@@ -181,10 +181,11 @@ describe('pipelines over MCP', () => {
         id: expect.any(String) as string,
         name: 'Done',
         missing: ['1 approval from Reviewer'],
+        difficultyId: null,
       },
       back: [
-        { id: expect.any(String) as string, name: 'In Progress' },
-        { id: expect.any(String) as string, name: 'Open' },
+        { id: expect.any(String) as string, name: 'In Progress', difficultyId: null },
+        { id: expect.any(String) as string, name: 'Open', difficultyId: null },
       ],
     });
     expect(

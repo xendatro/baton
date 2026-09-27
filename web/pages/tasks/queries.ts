@@ -221,10 +221,16 @@ export interface MoveVariables extends MoveTaskInput {
 export function useMoveTask(projectId: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ taskId, statusId, afterId, beforeId, reason }: MoveVariables) =>
+    mutationFn: ({ taskId, statusId, afterId, beforeId, reason, difficultyId }: MoveVariables) =>
       api.post(
         `/api/tasks/${enc(taskId)}/move`,
-        { statusId, afterId, beforeId, ...(reason ? { reason } : {}) },
+        {
+          statusId,
+          afterId,
+          beforeId,
+          ...(reason ? { reason } : {}),
+          ...(difficultyId !== undefined ? { difficultyId } : {}),
+        },
         { schema: taskSchema },
       ),
     onMutate: async ({ taskId, statusId, index }) => {

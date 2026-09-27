@@ -313,14 +313,23 @@ export const returnReasonSchema = z.object({
 export type ReturnReason = z.infer<typeof returnReasonSchema>;
 
 /** Where the task can go from its stage (BAT-27): the next stage, and the stages it may go back to. */
+/**
+ * A stage the task can move to, with the difficulty it would get there by the default rules
+ * (BAT-28: its last value there, else the stage's default, else the current one), which a move's
+ * difficulty override is prefilled with. Optional for older fixtures.
+ */
+const moveTargetSchema = stageRefSchema.extend({
+  difficultyId: z.string().nullable().optional(),
+});
+
 export const canMoveToSchema = z.object({
   /**
    * The next stage (null: the last stage), with what the viewer still needs to move it there
    * (empty: ready).
    */
-  forward: stageRefSchema.extend({ missing: z.array(z.string()) }).nullable(),
+  forward: moveTargetSchema.extend({ missing: z.array(z.string()) }).nullable(),
   /** Earlier stages the viewer may send it back to (with a reason), nearest first. */
-  back: z.array(stageRefSchema),
+  back: z.array(moveTargetSchema),
 });
 export type CanMoveTo = z.infer<typeof canMoveToSchema>;
 
@@ -335,6 +344,11 @@ export const stageVisitSchema = z.object({
   /** Set when it came back to the stage: why. */
   returnReason: z.string().nullable(),
   returnedFrom: stageRefSchema.nullable(),
+  /** BAT-28: the task's difficulty in the stage during the visit. */
+  difficulty: z
+    .object({ id: z.string(), name: z.string(), color: z.string() })
+    .nullable()
+    .optional(),
 });
 export type StageVisit = z.infer<typeof stageVisitSchema>;
 
@@ -453,6 +467,8 @@ export const approvalInputSchema = z.object({
    * the nearest one).
    */
   sendBackTo: idSchema.optional(),
+  /** BAT-28, Request changes: the difficulty for the stage it goes back to (null: none). */
+  difficultyId: idSchema.nullable().optional(),
 });
 export type ApprovalInput = z.infer<typeof approvalInputSchema>;
 

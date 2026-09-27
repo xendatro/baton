@@ -206,7 +206,14 @@ manual fallback.
   their agent, or the system) caused run by themselves; by default others wait in the app under
   "Waiting for your OK" (`needs_ok`) until the owner says Run or Dismiss. The owner can widen it to
   anyone or to a who-rule. Manual listeners still get every job.
-- **Difficulty and models.** Tasks have a difficulty level (per project, like labels). Each person
+- **Difficulty and models.** Tasks have a difficulty level (per project, like labels), which
+  belongs to the task in a stage like its assignments (BAT-28): each stage has an optional default
+  difficulty for a task's first visit (none: it keeps the one it came with), returning to a stage
+  restores its last value there, and any move (the ▾ beside "Move to …", the Send back… dialog, or
+  `difficulty` on `move_task` / `approve_task`) can set it for the stage it goes to — e.g. Planning
+  defaults to Hard and Implementation to Normal, and a failed review sends the task back to
+  Implementation at Hard. The task page's picker changes the current stage's; the stage history
+  shows each visit's. A job's chain follows the difficulty of the stage it is for. Each person
   maps levels to fallback chains of harness + model + effort: per project by level, and an account
   default (a chain, plus chains by level name). Resolution (`shared/agentChains.ts`): the level's
   own chain, else the closest mapped level below then above, else the account default for that

@@ -1,4 +1,5 @@
 import {
+  GaugeIcon,
   KanbanSquareIcon,
   ShieldIcon,
   SlidersHorizontalIcon,
@@ -21,6 +22,7 @@ const SECTIONS: ReadonlyArray<{ to: string; label: string; icon: LucideIcon }> =
   { to: 'general', label: 'General', icon: SlidersHorizontalIcon },
   { to: 'statuses', label: 'Statuses', icon: KanbanSquareIcon },
   { to: 'labels', label: 'Labels', icon: TagsIcon },
+  { to: 'difficulty', label: 'Difficulty', icon: GaugeIcon },
   { to: 'access', label: 'Access', icon: ShieldIcon },
 ];
 

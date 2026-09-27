@@ -13,7 +13,7 @@ import { stageRulesPatchSchema, stageRulesSchema } from './pipelines';
  */
 
 /** Per-project caps that keep boards and pickers usable. */
-export const PROJECT_LIMITS = { statuses: 50, labels: 200 } as const;
+export const PROJECT_LIMITS = { statuses: 50, labels: 200, difficulties: 20 } as const;
 
 // ---------------------------------------------------------------------------------------------
 // Project keys
@@ -146,6 +146,24 @@ export const labelSchema = z.object({
 });
 export type Label = z.infer<typeof labelSchema>;
 
+/**
+ * A difficulty level of a project (BAT-24), ordered easiest first (`position`). A task has one
+ * level or none; each person maps levels to the models their agent runs.
+ */
+export const difficultySchema = z.object({
+  id: z.string(),
+  projectId: z.string(),
+  name: z.string(),
+  color: z.string(),
+  position: z.number().int().nonnegative(),
+  /** Live tasks at this level. */
+  taskCount: z.number().int().nonnegative(),
+});
+export type Difficulty = z.infer<typeof difficultySchema>;
+
+export const difficultyListResponseSchema = z.object({ items: z.array(difficultySchema) });
+export type DifficultyListResponse = z.infer<typeof difficultyListResponseSchema>;
+
 export const projectCountsSchema = z.object({
   /** Live tasks. */
   tasks: z.number().int().nonnegative(),
@@ -198,6 +216,8 @@ export const projectSchema = projectSummarySchema.extend({
   statuses: z.array(statusSchema),
   /** Alphabetical. */
   labels: z.array(labelSchema),
+  /** Difficulty levels, easiest first (optional for older fixtures). */
+  difficulties: z.array(difficultySchema).optional(),
   /** "Pause all agents" (agents A): agent members' writes in the project are refused since then. */
   agentsPausedAt: timestampSchema.nullable().optional(),
 });
@@ -367,3 +387,33 @@ export const deleteLabelResponseSchema = z.object({
   }),
 });
 export type DeleteLabelResponse = z.infer<typeof deleteLabelResponseSchema>;
+
+// ---------------------------------------------------------------------------------------------
+// Difficulty levels: requests
+// ---------------------------------------------------------------------------------------------
+
+export const createDifficultyInputSchema = z.object({
+  name: labelNameSchema,
+  color: hexColorSchema.optional(),
+});
+export type CreateDifficultyInput = z.infer<typeof createDifficultyInputSchema>;
+
+export const updateDifficultyInputSchema = z
+  .object({ name: labelNameSchema.optional(), color: hexColorSchema.optional() })
+  .refine((value) => Object.values(value).some((field) => field !== undefined), {
+    message: 'Nothing to update',
+  });
+export type UpdateDifficultyInput = z.infer<typeof updateDifficultyInputSchema>;
+
+export const reorderDifficultiesInputSchema = z.object({
+  /** Every level of the project, easiest first. */
+  difficultyIds: z.array(idSchema).min(1).max(PROJECT_LIMITS.difficulties),
+});
+export type ReorderDifficultiesInput = z.infer<typeof reorderDifficultiesInputSchema>;
+
+export const deleteDifficultyResponseSchema = z.object({
+  ok: z.literal(true),
+  /** Tasks that had this level (they have none now). */
+  clearedTasks: z.number().int().nonnegative(),
+});
+export type DeleteDifficultyResponse = z.infer<typeof deleteDifficultyResponseSchema>;

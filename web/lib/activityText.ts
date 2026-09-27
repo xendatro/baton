@@ -69,6 +69,7 @@ const ENTITY_NOUNS: Record<ActivityEntityType, string> = {
   project: 'project',
   status: 'status',
   label: 'label',
+  difficulty: 'difficulty level',
   issue: 'issue',
   task: 'task',
   reply: 'reply',

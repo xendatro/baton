@@ -18,6 +18,7 @@ export const ENTITY_LABELS: Record<ActivityEntityType, string> = {
   project: 'Projects',
   status: 'Statuses',
   label: 'Labels',
+  difficulty: 'Difficulty levels',
   team: 'Team',
   member: 'Members',
   role: 'Roles',

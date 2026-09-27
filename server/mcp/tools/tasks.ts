@@ -49,6 +49,7 @@ import {
 } from '../../services/tasks';
 import { parseToolInput, qualifyRef, toAbsolute, withAbsoluteUrls } from '../util';
 import { defineTool, toolInput, type McpTool, type ToolContext } from './define';
+import { resolveDifficulty } from '../../services/difficulties';
 
 /**
  * Task MCP tools (SPEC §5.1 [tasks]): the board, tasks, links and claims. Handlers resolve refs
@@ -154,6 +155,7 @@ const TASK_FIELD_NAMES: Readonly<Record<string, string>> = {
   assigneeRoleIds: 'assigneeRoles',
   assigneeUsers: 'assignees',
   labelIds: 'labels',
+  difficultyId: 'difficulty',
   blockedByTaskIds: 'blockedBy',
   issueLinks: 'issues',
   roleId: 'role',
@@ -453,6 +455,13 @@ const createTaskTool = defineTool({
     assignees: usernames.optional(),
     assigneeRoles: roleNames.optional(),
     labels: labelNames.optional(),
+    difficulty: z
+      .string()
+      .min(1)
+      .optional()
+      .describe(
+        'Difficulty level of the project (e.g. Easy, Normal, Hard); picks the model agents run',
+      ),
     blockedBy: taskRefs.optional().describe('Tasks of the same project this one waits for'),
     issues: z
       .array(issueLinkField)
@@ -479,6 +488,9 @@ const createTaskTool = defineTool({
         assigneeUserIds: userIds(ctx, team.id, input.assignees),
         assigneeRoleIds: roleIds(ctx, team.id, input.assigneeRoles),
         labelIds: labelIds(ctx, project.id, input.labels),
+        difficultyId: input.difficulty
+          ? resolveDifficulty(ctx.deps.db.orm, project.id, input.difficulty).id
+          : undefined,
         blockedByTaskIds: taskIds(ctx, input.blockedBy),
         issueLinks: input.issues?.map((link) => ({
           issueId: resolveIssue(ctx.deps, ctx.actor, link.issue).issue.id,
@@ -514,6 +526,12 @@ const updateTaskTool = defineTool({
     assignees: listChange(z.string().min(1), 'Assigned members (usernames or ids)').optional(),
     assigneeRoles: listChange(z.string().min(1), 'Assigned roles (names, slugs or ids)').optional(),
     labels: listChange(z.string().min(1), 'Labels (names or ids)').optional(),
+    difficulty: z
+      .string()
+      .min(1)
+      .nullable()
+      .optional()
+      .describe('Difficulty level (name), or null to clear it'),
     blockedBy: listChange(
       z.string().min(1),
       'Blocking tasks of the same project (KEY-12)',
@@ -552,6 +570,12 @@ const updateTaskTool = defineTool({
         assigneeUsers: mapChange(input.assignees, (refs) => userIds(ctx, team.id, refs)),
         assigneeRoles: mapChange(input.assigneeRoles, (refs) => roleIds(ctx, team.id, refs)),
         labels: mapChange(input.labels, (refs) => labelIds(ctx, project.id, refs)),
+        difficultyId:
+          input.difficulty === undefined
+            ? undefined
+            : input.difficulty === null
+              ? null
+              : resolveDifficulty(ctx.deps.db.orm, project.id, input.difficulty).id,
         blockedBy: mapChange(input.blockedBy, (refs) => taskIds(ctx, refs)),
         issueLinks: input.issues
           ? {

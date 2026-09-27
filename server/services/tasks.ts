@@ -34,6 +34,7 @@ import {
   roleMemberIds,
   type Membership,
 } from './access';
+import { resolveDifficulty } from './difficulties';
 import { recordActivity } from './activity';
 import { attachmentsByParent, attachToParent, referencedPendingUploads } from './attachments';
 import { isClaimValid } from './claimLease';
@@ -554,6 +555,7 @@ export function createTask(
     const users = memberRefs(tx, team.id, [...new Set(input.assigneeUserIds ?? [])]);
     const roles = roleRefs(tx, team.id, [...new Set(input.assigneeRoleIds ?? [])]);
     const labels = labelRefs(tx, projectId, [...new Set(input.labelIds ?? [])]);
+    const level = input.difficultyId ? resolveDifficulty(tx, projectId, input.difficultyId) : null;
     const counter = tx
       .update(s.project)
       .set({ taskSeq: sql`${s.project.taskSeq} + 1`, updatedAt: sql`${s.project.updatedAt}` })
@@ -573,6 +575,7 @@ export function createTask(
         description,
         statusId: status.id,
         priority: input.priority ?? 0,
+        difficultyId: level?.id ?? null,
         dueDate: input.dueDate ?? null,
         position: appendPosition(tx, status.id),
         authorId: actor.userId,
@@ -787,6 +790,7 @@ function hasWorkflowFields(input: UpdateTaskData): boolean {
   return (
     input.statusId !== undefined ||
     input.priority !== undefined ||
+    input.difficultyId !== undefined ||
     input.dueDate !== undefined ||
     input.assigneeUsers !== undefined ||
     input.assigneeRoles !== undefined ||
@@ -863,6 +867,22 @@ export function updateTask(
     if (input.priority !== undefined && input.priority !== current.priority) {
       changes.priority = change(priorityLabel(current.priority), priorityLabel(input.priority));
       patch.priority = input.priority;
+    }
+    if (input.difficultyId !== undefined && input.difficultyId !== current.difficultyId) {
+      const next = input.difficultyId
+        ? resolveDifficulty(tx, current.projectId, input.difficultyId)
+        : null;
+      if (next?.id !== current.difficultyId) {
+        const before = current.difficultyId
+          ? (tx
+              .select({ name: s.difficulty.name })
+              .from(s.difficulty)
+              .where(eq(s.difficulty.id, current.difficultyId))
+              .get()?.name ?? null)
+          : null;
+        changes.difficulty = change(before, next?.name ?? null);
+        patch.difficultyId = next?.id ?? null;
+      }
     }
     if (input.dueDate !== undefined && input.dueDate !== current.dueDate) {
       changes.dueDate = change(current.dueDate, input.dueDate);

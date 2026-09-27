@@ -564,8 +564,10 @@ function entityTeamId(
           .get()?.teamId ?? undefined
       );
     case 'status':
-    case 'label': {
-      const table = entityType === 'status' ? s.status : s.label;
+    case 'label':
+    case 'difficulty': {
+      const table =
+        entityType === 'status' ? s.status : entityType === 'label' ? s.label : s.difficulty;
       return db
         .select({ teamId: s.project.teamId })
         .from(table)

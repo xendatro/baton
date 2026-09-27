@@ -8,6 +8,7 @@ import * as s from '../db/schema';
 import { newId } from '../lib/ids';
 import { generateApiKey } from '../lib/security';
 import { ensureAgent, findAgentId } from '../services/agents';
+import { seedDifficulties } from '../services/difficulties';
 import { seedStatusColumns } from '../services/pipelines';
 
 /**
@@ -239,6 +240,7 @@ export function createProject(db: Database, options: CreateProjectOptions): Crea
         .returning()
         .get(),
     );
+    seedDifficulties(tx, project.id);
     return { project, statuses };
   });
 }

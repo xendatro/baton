@@ -22,6 +22,7 @@ import type { Attachment, MeProject, MeTeam } from '@shared/schemas/core';
 import type { Task, UpdateTaskInput } from '@shared/schemas/tasks';
 import { AttachmentList } from '@web/components/attachments/AttachmentList';
 import { AttachmentUploader } from '@web/components/attachments/AttachmentUploader';
+import { DifficultyBadge } from '@web/components/common/DifficultyBadge';
 import { AgentBadge } from '@web/components/common/AgentBadge';
 import { BackLink } from '@web/components/common/BackLink';
 import { ConfirmDialog } from '@web/components/common/ConfirmDialog';
@@ -45,6 +46,7 @@ import { usePaletteCommands, type PaletteCommand } from '@web/components/palette
 import { AssigneePicker } from '@web/components/pickers/AssigneePicker';
 import { DatePicker } from '@web/components/pickers/DatePicker';
 import { LabelPicker } from '@web/components/pickers/LabelPicker';
+import { DifficultyPicker } from '@web/components/pickers/DifficultyPicker';
 import { PriorityPicker } from '@web/components/pickers/PriorityPicker';
 import { StatusPicker } from '@web/components/pickers/StatusPicker';
 import { useDeleteAttachment } from '@web/components/replies/queries';
@@ -72,6 +74,7 @@ import { useDocumentTitle } from '@web/lib/title';
 import { cn } from '@web/lib/utils';
 import { useMarkItemRead } from '../inbox/useMarkItemRead';
 import { copyText } from '../teams/clipboard';
+import { useDifficulties } from '../projects/difficultyQueries';
 import { useCreateLabel, useLabels, useStatuses } from '../projects/queries';
 import { ClaimPanel } from './ClaimPanel';
 import { ForceMoveDialog } from './ForceMoveDialog';
@@ -134,7 +137,7 @@ function TaskLoader({
   return <TaskSkeleton team={team} project={project} />;
 }
 
-type Picker = 'status' | 'priority' | 'assignees' | 'labels' | 'due' | null;
+type Picker = 'status' | 'priority' | 'difficulty' | 'assignees' | 'labels' | 'due' | null;
 
 function TaskView({ task, team, project }: { task: Task; team: MeTeam; project: MeProject }) {
   const me = useMe().data;
@@ -147,6 +150,7 @@ function TaskView({ task, team, project }: { task: Task; team: MeTeam; project: 
   const stageClaimable =
     statuses.data?.find((status) => status.id === task.status.id)?.rules?.claimable ?? true;
   const labels = useLabels(project.id);
+  const difficulties = useDifficulties(project.id);
   const createLabel = useCreateLabel(project.id);
   const people = useAssignables(team.id);
   const update = useUpdateTask(task);
@@ -492,6 +496,42 @@ function TaskView({ task, team, project }: { task: Task; team: MeTeam; project: 
                   <PriorityIcon value={task.priority} showLabel />
                 </PropertyButton>
               </PriorityPicker>
+            </Property>
+            <Property label="Difficulty">
+              <DifficultyPicker
+                levels={difficulties.data ?? []}
+                value={task.difficulty?.id ?? null}
+                open={picker === 'difficulty'}
+                onOpenChange={(open) => setPicker(open ? 'difficulty' : null)}
+                disabled={!canUpdate}
+                align="end"
+                onChange={(difficultyId) => {
+                  if (difficultyId === (task.difficulty?.id ?? null)) return;
+                  const level = difficulties.data?.find((item) => item.id === difficultyId);
+                  quietly(
+                    save(
+                      { difficultyId },
+                      {
+                        difficulty: level
+                          ? {
+                              id: level.id,
+                              name: level.name,
+                              color: level.color,
+                              position: level.position,
+                            }
+                          : null,
+                      },
+                    ),
+                  );
+                }}
+              >
+                <PropertyButton
+                  disabled={!canUpdate}
+                  label={`Difficulty: ${task.difficulty?.name ?? 'none'}`}
+                >
+                  <DifficultyBadge difficulty={task.difficulty} />
+                </PropertyButton>
+              </DifficultyPicker>
             </Property>
             <Property label="Assignees" hotkey="a">
               <AssigneePicker

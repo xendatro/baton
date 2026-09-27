@@ -590,6 +590,27 @@ export const label = sqliteTable(
   (t) => [uniqueIndex('label_project_name_unique').on(t.projectId, t.name)],
 );
 
+/** Difficulty levels of a project (BAT-24), easiest first. */
+export const difficulty = sqliteTable(
+  'difficulty',
+  {
+    id: idColumn(),
+    projectId: text('project_id')
+      .notNull()
+      .references(() => project.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    color: text('color').notNull(),
+    /** Order, easiest first. */
+    position: integer('position').notNull(),
+    createdAt: createdAtColumn(),
+    updatedAt: updatedAtColumn(),
+  },
+  (t) => [
+    uniqueIndex('difficulty_project_name_unique').on(t.projectId, t.name),
+    index('difficulty_project_idx').on(t.projectId),
+  ],
+);
+
 // =============================================================================================
 // Issues
 // =============================================================================================
@@ -673,6 +694,8 @@ export const task = sqliteTable(
       .references(() => status.id, { onDelete: 'restrict' }),
     /** 0 none, 1 low, 2 medium, 3 high, 4 urgent. */
     priority: integer('priority').$type<PriorityValue>().notNull().default(0),
+    /** Difficulty level (BAT-24); null: none. */
+    difficultyId: text('difficulty_id').references(() => difficulty.id, { onDelete: 'set null' }),
     /** `YYYY-MM-DD`. */
     dueDate: text('due_date'),
     /** Fractional-index key, ordered within the status column. */

@@ -38,6 +38,7 @@ import { emitAfterCommit } from './events';
 import { labelsOf } from './labels';
 import { notifyMentions, refreshNotificationText } from './notifications';
 import { requireSignoff } from './signoff';
+import { difficultiesOf, seedDifficulties } from './difficulties';
 import { seedStatusColumns } from './pipelines';
 import { statusesOf } from './statuses';
 import { taskCountsByProject } from './taskViews';
@@ -176,6 +177,7 @@ export function toProject(db: DbExecutor, project: ProjectRow, teamSlug: string)
     keyAliases: keyAliasesOf(db, project.id),
     statuses: statusesOf(db, project.id),
     labels: labelsOf(db, project.id),
+    difficulties: difficultiesOf(db, project.id),
     agentsPausedAt: project.agentsPausedAt?.toISOString() ?? null,
   };
 }
@@ -506,6 +508,7 @@ export function createProject(
         })
         .run();
     });
+    seedDifficulties(tx, id);
     if (readme) {
       attachToParent(tx, actor, referencedPendingUploads(tx, actor, teamId, readme), {
         type: 'project',

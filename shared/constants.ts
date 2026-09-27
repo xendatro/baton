@@ -145,6 +145,16 @@ export const DEFAULT_TEAM_COLOR = '#6366f1';
 export const DEFAULT_PROJECT_COLOR = '#6366f1';
 export const DEFAULT_LABEL_COLOR = '#6b7280';
 
+/**
+ * Difficulty levels every new project starts with (BAT-24), easiest first. A task's level picks
+ * which model runs it, through each person's own model mapping.
+ */
+export const DEFAULT_DIFFICULTIES: ReadonlyArray<{ name: string; color: string }> = [
+  { name: 'Easy', color: '#22c55e' },
+  { name: 'Normal', color: '#3b82f6' },
+  { name: 'Hard', color: '#ef4444' },
+];
+
 export const THEMES = ['system', 'light', 'dark'] as const;
 export type Theme = (typeof THEMES)[number];
 
@@ -406,6 +416,7 @@ export const ACTIVITY_ENTITY_TYPES = [
   'project',
   'status',
   'label',
+  'difficulty',
   'issue',
   'task',
   'reply',

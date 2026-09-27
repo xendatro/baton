@@ -1,4 +1,10 @@
-import { KanbanSquareIcon, MoreHorizontalIcon, Settings2Icon, TagsIcon } from 'lucide-react';
+import {
+  GaugeIcon,
+  KanbanSquareIcon,
+  MoreHorizontalIcon,
+  Settings2Icon,
+  TagsIcon,
+} from 'lucide-react';
 import { Link } from 'react-router';
 import { Button } from '@web/components/ui/button';
 import {
@@ -55,6 +61,14 @@ export function CustomizeMenu({
             <Link to={projectSettingsPath(projectBase, 'labels')}>
               <TagsIcon aria-hidden="true" />
               Edit labels
+            </Link>
+          </DropdownMenuItem>
+        ) : null}
+        {canManageLabels ? (
+          <DropdownMenuItem asChild>
+            <Link to={projectSettingsPath(projectBase, 'difficulty')}>
+              <GaugeIcon aria-hidden="true" />
+              Edit difficulty levels
             </Link>
           </DropdownMenuItem>
         ) : null}

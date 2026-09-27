@@ -116,6 +116,10 @@ export const LIVE_INVALIDATIONS: Readonly<Record<LiveEventType, Invalidation>> =
     ...projectKeys(e, queryKeys.projects.labels, queryKeys.tasks.all, queryKeys.issues.all),
     queryKeys.work.all(),
   ],
+  'difficulty.changed': (e) => [
+    ...projectKeys(e, queryKeys.projects.detail, queryKeys.tasks.all),
+    queryKeys.work.all(),
+  ],
   'issue.created': issueChange,
   'issue.updated': issueChange,
   'issue.deleted': (e) => [...issueChange(e), ...trash(e)],

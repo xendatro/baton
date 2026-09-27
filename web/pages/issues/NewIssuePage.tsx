@@ -10,6 +10,7 @@ import { AttachmentUploader } from '@web/components/attachments/AttachmentUpload
 import { FormField } from '@web/components/auth/FormField';
 import { EmptyState } from '@web/components/common/EmptyState';
 import { Kbd } from '@web/components/common/Kbd';
+import { BackLink } from '@web/components/common/BackLink';
 import { PageContainer } from '@web/components/common/PageContainer';
 import { Spinner } from '@web/components/common/Spinner';
 import { RichTextEditor } from '@web/components/editor/RichTextEditor';
@@ -122,6 +123,7 @@ function NewIssueForm({ team, project }: { team: MeTeam; project: MeProject }) {
   return (
     <PageContainer width="narrow">
       <UnsavedChangesGuard when={dirty && created === null} what="issue" />
+      <BackLink to={`${base}/issues`} label="Issues" />
       <form
         noValidate
         onSubmit={(event) => {

@@ -22,6 +22,7 @@ import type { Attachment, MeProject, MeTeam } from '@shared/schemas/core';
 import type { Task, UpdateTaskInput } from '@shared/schemas/tasks';
 import { AttachmentList } from '@web/components/attachments/AttachmentList';
 import { AttachmentUploader } from '@web/components/attachments/AttachmentUploader';
+import { BackLink } from '@web/components/common/BackLink';
 import { ConfirmDialog } from '@web/components/common/ConfirmDialog';
 import { DueDate } from '@web/components/common/DueDate';
 import { ErrorState } from '@web/components/common/ErrorState';
@@ -60,6 +61,7 @@ import { Skeleton } from '@web/components/ui/skeleton';
 import { errorMessage, isApiError } from '@web/lib/api';
 import { useMe } from '@web/lib/auth';
 import { useHotkey } from '@web/lib/hotkeys';
+import { useBack, type BackOptions } from '@web/lib/navigationHistory';
 import { queryKeys } from '@web/lib/queryKeys';
 import { useTeamAccess } from '@web/lib/permissions';
 import { useRouteContext } from '@web/lib/routeContext';
@@ -78,13 +80,14 @@ import {
   useTaskSubscription,
   useUpdateTask,
 } from './queries';
-import { tasksViewPath } from './filters';
+import { tasksViewPath, useTaskView } from './filters';
 import { TaskRelations } from './TaskRelations';
 
 /**
  * A task (`/t/:team/p/:key/tasks/:number`): inline-editable title (`e`), description, files, the
  * replies-and-history timeline with a composer, and a sidebar with the claim, the properties
  * (pickers on `s`, `p`, `a`, `l`), links, and actions (subscribe, copy, delete with undo).
+ * "← Board" (or `u`, or Esc) returns to the board or list the task was opened from.
  */
 export default function TaskPage() {
   const { team, project } = useRouteContext();
@@ -122,7 +125,7 @@ function TaskLoader({
       </PageContainer>
     );
   }
-  return <TaskSkeleton />;
+  return <TaskSkeleton team={team} project={project} />;
 }
 
 type Picker = 'status' | 'priority' | 'assignees' | 'labels' | 'due' | null;
@@ -222,15 +225,13 @@ function TaskView({ task, team, project }: { task: Task; team: MeTeam; project: 
   });
   // SPEC §1.9 "Esc close": back to the board or list, with the filters it had. Esc inside a
   // picker, dialog or field closes that instead (hotkeys never fire there).
-  useHotkey(
-    'escape',
-    () => void navigate(tasksViewPath(`/t/${team.slug}/p/${project.key}`, project.id)),
-    {
-      description: 'Close the task',
-      group: 'Task',
-      enabled: picker === null && !editingTitle && !editingDescription && !confirmDelete,
-    },
-  );
+  const backOptions = useTaskBackOptions(team, project);
+  const back = useBack(backOptions);
+  useHotkey('escape', back.goBack, {
+    description: 'Close the task',
+    group: 'Task',
+    enabled: picker === null && !editingTitle && !editingDescription && !confirmDelete,
+  });
 
   const url = `${window.location.origin}${task.path}`;
   const claimMine = task.claim?.user.id === viewerId;
@@ -361,6 +362,7 @@ function TaskView({ task, team, project }: { task: Task; team: MeTeam; project: 
 
   return (
     <PageContainer>
+      <BackLink {...backOptions} />
       {/* One column on small screens (header, details, body); two from lg (details on the right). */}
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_19rem] lg:grid-rows-[auto_1fr] lg:gap-x-8 lg:gap-y-0">
         <header className="min-w-0 lg:col-start-1 lg:row-start-1">
@@ -949,9 +951,23 @@ function TaskMenu({
   );
 }
 
-function TaskSkeleton() {
+/**
+ * The task's back link: the project's board or list (as the viewer last left it), or My tasks
+ * when the task was opened from there.
+ */
+function useTaskBackOptions(team: MeTeam, project: MeProject): BackOptions {
+  const [view] = useTaskView(project.id);
+  return {
+    to: tasksViewPath(`/t/${team.slug}/p/${project.key}`, project.id),
+    label: view === 'list' ? 'List' : 'Board',
+    also: [{ pathname: '/my-tasks', label: 'My tasks' }],
+  };
+}
+
+function TaskSkeleton({ team, project }: { team: MeTeam; project: MeProject }) {
   return (
     <PageContainer>
+      <BackLink {...useTaskBackOptions(team, project)} />
       <div
         className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_19rem]"
         role="status"

@@ -14,6 +14,7 @@ import { toast } from 'sonner';
 import type { MeProject, MeTeam } from '@shared/schemas/core';
 import { titleSchema } from '@shared/schemas/common';
 import type { Issue } from '@shared/schemas/issues';
+import { BackLink } from '@web/components/common/BackLink';
 import { ConfirmDialog } from '@web/components/common/ConfirmDialog';
 import { EmptyState } from '@web/components/common/EmptyState';
 import { ErrorState } from '@web/components/common/ErrorState';
@@ -57,7 +58,7 @@ import {
  * Issue page (`/t/:team/p/:key/issues/:number`): the header (title edited in place, state, author),
  * the original post, the reply timeline with the composer, and a sidebar with labels, the tasks
  * addressing it and the subscription toggle. Resolve/reopen, copy link and delete (with Undo) sit
- * in the header; `e` edits the title and `l` opens the labels.
+ * in the header; `e` edits the title, `l` opens the labels and `u` goes back to the issue list.
  */
 export default function IssuePage() {
   const { team, project } = useRouteContext();
@@ -89,7 +90,7 @@ function IssueView({
       : [`Issue #${number}`, project.name],
   );
 
-  if (issue.isPending) return <IssueSkeleton />;
+  if (issue.isPending) return <IssueSkeleton team={team} project={project} />;
   if (issue.isError && isApiError(issue.error) && issue.error.status === 404) {
     return <IssueMissing team={team} project={project} />;
   }
@@ -201,6 +202,7 @@ function IssueDetail({
 
   return (
     <PageContainer>
+      <IssuesBackLink team={team} project={project} />
       <header className="flex flex-col gap-3 border-b pb-4">
         <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
           {editingTitle ? (
@@ -448,9 +450,15 @@ function IssueMissing({ team, project }: { team: MeTeam; project: MeProject }) {
   );
 }
 
-function IssueSkeleton() {
+/** "← Issues": back to the issue list the issue was opened from, filters and scroll included. */
+function IssuesBackLink({ team, project }: { team: MeTeam; project: MeProject }) {
+  return <BackLink to={`/t/${team.slug}/p/${project.key}/issues`} label="Issues" />;
+}
+
+function IssueSkeleton({ team, project }: { team: MeTeam; project: MeProject }) {
   return (
     <PageContainer>
+      <IssuesBackLink team={team} project={project} />
       <div role="status" aria-label="Loading issue" className="grid gap-6">
         <div className="grid gap-3 border-b pb-4">
           <Skeleton className="h-7 w-2/3 max-w-lg" />

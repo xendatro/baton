@@ -1,5 +1,4 @@
 import {
-  ArrowLeftIcon,
   InfoIcon,
   LockIcon,
   ShieldAlertIcon,
@@ -22,6 +21,7 @@ import {
 import type { MeTeam } from '@shared/schemas/core';
 import { roleNameSchema, type Member, type Role } from '@shared/schemas/teams';
 import { FormField } from '@web/components/auth/FormField';
+import { BackLink } from '@web/components/common/BackLink';
 import { ConfirmDialog } from '@web/components/common/ConfirmDialog';
 import { EmptyState } from '@web/components/common/EmptyState';
 import { ErrorState } from '@web/components/common/ErrorState';
@@ -60,7 +60,7 @@ import { useUnsavedChangesGuard } from './useUnsavedChangesGuard';
 const TABS = ['display', 'permissions', 'members'] as const;
 type Tab = (typeof TABS)[number];
 
-/** `/t/:team/settings/roles/:roleId`: the Discord-style role editor. */
+/** `/t/:team/settings/roles/:roleId`: the Discord-style role editor, under a "← Roles" back link. */
 export default function RoleEditPage() {
   const team = useSettingsTeam();
   const { roleId } = useParams();
@@ -93,9 +93,12 @@ export default function RoleEditPage() {
     );
   }
   return (
-    <div className="grid gap-6 lg:grid-cols-[12rem_minmax(0,1fr)]">
-      <RoleNav team={team} roles={roles.data.items} activeId={role.id} />
-      <RoleEditor key={role.id} team={team} role={role} roles={roles.data.items} />
+    <div>
+      <BackLink to={`/t/${team.slug}/settings/roles`} label="Roles" />
+      <div className="grid gap-6 lg:grid-cols-[12rem_minmax(0,1fr)]">
+        <RoleNav team={team} roles={roles.data.items} activeId={role.id} />
+        <RoleEditor key={role.id} team={team} role={role} roles={roles.data.items} />
+      </div>
     </div>
   );
 }
@@ -103,13 +106,6 @@ export default function RoleEditPage() {
 function RoleNav({ team, roles, activeId }: { team: MeTeam; roles: Role[]; activeId: string }) {
   return (
     <nav aria-label="Roles" className="hidden lg:block">
-      <Link
-        to={`/t/${team.slug}/settings/roles`}
-        className="mb-2 inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
-      >
-        <ArrowLeftIcon className="size-4" aria-hidden="true" />
-        Roles
-      </Link>
       <ul className="space-y-0.5">
         {roles.map((role) => (
           <li key={role.id}>
@@ -218,13 +214,6 @@ function RoleEditor({ team, role, roles }: { team: MeTeam; role: Role; roles: Ro
 
   return (
     <div className="min-w-0">
-      <Link
-        to={`/t/${team.slug}/settings/roles`}
-        className="mb-3 inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground lg:hidden"
-      >
-        <ArrowLeftIcon className="size-4" aria-hidden="true" />
-        Roles
-      </Link>
       <div className="flex flex-wrap items-start justify-between gap-3 pb-4">
         <div className="flex min-w-0 items-center gap-3">
           <span

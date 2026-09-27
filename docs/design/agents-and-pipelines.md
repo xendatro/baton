@@ -137,8 +137,14 @@ Every status (stage) gets optional rules (`status` columns, JSON where noted):
 - **While here** — `blocksDependents` (default on: its tasks still block the tasks waiting on
   them; off: they count as completed, `completedAt`) and `claimable` (default on: `claim_next_task`
   may pick its tasks and `claim_task` works without moving them).
+- **Starting here** (BAT-34) — `allowCreate` ("New tasks can start here"; off for a new stage): only
+  such stages take new tasks (the board column's +, the New task form's status picker, `statusId`
+  on create). Without a stage, a task starts in the pipeline's default stage when it allows it, else
+  in its first stage that does; with none, creating fails with a message saying so, and the board
+  and the stage settings warn. Making a stage the default turns it on.
 - The seeded Done (and every former done status, by migration 0012) is: hand-off `nobody`, all
-  three `onEnter` effects, `blocksDependents` and `claimable` off, icon `check-circle`.
+  three `onEnter` effects, `blocksDependents` and `claimable` off, icon `check-circle`; the seeded
+  Open (the default) has `allowCreate` on, Done off.
 - **To leave (forward)** — `exit_criteria` `[{ id, text }]` (each needs evidence text: the mover
   supplies it, e.g. `move_task { evidence: { <id>: "…" } }`; saved per task/stage and **locked**
   once the task leaves the stage); `move_rule` (PrincipalRule; who may move it out); `approvals`

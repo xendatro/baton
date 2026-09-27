@@ -51,10 +51,11 @@ beforeEach(() => {
   const o = web(owner);
   const doing = createStatus(ctx.deps, o, project.project.id, {
     name: 'In Progress',
-    rules: { exitCriteria: [{ id: 'tests', text: 'Tests pass' }] },
+    rules: { exitCriteria: [{ id: 'tests', text: 'Tests pass' }], allowCreate: true },
   });
   const review = createStatus(ctx.deps, o, project.project.id, {
     name: 'In Review',
+    rules: { allowCreate: true },
   });
   reviewId = review.id;
   reorderStatuses(ctx.deps, o, project.project.id, {

@@ -129,6 +129,7 @@ describe('CDI-01: deleting a status moves its tasks like any other move', () => 
   it('resolves fixes issues, notifies task_done, releases claims and audits each task', () => {
     const inProgress = createStatus(ctx.deps, actorOf(owner), api.project.id, {
       name: 'In progress',
+      rules: { allowCreate: true },
     });
     const issue = createIssue(ctx.deps, actorOf(owner), api.project.id, { title: 'Crash' });
     const task = createTask(ctx.deps, actorOf(owner), api.project.id, {
@@ -180,7 +181,7 @@ describe('CDI-01: deleting a status moves its tasks like any other move', () => 
   it('clears completedAt when the tasks enter a blocking stage, and leaves tasks in Trash un-audited', () => {
     const shipped = createStatus(ctx.deps, actorOf(owner), api.project.id, {
       name: 'Shipped',
-      rules: { blocksDependents: false },
+      rules: { blocksDependents: false, allowCreate: true },
     });
     const live = createTask(ctx.deps, actorOf(owner), api.project.id, {
       title: 'Live',

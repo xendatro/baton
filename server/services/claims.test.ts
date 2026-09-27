@@ -66,6 +66,8 @@ beforeEach(() => {
   );
   events = [];
   ctx.deps.events.subscribe((event) => events.push(event));
+  // BAT-34: tasks may start straight in every stage here (Done too).
+  ctx.db.orm.update(s.status).set({ allowCreate: true }).run();
 });
 
 afterEach(() => {

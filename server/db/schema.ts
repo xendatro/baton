@@ -599,6 +599,8 @@ export const status = sqliteTable(
     blocksDependents: bool('blocks_dependents').notNull().default(true),
     /** `claim_next_task` / `claim_task` may take tasks here. */
     claimable: bool('claimable').notNull().default(true),
+    /** New tasks can start here (BAT-34). */
+    allowCreate: bool('allow_create').notNull().default(false),
     /** To leave forward: each needs evidence. */
     exitCriteria: text('exit_criteria', { mode: 'json' })
       .$type<ExitCriterion[]>()

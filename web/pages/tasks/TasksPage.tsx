@@ -36,6 +36,7 @@ import { useRouteContext } from '@web/lib/routeContext';
 import { runShellAction, useShellActionAvailable } from '@web/lib/shellActions';
 import { useDocumentTitle } from '@web/lib/title';
 import { cn } from '@web/lib/utils';
+import { blockedPipelines } from '@web/lib/newTaskStages';
 import { useLabels, usePipelines, useStatuses } from '../projects/queries';
 import { Board, BoardSkeleton } from './Board';
 import { CustomizeMenu } from './CustomizeMenu';
@@ -53,6 +54,7 @@ import {
 } from './filters';
 import { useDifficulties } from '../projects/difficultyQueries';
 import { useAssignables, useBoard, useMoveTask, useTaskList } from './queries';
+import { NoStartStageNotices } from './NoStartStageNotices';
 import { projectSettingsPath } from './settingsPaths';
 import { TaskList, TaskListSkeleton } from './TaskList';
 
@@ -147,6 +149,12 @@ function Tasks({ team, project }: { team: MeTeam; project: MeProject }) {
     pipelineList.length > 1 && !pipeline
       ? (id: string | undefined) => pipelineList.find((candidate) => candidate.id === id)?.name
       : undefined;
+  // BAT-34: pipelines where no stage accepts new tasks are warned about.
+  const { blocked, createBlocked } = blockedPipelines(
+    statuses.data ?? [],
+    pipelineList,
+    pipeline?.id,
+  );
   const labels = useLabels(project.id);
   const difficulties = useDifficulties(project.id);
   const people = useAssignables(team.id);
@@ -286,7 +294,7 @@ function Tasks({ team, project }: { team: MeTeam; project: MeProject }) {
         pipelineId={pipeline?.id}
       />
       {canCreate && createAvailable ? (
-        <Button size="sm" onClick={() => newTask()}>
+        <Button size="sm" onClick={() => newTask()} disabled={createBlocked}>
           <PlusIcon aria-hidden="true" />
           <span className="hidden sm:inline">New task</span>
           <span className="sr-only sm:hidden">New task</span>
@@ -322,7 +330,7 @@ function Tasks({ team, project }: { team: MeTeam; project: MeProject }) {
   const current = view === 'board' ? board : list;
   const total = view === 'board' ? board.data?.total : list.data?.total;
   const nothingYet = total === 0 && filterCount === 0;
-  const onCreate = canCreate && createAvailable ? () => newTask() : undefined;
+  const onCreate = canCreate && createAvailable && !createBlocked ? () => newTask() : undefined;
 
   let content;
   if (current.isError && !current.data) {
@@ -440,6 +448,14 @@ function Tasks({ team, project }: { team: MeTeam; project: MeProject }) {
           <p className="mt-2 text-xs text-muted-foreground" aria-live="polite">
             {pluralize(total, 'matching task')}
           </p>
+        ) : null}
+        {canCreate ? (
+          <NoStartStageNotices
+            blocked={blocked}
+            named={pipelineList.length > 1}
+            projectBase={projectBase}
+            canManageStatuses={canManageStatuses}
+          />
         ) : null}
       </div>
       {content}

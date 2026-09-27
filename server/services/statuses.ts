@@ -264,13 +264,15 @@ export function createStatus(
       .returning()
       .get();
     if (input.isDefault) setDefault(tx, pipeline.id, row.id);
-    if (input.rules) {
+    // BAT-34: new tasks start in the default stage, so making one the default lets them.
+    const rulesPatch = input.isDefault ? { ...input.rules, allowCreate: true } : input.rules;
+    if (rulesPatch) {
       const rules = mergeRules(
         tx,
         { teamId: project.teamId, projectId },
         row.id,
         rulesOf(row),
-        input.rules,
+        rulesPatch,
       );
       tx.update(s.status).set(ruleColumns(rules)).where(eq(s.status.id, row.id)).run();
     }
@@ -307,7 +309,12 @@ export function updateStatus(
 ): Status {
   const { orm } = deps.db;
   const { status, project } = requireManageableStatus(deps, actor, statusId);
-  const { rules: rulesPatch, category: _legacy, defaultDifficultyId, ...fields } = input;
+  const { rules: patch, category: _legacy, defaultDifficultyId, ...fields } = input;
+  // BAT-34: making a stage the default lets new tasks start there.
+  const rulesPatch =
+    input.isDefault === true && !status.isDefault && !status.allowCreate
+      ? { ...patch, allowCreate: true }
+      : patch;
   const changes = diffFields(status, fields);
   // BAT-28: the default difficulty, audited by name.
   const nextDefault =

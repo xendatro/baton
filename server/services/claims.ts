@@ -12,7 +12,7 @@ import type { Actor, AppDeps } from '../context';
 import type { Tx } from '../db';
 import * as s from '../db/schema';
 import { errors } from '../lib/errors';
-import { requirePermission, type Membership } from './access';
+import { isOwnContent, requirePermission, type Membership } from './access';
 import { recordActivity } from './activity';
 import { isClaimValid, isHolder } from './claimLease';
 import { emitAfterCommit } from './events';
@@ -362,7 +362,8 @@ export function releaseTask(
   const { task: before, project, membership } = requireTask(orm, actor, taskId);
   const now = new Date();
   const held = isClaimValid(before, now);
-  if (held && !isHolder(before, actor)) {
+  // A person may release their agent member's claim, and the other way round (agents A).
+  if (held && !isHolder(before, actor) && !isOwnContent(membership, before.claimedById)) {
     requirePermission(
       membership,
       'UPDATE_TASKS',

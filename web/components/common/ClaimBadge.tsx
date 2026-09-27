@@ -1,7 +1,9 @@
 import { BotIcon, HandIcon } from 'lucide-react';
 import type { UserSummary, ViaKey } from '@shared/schemas/core';
+import { agentTitle, isAgentUser } from '@web/lib/agentMembers';
 import { formatAge, formatDateTime } from '@web/lib/format';
 import { cn } from '@web/lib/utils';
+import { AgentBadge } from './AgentBadge';
 import { useNow } from './useNow';
 import { UserAvatar } from './UserAvatar';
 
@@ -21,7 +23,11 @@ export interface ClaimBadgeProps {
 export function ClaimBadge({ holder, via, claimedAt, className }: ClaimBadgeProps) {
   const now = useNow();
   const holderName = holder?.name ?? 'Deleted user';
-  const description = `${holderName} ${via ? `via ${via.keyName}` : '(web)'} claimed this ${formatAge(claimedAt, new Date(now))} ago (${formatDateTime(claimedAt)})`;
+  // An agent member's claim: "Ethan AI [AI]", the key it used in the tooltip (agents A).
+  const agent = isAgentUser(holder);
+  const how =
+    agent && holder ? `(${agentTitle(holder, via)})` : via ? `via ${via.keyName}` : '(web)';
+  const description = `${holderName} ${how} claimed this ${formatAge(claimedAt, new Date(now))} ago (${formatDateTime(claimedAt)})`;
   return (
     <span
       className={cn(
@@ -38,11 +44,16 @@ export function ClaimBadge({ holder, via, claimedAt, className }: ClaimBadgeProp
         ) : (
           <HandIcon className="size-3.5 shrink-0" />
         )}
-        <UserAvatar user={holder} size="xs" />
+        <UserAvatar user={holder} agentName={via?.agentName} size="xs" />
         <span className="truncate">
           <span className="font-medium">{holderName}</span>{' '}
-          {via ? <span className="text-muted-foreground">via {via.keyName}</span> : '(web)'}
+          {agent ? null : via ? (
+            <span className="text-muted-foreground">via {via.keyName}</span>
+          ) : (
+            '(web)'
+          )}
         </span>
+        {agent ? <AgentBadge /> : null}
         <span className="shrink-0 text-muted-foreground">
           · {formatAge(claimedAt, new Date(now))}
         </span>

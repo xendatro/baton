@@ -85,6 +85,8 @@ export interface WorkScope {
   projectIds: string[];
   /** The caller's explicit roles plus the `@everyone` role of each of their teams. */
   roleIds: string[];
+  /** Whose claims are the caller's: theirs and their agent member's (or an agent's owner's). */
+  claimantIds: readonly string[];
 }
 
 export function workScope(db: DbExecutor, userId: string): WorkScope {
@@ -105,6 +107,7 @@ export function workScope(db: DbExecutor, userId: string): WorkScope {
     teamIds,
     projectIds: teamIds.length === 0 ? [] : visibleProjectIds(db, userId, teamIds),
     roleIds: [...memberships.flatMap((membership) => membership.roleIds), ...everyoneRoles],
+    claimantIds: memberships[0]?.selfIds ?? [userId],
   };
 }
 
@@ -128,9 +131,16 @@ export function assignedOpenCondition(scope: WorkScope): SQL | undefined {
   );
 }
 
-/** Tasks with a valid claim held by the caller (on the web or through any of their keys). */
+/**
+ * Tasks with a valid claim held by the caller or their agent member (agents A: claims through a
+ * key are the agent's), on the web or through any of their keys.
+ */
 export function claimedByCondition(scope: WorkScope, now: Date): SQL | undefined {
-  return and(liveTaskCondition(scope), eq(s.task.claimedById, scope.userId), claimValidAt(now));
+  return and(
+    liveTaskCondition(scope),
+    inArray(s.task.claimedById, [...scope.claimantIds]),
+    claimValidAt(now),
+  );
 }
 
 // ---------------------------------------------------------------------------------------------

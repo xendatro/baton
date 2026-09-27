@@ -7,6 +7,7 @@ import {
 } from '@tanstack/react-query';
 import type { Theme } from '@shared/constants';
 import {
+  agentSettingsSchema,
   connectionsResponseSchema,
   passwordResponseSchema,
   profileResponseSchema,
@@ -14,9 +15,11 @@ import {
   sessionListResponseSchema,
   type ChangePasswordInput,
   type DeleteAccountInput,
+  type AgentSettings,
   type ProfileResponse,
   type SetPasswordInput,
   type SocialProvider,
+  type UpdateAgentSettingsInput,
   type UpdateProfileInput,
 } from '@shared/schemas/account';
 import { okResponseSchema } from '@shared/schemas/common';
@@ -296,5 +299,52 @@ export function useRevokeApiKey() {
       if (context?.previous) queryClient.setQueryData(queryKeys.apiKeys(), context.previous);
     },
     onSettled: () => queryClient.invalidateQueries({ queryKey: queryKeys.apiKeys() }),
+  });
+}
+
+// ---------------------------------------------------------------------------------------------
+// Your agent member (docs/design/agents-and-pipelines.md §1)
+// ---------------------------------------------------------------------------------------------
+
+export function useAgentSettings() {
+  return useQuery({
+    queryKey: queryKeys.account.agent(),
+    queryFn: ({ signal }) => api.get('/api/me/agent', { schema: agentSettingsSchema, signal }),
+  });
+}
+
+/** Pauses/resumes your agent or changes its notifications; shown at once, undone on errors. */
+export function useUpdateAgentSettings() {
+  const queryClient = useQueryClient();
+  const key = queryKeys.account.agent();
+  return useMutation({
+    mutationFn: (input: UpdateAgentSettingsInput) =>
+      api.patch('/api/me/agent', input, { schema: agentSettingsSchema }),
+    onMutate: async (input) => {
+      await queryClient.cancelQueries({ queryKey: key });
+      const previous = queryClient.getQueryData<AgentSettings>(key);
+      queryClient.setQueryData<AgentSettings>(key, (data) =>
+        data
+          ? {
+              ...data,
+              pausedAt:
+                input.paused === undefined
+                  ? data.pausedAt
+                  : input.paused
+                    ? (data.pausedAt ?? new Date().toISOString())
+                    : null,
+              notifications: input.notifications ?? data.notifications,
+            }
+          : data,
+      );
+      return { previous };
+    },
+    onError: (_error, _input, context) => {
+      if (context?.previous) queryClient.setQueryData(key, context.previous);
+    },
+    onSuccess: (settings) => {
+      queryClient.setQueryData(key, settings);
+      void queryClient.invalidateQueries({ queryKey: queryKeys.account.securityLog() });
+    },
   });
 }

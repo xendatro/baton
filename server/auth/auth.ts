@@ -4,6 +4,7 @@ import { drizzleAdapter } from 'better-auth/adapters/drizzle';
 import { APIError, createAuthMiddleware, getSessionFromCtx, isAPIError } from 'better-auth/api';
 import { emailOTP, username } from 'better-auth/plugins';
 import { LIMITS, OTP, RESERVED_USERNAMES, THEMES } from '@shared/constants';
+import { isAgentEmail, isAgentUsername } from '@shared/principals';
 import type { Database } from '../db';
 import * as schema from '../db/schema';
 import type { Env } from '../env';
@@ -12,6 +13,7 @@ import type { RateLimiter } from '../lib/rateLimit';
 import { currentLogger } from '../lib/requestContext';
 import type { Logger } from '../logger';
 import { recordActivity } from '../services/activity';
+import { ensureAgent, syncAgentProfile } from '../services/agents';
 import type { Mailer } from './mailer';
 
 /**
@@ -38,13 +40,18 @@ const DAY_SECONDS = 24 * 60 * 60;
 
 export const USERNAME_PATTERN = /^[a-z0-9_]+$/;
 
-/** SPEC username rules, applied to the lowercased value: `[a-z0-9_]`, 3–32 chars, not reserved. */
+/**
+ * SPEC username rules, applied to the lowercased value: `[a-z0-9_]`, 3–32 chars, not reserved.
+ * The `-ai` suffix of agent members (`ethan-ai`) is reserved too; the pattern already rules out
+ * every hyphen, and the explicit check keeps it so if the pattern ever widens.
+ */
 export function isValidUsername(value: string): boolean {
   return (
     value.length >= LIMITS.username.min &&
     value.length <= LIMITS.username.max &&
     USERNAME_PATTERN.test(value) &&
-    !RESERVED_USERNAMES.has(value)
+    !RESERVED_USERNAMES.has(value) &&
+    !isAgentUsername(value)
   );
 }
 
@@ -98,6 +105,34 @@ export function createAuth(deps: AuthDeps) {
       );
     } catch (error) {
       logger.error({ err: error, userId, action }, 'security log row could not be written');
+    }
+  }
+
+  /**
+   * Does the request name an agent member (by its email or username)? Agents can never sign in,
+   * reset a password or receive a code (agents A): such requests are answered like ones for an
+   * address or username that has no account.
+   */
+  function namesAgent(body: unknown): boolean {
+    const email = bodyField(body, 'email');
+    if (typeof email === 'string' && isAgentEmail(email)) return true;
+    const username = bodyField(body, 'username');
+    if (typeof username === 'string' && isAgentUsername(username.trim())) return true;
+    if (typeof email !== 'string') return false;
+    const user = db.orm
+      .select({ kind: schema.user.kind })
+      .from(schema.user)
+      .where(eq(schema.user.email, email.trim().toLowerCase()))
+      .get();
+    return user?.kind === 'agent';
+  }
+
+  /** Keeps an agent member in step with its owner; failures are logged, never fatal. */
+  function followOwner(action: () => void, userId: string): void {
+    try {
+      action();
+    } catch (error) {
+      logger.error({ err: error, userId }, 'agent member could not be updated');
     }
   }
 
@@ -349,7 +384,33 @@ export function createAuth(deps: AuthDeps) {
       before: createAuthMiddleware(async (ctx) => {
         const body: unknown = ctx.body;
         switch (ctx.path) {
+          case '/sign-in/email':
+          case '/sign-in/username':
+          case '/email-otp/reset-password':
+          case '/email-otp/check-verification-otp':
+          case '/reset-password':
+            // Agent members have no password and never sign in (agents A).
+            if (namesAgent(body)) {
+              throw new APIError('UNAUTHORIZED', {
+                code: 'INVALID_EMAIL_OR_PASSWORD',
+                message: 'Invalid email or password',
+              });
+            }
+            return undefined;
+          case '/email-otp/request-password-reset':
+          case '/forget-password/email-otp':
+          case '/request-password-reset':
+            // Never mail an agent; answered like an address without an account.
+            if (namesAgent(body)) return ctx.json({ success: true });
+            return undefined;
           case '/sign-up/email': {
+            const email = bodyField(body, 'email');
+            if (typeof email === 'string' && isAgentEmail(email)) {
+              throw new APIError('BAD_REQUEST', {
+                code: 'INVALID_EMAIL',
+                message: 'Use your own email address',
+              });
+            }
             // Email sign-up collects the username on the form (SPEC §1.1).
             const value = bodyField(body, 'username');
             if (typeof value !== 'string' || value.trim() === '') {
@@ -369,14 +430,19 @@ export function createAuth(deps: AuthDeps) {
           case '/email-otp/send-verification-otp':
             // Verification codes go to unverified addresses only: verify-email signs the user in,
             // so a code for a verified address would be a password-less login. The answer is the
-            // same either way, so it reveals nothing about the address.
-            if (bodyField(body, 'type') !== 'email-verification' || isVerifiedEmail(body)) {
+            // same either way, so it reveals nothing about the address. Agents are never mailed.
+            if (
+              bodyField(body, 'type') !== 'email-verification' ||
+              isVerifiedEmail(body) ||
+              namesAgent(body)
+            ) {
               return ctx.json({ success: true });
             }
             return undefined;
           case '/email-otp/verify-email':
             // Belt and braces for the rule above (e.g. a code sent before the address was verified
-            // some other way): answered like a code that does not exist.
+            // some other way; agents are always verified): answered like a code that does not
+            // exist.
             if (isVerifiedEmail(body)) {
               throw new APIError('BAD_REQUEST', { code: 'INVALID_OTP', message: 'Invalid OTP' });
             }
@@ -420,6 +486,15 @@ export function createAuth(deps: AuthDeps) {
                 method: typeof provider === 'string' ? provider : 'email',
                 ip: context?.request?.headers.get(CLIENT_IP_HEADER) ?? null,
               });
+              // Every person gets their agent member (agents A), email and OAuth sign-ups alike.
+              followOwner(() => ensureAgent(db, user.id), user.id);
+            }),
+        },
+        update: {
+          after: (user) =>
+            settle(() => {
+              // A new username (OAuth onboarding) or name renames the agent member.
+              followOwner(() => db.write((tx) => syncAgentProfile(tx, user.id)), user.id);
             }),
         },
       },
@@ -442,6 +517,16 @@ export function createAuth(deps: AuthDeps) {
       },
       session: {
         create: {
+          // Agent members can never sign in (they have no password or OAuth account either).
+          before: (session) =>
+            settle(() => {
+              const user = db.orm
+                .select({ kind: schema.user.kind })
+                .from(schema.user)
+                .where(eq(schema.user.id, session.userId))
+                .get();
+              return user?.kind === 'agent' ? false : undefined;
+            }),
           after: (session, context) =>
             settle(() => {
               securityLog(session.userId, 'user.signed_in', {

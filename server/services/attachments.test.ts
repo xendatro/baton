@@ -13,6 +13,7 @@ import { sha256Hex } from '../lib/security';
 import {
   addMember,
   bearer,
+  createAgent,
   createApiKey,
   createIssue,
   createProject,
@@ -21,6 +22,8 @@ import {
   createTeam,
   createTestContext,
   createUser,
+  giveAgentOwnerRoles,
+  giveRoleWithAgent,
   type CreatedProject,
   type CreatedTeam,
   type TestContext,
@@ -49,6 +52,8 @@ let member: UserRow;
 let team: CreatedTeam;
 let project: CreatedProject;
 let memberKey: string;
+/** The member's agent member: what `memberKey` acts as (agents A). */
+let memberAgent: UserRow;
 
 const actorOf = (u: { id: string }): Actor => ({ userId: u.id, source: 'web', key: null });
 
@@ -60,6 +65,9 @@ beforeEach(() => {
   addMember(ctx.db, { teamId: team.team.id, userId: member.id });
   project = createProject(ctx.db, { teamId: team.team.id, key: 'API' });
   memberKey = createApiKey(ctx.db, { userId: member.id }).key;
+  memberAgent = createAgent(ctx.db, member.id);
+  // The owner's keys act as the owner's agent, which administers the team with him.
+  giveAgentOwnerRoles(ctx.db, owner.id);
 });
 
 afterEach(() => {
@@ -138,7 +146,7 @@ describe('upload', () => {
       mimeType: 'image/png',
       size: PNG.length,
       isImage: true,
-      uploader: { id: member.id },
+      uploader: { id: memberAgent.id, kind: 'agent', agentOwner: { id: member.id } },
     });
     expect(attachment.url).toBe(`/api/attachments/${attachment.id}/dot.png`);
     const row = ctx.db.orm
@@ -265,10 +273,7 @@ describe('upload', () => {
 
     // Any permission that writes content (here only REPLY) is enough for pending uploads.
     const replier = createRole(ctx.db, { teamId: team.team.id, permissions: ['REPLY'] });
-    ctx.db.orm
-      .insert(s.memberRole)
-      .values({ teamId: team.team.id, userId: member.id, roleId: replier.id })
-      .run();
+    giveRoleWithAgent(ctx.db, { teamId: team.team.id, userId: member.id, roleId: replier.id });
     await uploaded(await upload(PNG, 'x.png'));
   });
 
@@ -282,6 +287,7 @@ describe('upload', () => {
     addMember(ctx.db, { teamId: team.team.id, userId: member.id });
     project = createProject(ctx.db, { teamId: team.team.id, key: 'API' });
     memberKey = createApiKey(ctx.db, { userId: member.id }).key;
+    giveAgentOwnerRoles(ctx.db, owner.id);
 
     const chunk = new Uint8Array(1000 * 1024);
     const first = await uploaded(await upload(chunk, 'a.bin'));
@@ -525,7 +531,7 @@ describe('attach, delete and restore', () => {
     expect(await deleted.json()).toEqual({ ok: true });
     expect((await ctx.app.request(file.url, { headers: bearer(memberKey) })).status).toBe(404);
     const row = ctx.db.orm.select().from(s.attachment).where(eq(s.attachment.id, file.id)).get();
-    expect(row?.deletedById).toBe(owner.id);
+    expect(row?.deletedById).toBe(createAgent(ctx.db, owner.id).id);
 
     expect(() => restoreAttachment(ctx.deps, actorOf(other), file.id)).toThrow(/own files/);
     restoreAttachment(ctx.deps, actorOf(member), file.id);

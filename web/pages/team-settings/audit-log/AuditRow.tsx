@@ -15,6 +15,7 @@ import {
   type ActivityPart,
   type DiffRow,
 } from '@web/lib/activityText';
+import { isAgentUser } from '@web/lib/agentMembers';
 import { formatDateTime } from '@web/lib/format';
 import { cn } from '@web/lib/utils';
 import { useIsFresh } from './freshRows';
@@ -152,7 +153,7 @@ export function AuditRow({ entry, projectName }: AuditRowProps) {
         </time>
         <span className="pt-px">
           {user ? (
-            <ActorAvatar user={user} agentName={via?.agentName} size="md" />
+            <ActorAvatar user={user} agentName={via?.agentName} keyName={via?.keyName} size="md" />
           ) : source === 'system' ? (
             <LogoMark className="size-6 rounded-full" />
           ) : (
@@ -164,11 +165,11 @@ export function AuditRow({ entry, projectName }: AuditRowProps) {
             {/* An agent's action reads "Claude via Ethan's MSI" (BAT-10). */}
             <UserName
               user={user}
-              via={via?.agentName ? via : null}
+              via={via?.agentName || isAgentUser(user) ? via : null}
               source={source}
               className="mr-1 align-bottom"
             />
-            {via && !via.agentName ? (
+            {via && !via.agentName && !isAgentUser(user) ? (
               <Badge
                 variant="outline"
                 className="mr-1 max-w-48 align-[1px] font-normal text-muted-foreground"

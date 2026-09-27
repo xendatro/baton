@@ -12,8 +12,9 @@ import {
 
 /**
  * `GET /api/teams/:teamId/mentionables?q` as the editor's mention source (cached 30 s per query),
- * with the thread's `agents` (BAT-12) listed above the team's people. The agents are read when
- * the list opens, so a thread's agents arriving later don't rebuild the editor.
+ * with the thread's agent members (BAT-12) listed above the team's people (and not again among
+ * them). The agents are read when the list opens, so a thread's agents arriving later don't
+ * rebuild the editor.
  */
 export function useMentionSource(
   teamId: string | null | undefined,
@@ -38,9 +39,14 @@ export function useMentionSource(
           }),
         staleTime: 30_000,
       });
+      const agents = toAgentMentionItems(agentsRef.current ?? [], q);
+      const listed = new Set(agents.map((item) => item.user?.id));
       return [
-        ...toAgentMentionItems(agentsRef.current ?? [], q),
-        ...toMentionItems(data.users, data.roles),
+        ...agents,
+        ...toMentionItems(
+          data.users.filter((user) => !listed.has(user.id)),
+          data.roles,
+        ),
       ];
     };
   }, [queryClient, teamId]);

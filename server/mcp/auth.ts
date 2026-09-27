@@ -6,7 +6,7 @@ import { authenticateApiKey } from '../services/apiKeys';
 /**
  * MCP authentication (SPEC §5.1): `Authorization: Bearer bat_…` only. Missing or invalid keys get
  * HTTP 401 with `WWW-Authenticate: Bearer`, so MCP clients know to send a key. The actor acts via
- * the key with source `mcp`.
+ * the key with source `mcp`, as the key owner's agent member (agents A).
  */
 export function mcpAuth(): MiddlewareHandler<AppEnv> {
   return async (c, next) => {
@@ -22,7 +22,12 @@ export function mcpAuth(): MiddlewareHandler<AppEnv> {
         : 'Bearer realm="baton"';
       return c.json(error.toJSON(), 401, { 'WWW-Authenticate': challenge });
     }
-    c.set('actor', { userId: authenticated.userId, source: 'mcp', key: authenticated.key });
+    c.set('actor', {
+      userId: authenticated.userId,
+      ownerId: authenticated.ownerId,
+      source: 'mcp',
+      key: authenticated.key,
+    });
     return next();
   };
 }

@@ -35,6 +35,7 @@ import {
 } from '@web/components/ui/command';
 import { Input } from '@web/components/ui/input';
 import { Popover, PopoverContent, PopoverTrigger } from '@web/components/ui/popover';
+import { isAgentUser } from '@web/lib/agentMembers';
 import { commandFilter } from '@web/lib/commandFilter';
 import { useDebouncedValue } from '@web/lib/useDebouncedValue';
 import { cn } from '@web/lib/utils';
@@ -258,7 +259,7 @@ export function FilterBar({
         value: `user:${user.id}`,
         label: user.name,
         leading: <UserAvatar user={user} size="sm" />,
-        keywords: [user.username],
+        keywords: isAgentUser(user) ? [user.username, 'agent', 'ai'] : [user.username],
         group: 'People',
       })),
     ...roles.map((role) => ({

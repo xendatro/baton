@@ -7,12 +7,14 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import * as s from '../db/schema';
 import {
   addMember,
+  agentActor,
   createApiKey,
   createProject,
   createRole,
   createTeam,
   createTestContext,
   createUser,
+  giveAgentOwnerRoles,
   type CreatedProject,
   type TestContext,
   type UserRow,
@@ -59,10 +61,12 @@ afterEach(async () => {
 
 async function connect(user: UserRow): Promise<Client> {
   const { apiKey } = createApiKey(ctx.db, { userId: user.id, name: 'Agent' });
+  // The key acts as the user's agent member, with the user's roles (agents A).
+  giveAgentOwnerRoles(ctx.db, user.id);
   const server = new McpServer({ name: 'baton-test', version: '0.0.0' });
   registerTools(server, {
     deps: ctx.deps,
-    actor: { userId: user.id, source: 'mcp', key: { id: apiKey.id, name: apiKey.name } },
+    actor: agentActor(ctx.db, user.id, { id: apiKey.id, name: apiKey.name }),
   });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
@@ -435,7 +439,9 @@ describe('MCP-07: not-found errors name the ref and the valid values', () => {
         task: 'WEB-1',
         assignees: { add: ['leo', 'nobody'] },
       }),
-    ).toBe('not_found: User not found: "nobody" is not a member of northwind. Members: ethan, leo');
+    ).toBe(
+      'not_found: User not found: "nobody" is not a member of northwind. Members: ethan, ethan-ai, leo',
+    );
     expect(await callError(client, 'get_task', { task: 'WEB#1' })).toMatch(
       /^validation_failed: "WEB#1" is an issue ref \(KEY#51\), not a task ref \(KEY-12\)/,
     );
@@ -517,7 +523,8 @@ describe('MCP-08: long threads, histories and lists are paged', () => {
       await call(client, 'create_task', {
         project: 'WEB',
         title: `Mine ${n}`,
-        assignees: ['ethan'],
+        // my_tasks through a key: the agent's own tasks (agents A).
+        assignees: ['ethan-ai'],
       });
     }
     const mine1 = await call<{ total: number; tasks: unknown[]; nextCursor: string | null }>(
@@ -535,7 +542,7 @@ describe('MCP-08: long threads, histories and lists are paged', () => {
 
     const dashboard = await call<{ activity: Array<Json> }>(client, 'dashboard_summary');
     expect(dashboard.activity.length).toBeGreaterThan(0);
-    expect(dashboard.activity[0]).toMatchObject({ actor: 'ethan', via: 'Agent' });
+    expect(dashboard.activity[0]).toMatchObject({ actor: 'ethan-ai', via: 'Agent' });
     expect(dashboard.activity[0]?.ref).toMatch(/^northwind\/WEB/);
   });
 });

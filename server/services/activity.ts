@@ -40,6 +40,7 @@ import {
   requireProjectAccess,
   type Membership,
 } from './access';
+import { assertAgentsNotPaused, personActor } from './agents';
 import { canSeeAttachmentHistory } from './attachments';
 import { trashedItem, trashedReply } from './items';
 import { getUserSummaries, getViaKeys } from './users';
@@ -73,6 +74,8 @@ export interface ActivityInput {
  * deleted.
  */
 export function recordActivity(tx: Tx, actor: Actor | null, input: ActivityInput): ActivityRow {
+  // Every mutation passes here: a paused agent's write rolls back with a 423 (agents A).
+  assertAgentsNotPaused(tx, actor, input.teamId, input.projectId);
   const row = tx
     .insert(s.activity)
     .values({
@@ -93,7 +96,7 @@ export function recordActivity(tx: Tx, actor: Actor | null, input: ActivityInput
     })
     .returning()
     .get();
-  if (row.teamId) recordFacets(tx, row, row.teamId);
+  if (row.teamId) recordFacets(tx, row, row.teamId, actor?.ownerId ?? row.actorId);
   queueLiveEvent(tx, {
     type: 'activity.created',
     teamId: row.teamId,
@@ -114,7 +117,13 @@ export function recordActivity(tx: Tx, actor: Actor | null, input: ActivityInput
  * read instead of scanning the log. Values already listed cost one primary-key lookup each; a
  * key's name, owner and last use follow its newest row.
  */
-function recordFacets(tx: Tx, row: ActivityRow, teamId: string): void {
+function recordFacets(
+  tx: Tx,
+  row: ActivityRow,
+  teamId: string,
+  /** Who owns the key: the person, when the row's actor is their agent. */
+  keyOwnerId: string | null,
+): void {
   const values: Array<{ kind: s.ActivityFacetKind; value: string | null }> = [
     { kind: 'actor', value: row.actorId },
     { kind: 'source', value: row.source },
@@ -127,7 +136,7 @@ function recordFacets(tx: Tx, row: ActivityRow, teamId: string): void {
     .onConflictDoNothing()
     .run();
   if (row.viaKeyId) {
-    const key = { keyName: row.viaKeyName, actorId: row.actorId, lastAt: row.createdAt };
+    const key = { keyName: row.viaKeyName, actorId: keyOwnerId, lastAt: row.createdAt };
     tx.insert(s.activityFacet)
       .values({ teamId, kind: 'key', value: row.viaKeyId, ...key })
       .onConflictDoUpdate({
@@ -644,10 +653,12 @@ export function listAuditLog(
  */
 export function listSecurityLog(
   deps: AppDeps,
-  actor: Actor,
+  agentOrPerson: Actor,
   query: { cursor?: string | undefined; limit: number },
 ): Paginated<ActivityEntry> {
   const { orm } = deps.db;
+  // Through an API key: the key owner's log (agents have no account of their own).
+  const actor = personActor(agentOrPerson);
   const rows = orm
     .select()
     .from(s.activity)

@@ -20,6 +20,7 @@ import {
   canEditContent,
   canRestoreContent,
   hasPermission,
+  isOwnContent,
   requireCanDeleteContent,
   requireMember,
   requireProjectAccess,
@@ -27,6 +28,7 @@ import {
   type Membership,
 } from './access';
 import { recordActivity } from './activity';
+import { selfIdsOf } from './agents';
 import { emitAfterCommit } from './events';
 import {
   findItem,
@@ -376,7 +378,7 @@ export function referencedPendingUploads(
       and(
         inArray(s.attachment.id, ids.slice(0, LIMITS.attachmentsPerItem)),
         eq(s.attachment.parentType, 'pending'),
-        eq(s.attachment.uploaderId, actor.userId),
+        inArray(s.attachment.uploaderId, selfIdsOf(db, actor)),
         eq(s.attachment.teamId, teamId),
         isNull(s.attachment.deletedAt),
       ),
@@ -387,8 +389,9 @@ export function referencedPendingUploads(
 
 /**
  * Claims pending uploads for a parent, inside the feature service's transaction. Only the
- * actor's own pending, non-deleted uploads in the same team qualify; anything else fails the
- * whole write with a validation error. Returns the attached rows.
+ * actor's own pending, non-deleted uploads in the same team qualify (a person's and their agent
+ * member's count as one's own); anything else fails the whole write with a validation error.
+ * Returns the attached rows.
  */
 export function attachToParent(
   tx: Tx,
@@ -408,7 +411,7 @@ export function attachToParent(
       and(
         inArray(s.attachment.id, ids),
         eq(s.attachment.parentType, 'pending'),
-        eq(s.attachment.uploaderId, actor.userId),
+        inArray(s.attachment.uploaderId, selfIdsOf(tx, actor)),
         eq(s.attachment.teamId, parent.teamId),
         isNull(s.attachment.deletedAt),
       ),
@@ -731,7 +734,7 @@ function readableAttachment(deps: AppDeps, actor: Actor, id: string): Attachment
     attachmentProjectId(orm, row),
     'Attachment',
   );
-  if (row.parentType === 'pending' && row.uploaderId !== actor.userId) {
+  if (row.parentType === 'pending' && !isOwnContent(membership, row.uploaderId)) {
     throw errors.notFound('Attachment');
   }
   const trashed = trashedParent(orm, row);
@@ -753,7 +756,7 @@ export function canSeeAttachmentHistory(
 ): boolean {
   const row = db.select().from(s.attachment).where(eq(s.attachment.id, id)).get();
   if (!row || row.teamId !== membership.teamId) return false;
-  if (row.parentType === 'pending') return row.uploaderId === membership.userId;
+  if (row.parentType === 'pending') return isOwnContent(membership, row.uploaderId);
   if (row.deletedAt && !canRestoreContent(membership, row.uploaderId)) return false;
   const trashed = trashedParent(db, row);
   return !trashed || canRestoreContent(membership, trashed.authorId);

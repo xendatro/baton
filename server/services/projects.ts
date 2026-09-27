@@ -173,6 +173,7 @@ export function toProject(db: DbExecutor, project: ProjectRow, teamSlug: string)
     keyAliases: keyAliasesOf(db, project.id),
     statuses: statusesOf(db, project.id),
     labels: labelsOf(db, project.id),
+    agentsPausedAt: project.agentsPausedAt?.toISOString() ?? null,
   };
 }
 
@@ -534,8 +535,12 @@ export function updateProject(
   const { project, team, membership } = requireProject(orm, actor, projectId);
   requirePermission(membership, 'MANAGE_PROJECTS', "You don't have permission to edit projects");
 
-  const { readme, attachmentIds, ...fields } = input;
+  const { readme, attachmentIds, agentsPaused, ...fields } = input;
   const changes: Changes = diffFields(project, fields);
+  // "Pause all agents" of the project (agents A).
+  const pauseChanged =
+    agentsPaused !== undefined && agentsPaused !== (project.agentsPausedAt !== null);
+  if (pauseChanged) changes.agentsPaused = change(!agentsPaused, agentsPaused);
   const readmeChanged = readme !== undefined && readme !== project.readme;
   if (readmeChanged) {
     changes.readme = change(
@@ -564,6 +569,7 @@ export function updateProject(
             ...(fields.icon !== undefined ? { icon: fields.icon } : {}),
             ...(fields.color !== undefined ? { color: fields.color } : {}),
             ...(readmeChanged ? { readme } : {}),
+            ...(pauseChanged ? { agentsPausedAt: agentsPaused ? new Date() : null } : {}),
             updatedAt: new Date(),
           })
           .where(eq(s.project.id, project.id))

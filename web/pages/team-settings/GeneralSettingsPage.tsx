@@ -6,6 +6,7 @@ import { toast } from 'sonner';
 import type { MeTeam } from '@shared/schemas/core';
 import { updateTeamInputSchema, type TeamDetail } from '@shared/schemas/teams';
 import { FormError } from '@web/components/auth/FormField';
+import { AgentsPauseSetting } from '@web/components/common/AgentsPauseSetting';
 import { ConfirmDialog } from '@web/components/common/ConfirmDialog';
 import { ErrorState } from '@web/components/common/ErrorState';
 import { Spinner } from '@web/components/common/Spinner';
@@ -29,8 +30,10 @@ import {
   SelectValue,
 } from '@web/components/ui/select';
 import { Skeleton } from '@web/components/ui/skeleton';
+import { isAgentUser } from '@web/lib/agentMembers';
 import { errorMessage, isApiError } from '@web/lib/api';
 import { fieldErrors } from '@web/lib/forms';
+import { useTeamAccess } from '@web/lib/permissions';
 import { queryKeys } from '@web/lib/queryKeys';
 import { useDocumentTitle } from '@web/lib/title';
 import {
@@ -76,6 +79,7 @@ export default function GeneralSettingsPage() {
           <TeamForm key={detail.data.id} team={team} detail={detail.data} />
         )}
       </section>
+      {detail.data ? <AgentsSection team={team} detail={detail.data} /> : null}
       <DangerZone team={team} />
     </div>
   );
@@ -195,6 +199,46 @@ function TeamForm({ team, detail }: { team: MeTeam; detail: TeamDetail }) {
       ) : null}
       {guard.dialog}
     </form>
+  );
+}
+
+/** "Pause all agents" in the team (agents A), for `MANAGE_TEAM`. */
+function AgentsSection({ team, detail }: { team: MeTeam; detail: TeamDetail }) {
+  const queryClient = useQueryClient();
+  const access = useTeamAccess(team.id);
+  const updateTeam = useUpdateTeam(team.id);
+  return (
+    <section aria-labelledby="team-agents">
+      <h2 id="team-agents" className="pb-3 text-lg font-semibold tracking-tight">
+        Agents
+      </h2>
+      <SettingsCard className="p-4">
+        <AgentsPauseSetting
+          scope="team"
+          pausedAt={detail.agentsPausedAt}
+          canManage={access.has('MANAGE_TEAM')}
+          permissionLabel="Manage team"
+          pending={updateTeam.isPending}
+          onChange={(paused) =>
+            updateTeam.mutate(
+              { agentsPaused: paused },
+              {
+                onSuccess: (saved) => {
+                  queryClient.setQueryData(queryKeys.teams.detail(team.id), saved);
+                  toast.success(
+                    paused
+                      ? `Paused all agents in ${team.name}`
+                      : `Agents can write in ${team.name} again`,
+                  );
+                  void refreshTeam(queryClient, team.id);
+                },
+                onError: (error) => toast.error(errorMessage(error)),
+              },
+            )
+          }
+        />
+      </SettingsCard>
+    </section>
   );
 }
 
@@ -327,7 +371,10 @@ function TransferForm({ team, onDone }: { team: MeTeam; onDone: () => void }) {
   const transfer = useTransferOwnership(team.id);
   const [userId, setUserId] = useState('');
   const [typed, setTyped] = useState('');
-  const candidates = (members.data?.items ?? []).filter((member) => !member.isOwner);
+  // Agents are never owners (docs/design/agents-and-pipelines.md §1).
+  const candidates = (members.data?.items ?? []).filter(
+    (member) => !member.isOwner && !isAgentUser(member.user),
+  );
   const chosen = candidates.find((member) => member.user.id === userId);
   const ready = chosen !== undefined && typed.trim() === team.slug;
 

@@ -7,6 +7,7 @@ import * as s from '../db/schema';
 import {
   addMember,
   bearer,
+  createAgent,
   createApiKey,
   createProject,
   createRole,
@@ -14,6 +15,7 @@ import {
   createTeam,
   createTestContext,
   createUser,
+  giveAgentOwnerRoles,
   json,
   type CreatedTeam,
   type RoleRow,
@@ -82,7 +84,18 @@ describe('listMembers', () => {
       headers: bearer(key),
     });
     const { items } = memberListResponseSchema.parse(await res.json());
-    expect(items.map((item) => item.user.username)).toEqual(['owner', 'admin_ada', 'mia', 'mod']);
+    // Mia's key made her agent member ("Mia AI"), which joined with her (agents A).
+    expect(items.map((item) => item.user.username)).toEqual([
+      'owner',
+      'admin_ada',
+      'mia',
+      'mia-ai',
+      'mod',
+    ]);
+    expect(items.find((item) => item.user.username === 'mia-ai')).toMatchObject({
+      user: { name: 'Mia AI', kind: 'agent', agentOwner: { id: member.id, username: 'mia' } },
+      roles: [],
+    });
     const mia = items.find((item) => item.user.id === member.id);
     expect(mia?.roles.map((role) => role.name)).toEqual(['Moderator', 'Design']);
     expect(mia?.color).toBe('#3b82f6');
@@ -109,13 +122,18 @@ describe('removeMember', () => {
     const task = createTask(ctx.db, { project: project.project });
     ctx.db.orm.insert(s.taskAssigneeUser).values({ taskId: task.id, userId: member.id }).run();
 
+    const miaAgent = createAgent(ctx.db, member.id);
     const { key } = createApiKey(ctx.db, { userId: moderator.id });
+    // The moderator's key acts as the moderator's agent, which needs the role too (agents A).
+    giveAgentOwnerRoles(ctx.db, moderator.id);
     const res = await ctx.app.request(`/api/teams/${team.team.id}/members/${member.id}`, {
       method: 'DELETE',
       headers: bearer(key),
     });
     expect(res.status).toBe(200);
     expect(getMembership(ctx.db.orm, team.team.id, member.id)).toBeNull();
+    // Mia's agent went with her.
+    expect(getMembership(ctx.db.orm, team.team.id, miaAgent.id)).toBeNull();
     expect(
       ctx.db.orm
         .select()
@@ -126,6 +144,7 @@ describe('removeMember', () => {
     expect(activity('member.removed')[0]?.meta).toMatchObject({
       username: 'mia',
       unassignedTasks: 1,
+      agent: 'mia-ai',
     });
     expect(
       events.some((event) => event.type === 'member.left' && event.entityId === member.id),
@@ -151,7 +170,10 @@ describe('removeMember', () => {
 describe('leaveTeam', () => {
   it('lets members leave, dropping their roles; the owner must transfer first', async () => {
     expect(() => leaveTeam(ctx.deps, actorOf(owner), team.team.id)).toThrow(/transfer ownership/);
+    // Membership is the person's: leaving through a key, the key's owner leaves, and the agent
+    // with them (agents A).
     const { key } = createApiKey(ctx.db, { userId: moderator.id });
+    const agent = createAgent(ctx.db, moderator.id);
     const res = await ctx.app.request(
       `/api/teams/${team.team.id}/leave`,
       json('POST', {}, bearer(key)),
@@ -160,9 +182,12 @@ describe('leaveTeam', () => {
     expect(
       ctx.db.orm.select().from(s.memberRole).where(eq(s.memberRole.userId, moderator.id)).all(),
     ).toEqual([]);
-    expect(activity('member.left')[0]?.meta).toMatchObject({
-      username: 'mod',
-      roles: ['Moderator'],
+    expect(getMembership(ctx.db.orm, team.team.id, moderator.id)).toBeNull();
+    expect(getMembership(ctx.db.orm, team.team.id, agent.id)).toBeNull();
+    expect(activity('member.left')[0]).toMatchObject({
+      actorId: agent.id,
+      entityId: moderator.id,
+      meta: { username: 'mod', roles: ['Moderator'], agent: 'mod-ai' },
     });
   });
 });
@@ -170,6 +195,7 @@ describe('leaveTeam', () => {
 describe('assigning roles', () => {
   it('grants and revokes roles with an audit row listing the role names', async () => {
     const { key } = createApiKey(ctx.db, { userId: moderator.id });
+    giveAgentOwnerRoles(ctx.db, moderator.id);
     const put = await ctx.app.request(
       `/api/teams/${team.team.id}/members/${member.id}/roles/${designRole.id}`,
       { method: 'PUT', headers: bearer(key) },

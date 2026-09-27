@@ -9,6 +9,7 @@ import { createApiKeyResponseSchema } from '@shared/schemas/core';
 import * as s from '../db/schema';
 import {
   addMember,
+  createAgent,
   createApiKey,
   createIssue,
   createProject,
@@ -16,6 +17,7 @@ import {
   createTeam,
   createTestContext,
   createUser,
+  giveAgentOwnerRoles,
   json,
   signIn,
   web,
@@ -100,11 +102,14 @@ describe('MCP over Streamable HTTP', () => {
     }
 
     const whoami = structured<{
-      user: { username: string };
+      user: { id: string; username: string };
+      owner: { username: string };
       via: { keyName: string };
       teams: Array<{ slug: string; url: string; projects: Array<{ ref: string }> }>;
     }>(await client.callTool({ name: 'whoami', arguments: {} }));
-    expect(whoami.user.username).toBe('ethan');
+    // The key acts as its owner's agent member (agents A).
+    expect(whoami.user.username).toBe('ethan-ai');
+    expect(whoami.owner.username).toBe('ethan');
     expect(whoami.via.keyName).toBe('Claude on laptop');
     expect(whoami.teams[0]).toMatchObject({ slug: 'acme', url: `${ctx.env.baseUrl}/t/acme` });
     expect(whoami.teams[0]?.projects[0]?.ref).toBe('acme/API');
@@ -123,7 +128,7 @@ describe('MCP over Streamable HTTP', () => {
     expect(row).toMatchObject({
       action: 'reply.created',
       source: 'mcp',
-      actorId: owner.id,
+      actorId: whoami.user.id,
       viaKeyId: apiKey.id,
       viaKeyName: 'Claude on laptop',
     });
@@ -159,6 +164,8 @@ describe('MCP over Streamable HTTP', () => {
     const mia = createUser(ctx.db, { username: 'mia' });
     addMember(ctx.db, { teamId: team.team.id, userId: mia.id });
     const client = await connect(createApiKey(ctx.db, { userId: owner.id, name: 'Codex' }).key);
+    // The owner's agent reads the audit log below: give it the owner's roles.
+    giveAgentOwnerRoles(ctx.db, owner.id);
     const miaClient = await connect(createApiKey(ctx.db, { userId: mia.id }).key);
 
     structured(
@@ -207,19 +214,25 @@ describe('MCP over Streamable HTTP', () => {
     );
     expect(withFile.attachments.map((a) => a.id)).toEqual([pending.id]);
 
-    const inbox = structured<{ items: Array<{ type: string; url: string }> }>(
+    // The mention reached Mia herself; her agent (the key) has no inbox (agents A).
+    const inbox = structured<{ items: Array<{ type: string; url: string }>; note: string }>(
       await miaClient.callTool({ name: 'list_notifications', arguments: { unreadOnly: true } }),
     );
-    expect(inbox.items.map((n) => n.type)).toEqual(['mention']);
-    expect(inbox.items[0]?.url.startsWith(`${ctx.env.baseUrl}/t/acme/p/API/issues/1#reply-`)).toBe(
-      true,
-    );
+    expect(inbox.items).toEqual([]);
+    expect(inbox.note).toMatch(/no inbox/);
+    const mentioned = ctx.db.orm
+      .select()
+      .from(s.notification)
+      .where(eq(s.notification.userId, mia.id))
+      .all();
+    expect(mentioned.map((n) => [n.type, n.viaKeyName])).toEqual([['mention', 'Codex']]);
+    expect(mentioned[0]?.url.startsWith('/t/acme/p/API/issues/1#reply-')).toBe(true);
     expect(
       structured(
         await miaClient.callTool({ name: 'mark_notifications_read', arguments: { all: true } }),
       ),
     ).toEqual({
-      updated: 1,
+      updated: 0,
     });
 
     expect(
@@ -379,12 +392,13 @@ describe('MCP transport security', () => {
     expect(tooLarge.status).toBe(413);
   });
 
-  it('counts MCP uploads against the per-user uploads bucket', async () => {
+  it('counts MCP uploads against the per-user uploads bucket (the agent’s)', async () => {
     createTeam(ctx.db, { ownerId: owner.id, slug: 'acme' });
     const { key } = createApiKey(ctx.db, { userId: owner.id });
+    const agent = createAgent(ctx.db, owner.id);
     const client = await connect(key);
     for (let i = 0; i < RATE_LIMITS.uploadsPerUser; i += 1) {
-      ctx.deps.rateLimiter.consume(`uploads:${owner.id}`, {
+      ctx.deps.rateLimiter.consume(`uploads:${agent.id}`, {
         max: RATE_LIMITS.uploadsPerUser,
         windowMs: 60_000,
       });

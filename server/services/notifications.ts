@@ -1,5 +1,5 @@
 import { and, count, desc, eq, inArray, isNull, lt, or, sql } from 'drizzle-orm';
-import type { NotificationType, ReplyParentType } from '@shared/constants';
+import type { AgentNotificationLevel, NotificationType, ReplyParentType } from '@shared/constants';
 import type { Paginated } from '@shared/schemas/common';
 import type {
   ListNotificationsQuery,
@@ -31,9 +31,9 @@ import { getUserSummaries } from './users';
 
 /**
  * Notifications (SPEC §1.10). Feature services call the `notify*` helpers inside their `db.write`
- * transaction; each helper skips the actor (including their own keys), non-members and anyone
- * already notified for the same event (pass one `notified` set through every call of an event),
- * inserts the rows and queues a personal `notification.created` event per recipient.
+ * transaction; each helper skips the actor, agent members (they have no inbox), non-members and
+ * anyone already notified for the same event (pass one `notified` set through every call of an
+ * event), inserts the rows and queues a personal `notification.created` event per recipient.
  */
 
 /** What the notification is about and where it links. */
@@ -56,10 +56,39 @@ export type NotifiedSet = Set<string>;
 const SNIPPET_LENGTH = 200;
 
 /**
- * Notifies `userIds` (members of the target's team only), skipping anyone in `notified` and the
- * actor, unless the actor worked through an API key: an agent's replies and mentions reach the
- * key's owner too, since the owner didn't write them (BAT-6). Returns the ids notified by this
- * call and adds them to `notified`.
+ * Notification types that "need" an agent's owner under `needs_me` (agents A): their agent
+ * mentioned or assigned them. Answers to the owner's own reply count too (`direct`).
+ */
+const NEEDS_ME_TYPES: ReadonlySet<NotificationType> = new Set([
+  'mention',
+  'role_mention',
+  'assigned',
+]);
+
+export interface NotifyOptions {
+  /** The notification answers the recipients directly (a reply to their reply). */
+  direct?: boolean;
+}
+
+/** The `agent_notifications` level of an agent actor's owner, or null for people. */
+function ownerLevel(tx: Tx, actor: Actor | null): AgentNotificationLevel | null {
+  if (!actor?.ownerId) return null;
+  return (
+    tx
+      .select({ level: s.user.agentNotifications })
+      .from(s.user)
+      .where(eq(s.user.id, actor.ownerId))
+      .get()?.level ?? 'needs_me'
+  );
+}
+
+/**
+ * Notifies `userIds` (people in the target's team only), skipping the actor, agent members and
+ * anyone in `notified`. When the actor is an agent member, its owner's `agent_notifications`
+ * decides whether the owner hears about it (agents A): `all` — whatever the agent's action
+ * notifies anyone of, the owner gets too; `needs_me` — only mentions, assignments and direct
+ * answers reaching the owner; `none` — never. Returns the ids notified by this call and adds them
+ * to `notified`.
  */
 export function notifyUsers(
   tx: Tx,
@@ -68,23 +97,49 @@ export function notifyUsers(
   userIds: Iterable<string>,
   target: NotificationTarget,
   notified: NotifiedSet = new Set(),
+  options: NotifyOptions = {},
 ): string[] {
+  const level = ownerLevel(tx, actor);
+  const ownerId = actor?.ownerId;
+  const ownerWanted =
+    level === 'all' ||
+    (level === 'needs_me' && (NEEDS_ME_TYPES.has(type) || options.direct === true));
   const candidates = [...new Set(userIds)].filter(
-    (id) => (id !== actor?.userId || Boolean(actor.key)) && !notified.has(id),
+    (id) => id !== actor?.userId && !notified.has(id) && (id !== ownerId || ownerWanted),
   );
-  if (candidates.length === 0) return [];
-  const members = new Set(
-    tx
-      .select({ userId: s.teamMember.userId })
-      .from(s.teamMember)
-      .where(and(eq(s.teamMember.teamId, target.teamId), inArray(s.teamMember.userId, candidates)))
-      .all()
-      .map((row) => row.userId),
-  );
-  const item = itemOfTarget(tx, target);
+  const people = (ids: readonly string[]) =>
+    ids.length === 0
+      ? new Set<string>()
+      : new Set(
+          tx
+            .select({ userId: s.teamMember.userId })
+            .from(s.teamMember)
+            .innerJoin(s.user, eq(s.user.id, s.teamMember.userId))
+            .where(
+              and(
+                eq(s.teamMember.teamId, target.teamId),
+                inArray(s.teamMember.userId, [...ids]),
+                eq(s.user.kind, 'human'),
+              ),
+            )
+            .all()
+            .map((row) => row.userId),
+        );
+  const members = people(candidates);
+  let recipients = candidates.filter((id) => members.has(id));
+  if (
+    level === 'all' &&
+    ownerId &&
+    recipients.length > 0 &&
+    !recipients.includes(ownerId) &&
+    !notified.has(ownerId) &&
+    people([ownerId]).has(ownerId)
+  ) {
+    recipients.push(ownerId);
+  }
   // Nobody hears about a project they can't see (VIEW_PROJECT, design §3).
-  const inTeam = candidates.filter((id) => members.has(id));
-  const recipients = item.projectId ? projectViewerIds(tx, item.projectId, inTeam) : inTeam;
+  const item = itemOfTarget(tx, target);
+  if (item.projectId) recipients = projectViewerIds(tx, item.projectId, recipients);
   if (recipients.length === 0) return [];
 
   const snippet = target.snippet ? excerpt(target.snippet, SNIPPET_LENGTH) : '';

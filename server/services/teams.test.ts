@@ -16,6 +16,7 @@ import * as s from '../db/schema';
 import {
   addMember,
   bearer,
+  createAgent,
   createApiKey,
   createIssue,
   createProject,
@@ -24,6 +25,8 @@ import {
   createTestContext,
   createUser,
   json,
+  signIn,
+  web,
   type TestContext,
   type UserRow,
 } from '../test/helpers';
@@ -117,7 +120,11 @@ describe('createTeam', () => {
       json('POST', { name: 'Mia’s team', slug: 'Mias-Team' }, bearer(key)),
     );
     expect(res.status).toBe(201);
-    expect(teamDetailSchema.parse(await res.json())).toMatchObject({ slug: 'mias-team' });
+    // Agents never own teams: created through Mia's key, the team is Mia's (agents A).
+    expect(teamDetailSchema.parse(await res.json())).toMatchObject({
+      slug: 'mias-team',
+      ownerId: mia.id,
+    });
 
     const bad = await ctx.app.request(
       '/api/teams',
@@ -129,7 +136,11 @@ describe('createTeam', () => {
       await (await ctx.app.request('/api/me', { headers: bearer(key) })).json(),
     );
     expect(me.teams.map((team) => team.slug)).toEqual(['mias-team']);
-    expect(me.teams[0]?.isOwner).toBe(true);
+    // Her agent, which created it, is its admin.
+    expect(me.teams[0]).toMatchObject({
+      isOwner: false,
+      permissions: expect.arrayContaining(['ADMINISTRATOR']) as unknown,
+    });
 
     const list = teamListResponseSchema.parse(
       await (await ctx.app.request('/api/teams', { headers: bearer(key) })).json(),
@@ -227,20 +238,25 @@ describe('deleting and restoring', () => {
     addMember(ctx.db, { teamId: team.id, userId: mia.id, roleIds: [adminRole.id] });
     expect(() => deleteTeam(ctx.deps, actorOf(mia), team.id)).toThrow(/owner/);
 
-    const { key } = createApiKey(ctx.db, { userId: ethan.id });
+    // Owner-only, so never through a key: keys act as the owner's agent (agents A).
+    const { key: agentKey } = createApiKey(ctx.db, { userId: ethan.id });
+    const refused = await ctx.app.request(`/api/teams/${team.id}`, {
+      method: 'DELETE',
+      headers: bearer(agentKey),
+    });
+    expect(refused.status).toBe(403);
+    const session = web(ctx, await signIn(ctx, ethan));
     const res = await ctx.app.request(`/api/teams/${team.id}`, {
       method: 'DELETE',
-      headers: bearer(key),
+      headers: session,
     });
     expect(res.status).toBe(200);
     expect(activity('team.deleted')).toHaveLength(1);
     expect(events.some((event) => event.type === 'team.deleted')).toBe(true);
-    expect((await ctx.app.request(`/api/teams/${team.id}`, { headers: bearer(key) })).status).toBe(
-      404,
-    );
+    expect((await ctx.app.request(`/api/teams/${team.id}`, { headers: session })).status).toBe(404);
 
     const deleted = deletedTeamsResponseSchema.parse(
-      await (await ctx.app.request('/api/me/deleted-teams', { headers: bearer(key) })).json(),
+      await (await ctx.app.request('/api/me/deleted-teams', { headers: session })).json(),
     );
     expect(deleted.items).toHaveLength(1);
     const [item] = deleted.items;
@@ -253,7 +269,7 @@ describe('deleting and restoring', () => {
 
     const restored = await ctx.app.request(
       `/api/teams/${team.id}/restore`,
-      json('POST', {}, bearer(key)),
+      json('POST', {}, session),
     );
     expect(restored.status).toBe(200);
     expect(teamDetailSchema.parse(await restored.json()).slug).toBe('acme');
@@ -307,17 +323,28 @@ describe('transferOwnership', () => {
       transferOwnership(ctx.deps, actorOf(ethan), team.id, { userId: ethan.id }),
     ).toThrow(/already own/);
 
+    // Agents never own teams, nor hand them over (agents A).
     const { key } = createApiKey(ctx.db, { userId: ethan.id, name: 'Claude' });
-    const res = await ctx.app.request(
+    const miaAgent = createAgent(ctx.db, mia.id);
+    expect(() =>
+      transferOwnership(ctx.deps, actorOf(ethan), team.id, { userId: miaAgent.id }),
+    ).toThrow(/Agents can’t own teams/);
+    const byAgent = await ctx.app.request(
       `/api/teams/${team.id}/transfer`,
       json('POST', { userId: mia.id }, bearer(key)),
+    );
+    expect(byAgent.status).toBe(403);
+
+    const cookie = await signIn(ctx, ethan);
+    const res = await ctx.app.request(
+      `/api/teams/${team.id}/transfer`,
+      json('POST', { userId: mia.id }, web(ctx, cookie)),
     );
     expect(res.status).toBe(200);
     expect(teamDetailSchema.parse(await res.json()).ownerId).toBe(mia.id);
     const [row] = activity('team.ownership_transferred');
     expect(row).toMatchObject({
-      source: 'api',
-      viaKeyName: 'Claude',
+      source: 'web',
       changes: { owner: { from: 'ethan', to: 'mia' } },
     });
     // The previous owner stays a member.

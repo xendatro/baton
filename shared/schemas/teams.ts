@@ -60,6 +60,8 @@ export const teamSchema = z.object({
   icon: z.string().nullable(),
   color: z.string(),
   ownerId: z.string(),
+  /** "Pause all agents" (agents A): agent members' writes in the team are refused since then. */
+  agentsPausedAt: timestampSchema.nullable().optional(),
   createdAt: timestampSchema,
   updatedAt: timestampSchema,
 });
@@ -91,6 +93,8 @@ export const updateTeamInputSchema = z.object({
   description: teamDescriptionSchema.optional(),
   icon: emojiSchema.nullable().optional(),
   color: hexColorSchema.optional(),
+  /** Pause (true) or resume (false) every agent member's writes in the team (`MANAGE_TEAM`). */
+  agentsPaused: z.boolean().optional(),
 });
 export type UpdateTeamInput = z.infer<typeof updateTeamInputSchema>;
 

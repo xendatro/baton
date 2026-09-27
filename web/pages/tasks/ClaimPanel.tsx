@@ -35,7 +35,11 @@ export function ClaimPanel({ task, viewerId, canClaim, canTakeOver }: ClaimPanel
   const { claim } = task;
   const done = task.status.category === 'done';
   const mineOnWeb = claim !== null && claim.user.id === viewerId && claim.via === null;
-  const mineViaKey = claim !== null && claim.user.id === viewerId && claim.via !== null;
+  // Through a key the holder is the viewer's agent member (agents A); older claims name the viewer.
+  const mineViaKey =
+    claim !== null &&
+    claim.via !== null &&
+    (claim.user.id === viewerId || claim.user.agentOwner?.id === viewerId);
 
   const run = (next: ClaimAction, success: string) =>
     action.mutateAsync(next).then(

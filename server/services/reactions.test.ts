@@ -13,6 +13,7 @@ import * as s from '../db/schema';
 import {
   addMember,
   bearer,
+  createAgent,
   createApiKey,
   createIssue,
   createProject,
@@ -251,8 +252,10 @@ describe('reactions over REST', () => {
           count: 1,
           reactedByMe: true,
           users: [
+            // Through Mia's key: her agent member reacted (agents A).
             expect.objectContaining({
-              id: mia.id,
+              id: createAgent(ctx.db, mia.id).id,
+              kind: 'agent',
               via: { keyId: apiKey.id, keyName: 'MSI', agentName: 'Claude' },
             }),
           ],

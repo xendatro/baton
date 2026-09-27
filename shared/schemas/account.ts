@@ -1,7 +1,7 @@
 import { z } from 'zod';
-import { LIMITS, RESERVED_USERNAMES } from '../constants';
+import { AGENT_NOTIFICATION_LEVELS, LIMITS, RESERVED_USERNAMES } from '../constants';
 import { displayNameSchema, passwordSchema, timestampSchema } from './common';
-import { meUserSchema, themeSchema } from './core';
+import { meUserSchema, themeSchema, userSummarySchema } from './core';
 
 /**
  * Wire contracts of the account module (docs/API.md → Account): profile, avatar, password,
@@ -37,6 +37,32 @@ export const updateProfileInputSchema = z
     { message: 'Pass at least one of name, username or theme' },
   );
 export type UpdateProfileInput = z.infer<typeof updateProfileInputSchema>;
+
+// ---------------------------------------------------------------------------------------------
+// Your agent member: GET|PATCH /api/me/agent (docs/design/agents-and-pipelines.md §1)
+// ---------------------------------------------------------------------------------------------
+
+export const agentNotificationLevelSchema = z.enum(AGENT_NOTIFICATION_LEVELS);
+
+/** The signed-in person's agent member and its settings. */
+export const agentSettingsSchema = z.object({
+  agent: userSummarySchema,
+  /** When the owner paused the agent (its writes are refused), or null. */
+  pausedAt: timestampSchema.nullable(),
+  /** How much of the agent's activity reaches the owner's inbox. */
+  notifications: agentNotificationLevelSchema,
+});
+export type AgentSettings = z.infer<typeof agentSettingsSchema>;
+
+export const updateAgentSettingsInputSchema = z
+  .object({
+    paused: z.boolean().optional(),
+    notifications: agentNotificationLevelSchema.optional(),
+  })
+  .refine((value) => value.paused !== undefined || value.notifications !== undefined, {
+    message: 'Pass paused or notifications',
+  });
+export type UpdateAgentSettingsInput = z.infer<typeof updateAgentSettingsInputSchema>;
 
 /** `PATCH /api/me`, `POST|DELETE /api/me/avatar`: the updated profile (as in `GET /api/me`). */
 export const profileResponseSchema = meUserSchema;

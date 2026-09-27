@@ -24,6 +24,8 @@ import {
   createTeam,
   createTestContext,
   createUser,
+  giveAgentOwnerRoles,
+  giveRoleWithAgent,
   json,
   type CreatedTeam,
   type TestContext,
@@ -61,6 +63,9 @@ beforeEach(() => {
   ownerKey = createApiKey(ctx.db, { userId: owner.id, name: 'Claude on laptop' }).key;
   memberKey = createApiKey(ctx.db, { userId: member.id }).key;
   outsiderKey = createApiKey(ctx.db, { userId: outsider.id }).key;
+  // Keys act as their owner's agent member, capped by the owner (agents A): the owner's agent
+  // administers the team with him.
+  giveAgentOwnerRoles(ctx.db, owner.id);
   events = [];
   ctx.deps.events.subscribe((event) => events.push(event));
 });
@@ -143,7 +148,8 @@ describe('creating projects', () => {
       color: '#0ea5e9',
       readme: '',
       path: '/t/acme/p/WA',
-      createdBy: { username: 'owner' },
+      // Created through the owner's key: by his agent member (agents A).
+      createdBy: { username: 'owner-ai', kind: 'agent', agentOwner: { username: 'owner' } },
       keyAliases: [],
       labels: [],
       counts: { openTasks: 0, doneTasks: 0, openIssues: 0, resolvedIssues: 0 },
@@ -204,10 +210,7 @@ describe('creating projects', () => {
     expect(hidden.status).toBe(404);
 
     const managers = createRole(ctx.db, { teamId: team.team.id, permissions: ['MANAGE_PROJECTS'] });
-    ctx.db.orm
-      .insert(s.memberRole)
-      .values({ teamId: team.team.id, userId: member.id, roleId: managers.id })
-      .run();
+    giveRoleWithAgent(ctx.db, { teamId: team.team.id, userId: member.id, roleId: managers.id });
     expect(
       (await post(`/api/teams/${team.team.id}/projects`, { name: 'Docs' }, memberKey)).status,
     ).toBe(201);

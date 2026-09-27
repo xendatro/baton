@@ -28,6 +28,25 @@ describe('mentions', () => {
     expect(findMentions(`@${'a'.repeat(33)}`)).toEqual([]);
   });
 
+  it('reads an agent member’s username as one mention', () => {
+    expect(
+      findMentions('ask @ethan-ai, @Caden-AI and @ethan-bob').map(({ id, raw }) => [id, raw]),
+    ).toEqual([
+      ['ethan-ai', '@ethan-ai'],
+      ['caden-ai', '@Caden-AI'],
+      ['ethan', '@ethan'],
+    ]);
+    expect(findMentions('@ethan-aix @ethan-ai.')).toMatchObject([
+      { id: 'ethan' },
+      { id: 'ethan-ai' },
+    ]);
+    expect(mentionAtStart(`@${'a'.repeat(32)}-ai rest`)).toMatchObject({
+      kind: 'user',
+      id: `${'a'.repeat(32)}-ai`,
+    });
+    expect(findMentions('@ab-ai')).toEqual([]);
+  });
+
   it('matches at the start of a markdown source and formats back', () => {
     expect(mentionAtStart('@&ops rest')).toMatchObject({ kind: 'role', id: 'ops', raw: '@&ops' });
     expect(mentionAtStart('hello @ops')).toBeNull();

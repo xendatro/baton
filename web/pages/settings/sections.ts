@@ -1,5 +1,6 @@
 import {
   BellIcon,
+  BotIcon,
   KeyRoundIcon,
   LinkIcon,
   PaletteIcon,
@@ -42,6 +43,12 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
     label: 'API keys',
     icon: KeyRoundIcon,
     keywords: ['tokens', 'mcp', 'claude code', 'codex', 'agents'],
+  },
+  {
+    to: '/settings/agent',
+    label: 'Agent',
+    icon: BotIcon,
+    keywords: ['ai', 'pause', 'agent member', 'agent notifications'],
   },
   {
     to: '/settings/appearance',

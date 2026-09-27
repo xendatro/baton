@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import type { NotificationType } from '@shared/constants';
 import type { MeProject, MeTeam, Notification } from '@shared/schemas/core';
+import { isAgentUser } from '@web/lib/agentMembers';
 
 /** Wording, icons and context of notifications, shared by the inbox and the live toasts. */
 
@@ -77,11 +78,15 @@ export function actorName(notification: Pick<Notification, 'actor'>): string {
   return notification.actor?.name ?? 'Someone';
 }
 
-/** "Ada assigned you", "Ada via Claude on laptop replied", "Claude via Ada’s MSI replied". */
+/**
+ * "Ada assigned you", "Ada AI replied" (an agent member), and for older rows "Ada via Claude on
+ * laptop replied", "Claude via Ada’s MSI replied".
+ */
 export function notificationSentence(
   notification: Pick<Notification, 'actor' | 'viaKeyName' | 'viaAgentName' | 'type'>,
 ): string {
   const verb = NOTIFICATION_KINDS[notification.type].verb;
+  if (isAgentUser(notification.actor)) return `${actorName(notification)} ${verb}`;
   if (notification.viaAgentName && notification.viaKeyName) {
     return `${notification.viaAgentName} via ${actorName(notification)}’s ${notification.viaKeyName} ${verb}`;
   }

@@ -16,6 +16,7 @@ import { useNavigate } from 'react-router';
 import { toast } from 'sonner';
 import type { MeTeam } from '@shared/schemas/core';
 import type { Member, Role } from '@shared/schemas/teams';
+import { AgentBadge } from '@web/components/common/AgentBadge';
 import { Chip } from '@web/components/common/Chip';
 import { ConfirmDialog } from '@web/components/common/ConfirmDialog';
 import { EmptyState } from '@web/components/common/EmptyState';
@@ -33,6 +34,7 @@ import {
 } from '@web/components/ui/dropdown-menu';
 import { Input } from '@web/components/ui/input';
 import { Skeleton } from '@web/components/ui/skeleton';
+import { agentOwnerLabel, isAgentUser } from '@web/lib/agentMembers';
 import { useReadableTextColor } from '@web/lib/colors';
 import { pluralize } from '@web/lib/format';
 import { queryKeys } from '@web/lib/queryKeys';
@@ -56,7 +58,10 @@ import { useSettingsTeam, useViewer } from './context';
 import { MemberRolesPicker } from './RolePickers';
 import { SettingsHeader } from './SettingsSection';
 
-/** Members: everyone in the team with their roles; grant/revoke roles and remove members. */
+/**
+ * Members: everyone in the team with their roles, people and their agent members alike; grant and
+ * revoke roles and remove members.
+ */
 export default function MembersSettingsPage() {
   const team = useSettingsTeam();
   const viewer = useViewer(team);
@@ -185,6 +190,7 @@ function MemberRow({ team, viewer, member, roles }: MemberRowProps) {
   const leaveTeam = useLeaveTeam(team.id);
   const [confirm, setConfirm] = useState<'remove' | 'leave' | null>(null);
   const isSelf = member.user.id === viewer.userId;
+  const agent = isAgentUser(member.user);
   const target = memberPermissions(member, roles);
   const subject = { ...target, userId: member.user.id };
   const assignable = roles.filter((role) => !role.isEveryone);
@@ -217,6 +223,7 @@ function MemberRow({ team, viewer, member, roles }: MemberRowProps) {
             <span className="truncate text-sm font-medium" style={nameColor}>
               {member.user.name}
             </span>
+            {agent ? <AgentBadge /> : null}
             {member.isOwner ? (
               <CrownIcon className="size-3.5 shrink-0 text-amber-500" aria-label="Owner" />
             ) : null}
@@ -228,6 +235,7 @@ function MemberRow({ team, viewer, member, roles }: MemberRowProps) {
           </p>
           <p className="truncate text-xs text-muted-foreground">
             @{member.user.username}
+            {agent ? ` · ${agentOwnerLabel(member.user)}` : null}
             <span className="md:hidden">
               {' · joined '}
               <RelativeTime value={member.joinedAt} />
@@ -333,7 +341,11 @@ function MemberRow({ team, viewer, member, roles }: MemberRowProps) {
         open={confirm === 'remove'}
         onOpenChange={(open) => setConfirm(open ? 'remove' : null)}
         title={`Remove ${member.user.name}?`}
-        description={`${member.user.name} loses access to ${team.name} and is unassigned from its tasks. They can come back with a new invite.`}
+        description={
+          agent
+            ? `${member.user.name} loses access to ${team.name} and is unassigned from its tasks. It comes back only if ${member.user.agentOwner?.name ?? 'its owner'} rejoins the team.`
+            : `${member.user.name} and their agent lose access to ${team.name} and are unassigned from its tasks. They can come back with a new invite.`
+        }
         confirmLabel="Remove member"
         destructive
         onConfirm={async () => {

@@ -14,6 +14,7 @@ export const ERROR_STATUS: Readonly<Record<ErrorCode, ContentfulStatusCode>> = {
   payload_too_large: 413,
   email_not_verified: 403,
   username_required: 403,
+  agents_paused: 423,
   internal: 500,
 };
 
@@ -63,6 +64,8 @@ export const errors = {
   payloadTooLarge: (message = 'Payload too large') => make('payload_too_large', message),
   emailNotVerified: () => make('email_not_verified', 'Verify your email address first'),
   usernameRequired: () => make('username_required', 'Choose a username first'),
+  /** An agent member's write while it, its team or its project is paused. */
+  agentsPaused: (message: string) => make('agents_paused', message),
   internal: (message = 'Something went wrong') => make('internal', message),
 } as const;
 

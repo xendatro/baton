@@ -11,6 +11,7 @@ import { registerTools } from '../mcp/tools/index';
 import { tasksTools } from '../mcp/tools/tasks';
 import {
   addMember,
+  agentActor,
   bearer,
   createApiKey,
   createIssue,
@@ -422,21 +423,31 @@ describe('notifications for answers', () => {
     expect(replyNotifications(third).filter((note) => note.entityId === self.id)).toHaveLength(0);
   });
 
-  it('notifies the author when their own agent answers them through an API key (BAT-6)', () => {
+  it('notifies the author when their own agent member answers them, unless they opted out', () => {
     const task = newTask();
     const top = reply(member, task.id, 'Agent, please check');
     const { apiKey } = createApiKey(ctx.db, { userId: member.id, name: 'Claude' });
-    const agent: Actor = {
-      userId: member.id,
-      source: 'mcp',
-      key: { id: apiKey.id, name: apiKey.name },
-    };
+    const agent = agentActor(ctx.db, member.id, { id: apiKey.id, name: apiKey.name });
     const answer = createReply(ctx.deps, agent, {
       parentType: 'task',
       parentId: task.id,
       parentReplyId: top.id,
       body: 'Checked',
     });
+    // An answer to Mia herself is something she needs to hear (`needs_me`, agents A).
     expect(replyNotifications(member).map((note) => note.entityId)).toContain(answer.id);
+
+    ctx.db.orm
+      .update(s.user)
+      .set({ agentNotifications: 'none' })
+      .where(eq(s.user.id, member.id))
+      .run();
+    const quiet = createReply(ctx.deps, agent, {
+      parentType: 'task',
+      parentId: task.id,
+      parentReplyId: top.id,
+      body: 'Checked again',
+    });
+    expect(replyNotifications(member).map((note) => note.entityId)).not.toContain(quiet.id);
   });
 });

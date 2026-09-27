@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import nodemailer, { type Transporter } from 'nodemailer';
+import { isAgentEmail } from '@shared/principals';
 import type { Env } from '../env';
 import { newId } from '../lib/ids';
 import type { Logger } from '../logger';
@@ -51,6 +52,11 @@ export function createMailer(env: MailerEnv, logger: Logger): Mailer {
 
   const mailer: Mailer = {
     async send(message, meta = {}) {
+      if (isAgentEmail(message.to)) {
+        // Agent members' addresses (`@agents.baton.invalid`) are never mailed (agents A).
+        logger.warn({ subject: message.subject }, 'email to an agent member not sent');
+        return;
+      }
       if (env.e2eMailbox) writeToMailbox(message, meta);
       if (!transport) {
         logger.info(

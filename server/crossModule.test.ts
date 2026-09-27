@@ -7,6 +7,7 @@ import type { Actor } from './context';
 import { registerTools } from './mcp/tools';
 import {
   bearer,
+  createAgent,
   createApiKey,
   createTestContext,
   createUser,
@@ -23,6 +24,10 @@ import {
  * restore_item, audit-log facets), issues ↔ core (replies, search, notifications), issues ↔ tasks ↔
  * work (create task from issue, auto-resolve, notifications, My tasks and dashboard) and the live
  * events the web client invalidates on.
+ *
+ * Keys act as their owner's agent member (agents A): `ownerKey` is Ethan's agent (ethan-ai), which
+ * created the team and so is its admin; `memberKey` is Caden's agent (caden-ai, `@everyone` only).
+ * People's own inboxes and owner-only actions go through web sessions (`ownerWeb`, `memberWeb`).
  */
 
 let ctx: TestContext;
@@ -30,15 +35,19 @@ let owner: UserRow;
 let member: UserRow;
 let ownerKey: string;
 let memberKey: string;
+let ownerWeb: Record<string, string>;
+let memberWeb: Record<string, string>;
 let clients: Client[];
 let events: LiveEvent[];
 
-beforeEach(() => {
+beforeEach(async () => {
   ctx = createTestContext();
-  owner = createUser(ctx.db, { username: 'ethan' });
-  member = createUser(ctx.db, { username: 'caden' });
+  owner = createUser(ctx.db, { username: 'ethan', name: 'Ethan' });
+  member = createUser(ctx.db, { username: 'caden', name: 'Caden' });
   ownerKey = createApiKey(ctx.db, { userId: owner.id, name: 'Claude on laptop' }).key;
   memberKey = createApiKey(ctx.db, { userId: member.id, name: 'Codex' }).key;
+  ownerWeb = web(ctx, await signIn(ctx, owner, 'password123'));
+  memberWeb = web(ctx, await signIn(ctx, member, 'password123'));
   clients = [];
   events = [];
   ctx.deps.events.subscribe((event) => events.push(event));
@@ -49,20 +58,27 @@ afterEach(async () => {
   ctx.close();
 });
 
+/** A request with an API key (as its owner's agent) or with a web session's headers. */
 async function call<T = Record<string, unknown>>(
-  key: string,
+  auth: string | Record<string, string>,
   method: string,
   path: string,
   body?: unknown,
 ): Promise<{ status: number; body: T }> {
-  const init =
-    body === undefined ? { method, headers: bearer(key) } : json(method, body, bearer(key));
+  const headers = typeof auth === 'string' ? bearer(auth) : auth;
+  const init = body === undefined ? { method, headers } : json(method, body, headers);
   const res = await ctx.app.request(`/api${path}`, init);
   return { status: res.status, body: (await res.json()) as T };
 }
 
+/** MCP tools as `user`'s agent member (what an API key acts as). */
 async function mcpAs(user: UserRow) {
-  const actor: Actor = { userId: user.id, source: 'mcp', key: { id: 'key', name: 'Claude' } };
+  const actor: Actor = {
+    userId: createAgent(ctx.db, user.id).id,
+    ownerId: user.id,
+    source: 'mcp',
+    key: { id: 'key', name: 'Claude' },
+  };
   const server = new McpServer({ name: 'baton-test', version: '0.0.0' });
   registerTools(server, { deps: ctx.deps, actor });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
@@ -104,10 +120,12 @@ async function setup() {
 describe('teams ↔ account: deleted teams', () => {
   it('lists a deleted team for its owner, blocks account deletion, and restores through restore_item', async () => {
     const { team } = await setup();
-    expect((await call(ownerKey, 'DELETE', `/teams/${team.id}`)).status).toBe(200);
+    // Agents never own teams: only the owner (on the web) can delete it.
+    expect((await call(ownerKey, 'DELETE', `/teams/${team.id}`)).status).toBe(403);
+    expect((await call(ownerWeb, 'DELETE', `/teams/${team.id}`)).status).toBe(200);
 
     const deleted = await call<{ items: Array<{ id: string; slug: string }> }>(
-      ownerKey,
+      ownerWeb,
       'GET',
       '/me/deleted-teams',
     );
@@ -119,10 +137,9 @@ describe('teams ↔ account: deleted teams', () => {
     expect((await call(memberKey, 'GET', `/teams/${team.id}`)).status).toBe(404);
 
     // The account page's delete is blocked while the owner has the team in Trash.
-    const cookie = await signIn(ctx, owner, 'password123');
     const blocked = await ctx.app.request(
       '/api/me/delete',
-      json('POST', { password: 'password123' }, web(ctx, cookie)),
+      json('POST', { password: 'password123' }, ownerWeb),
     );
     expect(blocked.status).toBe(409);
     const conflict = (await blocked.json()) as {
@@ -130,22 +147,30 @@ describe('teams ↔ account: deleted teams', () => {
     };
     expect(conflict.error.details.teams.map((item) => item.id)).toEqual([team.id]);
 
-    // The admin module's restore_item restores teams through the teams module's Trash handler.
-    const tool = await mcpAs(owner);
-    const restored = await tool('restore_item', { item: team.id });
-    expect(restored).toMatchObject({ type: 'team', id: team.id });
-    expect(restored.url).toBe(`${ctx.env.baseUrl}/t/${team.slug}`);
+    // The admin module's restore_item goes through the teams module's Trash handler, which only
+    // lets the owner restore: their agent can't.
+    await mcpAs(owner);
+    const refused = await clients.at(-1)?.callTool({
+      name: 'restore_item',
+      arguments: { item: team.id },
+    });
+    expect(refused?.isError).toBe(true);
+    const restored = await call<{ id: string }>(ownerWeb, 'POST', '/trash/restore', {
+      type: 'team',
+      id: team.id,
+    });
+    expect(restored.body).toMatchObject({ ok: true, url: `/t/${team.slug}` });
     expect((await call(memberKey, 'GET', `/teams/${team.id}`)).status).toBe(200);
     expect(
-      (await call<{ items: unknown[] }>(ownerKey, 'GET', '/me/deleted-teams')).body.items,
+      (await call<{ items: unknown[] }>(ownerWeb, 'GET', '/me/deleted-teams')).body.items,
     ).toEqual([]);
   });
 
   it('restores from account settings (POST /teams/:id/restore) and tells the owner’s other tabs', async () => {
     const { team } = await setup();
-    await call(ownerKey, 'DELETE', `/teams/${team.id}`);
+    await call(ownerWeb, 'DELETE', `/teams/${team.id}`);
     events.length = 0;
-    const restored = await call<{ id: string }>(ownerKey, 'POST', `/teams/${team.id}/restore`);
+    const restored = await call<{ id: string }>(ownerWeb, 'POST', `/teams/${team.id}/restore`);
     expect(restored.status).toBe(200);
     expect(events.map((event) => event.type)).toEqual(
       expect.arrayContaining(['member.updated', 'me.updated']),
@@ -232,7 +257,8 @@ describe('issues ↔ core and admin', () => {
     expect(created.status).toBe(201);
     const issue = created.body;
 
-    // Replies bump the reply count; the author (auto-subscribed) is notified of the reply.
+    // Replies bump the reply count. The issue's author is Caden's agent, which has no inbox, and
+    // the replies of Ethan's agent reach Ethan only when they mention or answer him.
     expect(
       (
         await call(ownerKey, 'POST', '/replies', {
@@ -248,19 +274,20 @@ describe('issues ↔ core and admin', () => {
       `/projects/${project.id}/issues?q=csv`,
     );
     expect(list.body.items).toEqual([expect.objectContaining({ replyCount: 1 })]);
+    const agentInbox = await call<{ items: unknown[] }>(memberKey, 'GET', '/notifications');
+    expect(agentInbox.body.items).toEqual([]);
     const inbox = await call<{ items: Array<{ type: string }> }>(
-      memberKey,
+      memberWeb,
       'GET',
       '/notifications',
     );
-    expect(inbox.body.items.map((item) => item.type)).toEqual(['reply']);
+    expect(inbox.body.items).toEqual([]);
     const mentioned = await call<{ items: Array<{ type: string }> }>(
-      ownerKey,
+      ownerWeb,
       'GET',
       '/notifications',
     );
-    // BAT-6: the owner's own reply went through their key, so it reaches their inbox too.
-    expect(mentioned.body.items.map((item) => item.type)).toEqual(['reply', 'mention']);
+    expect(mentioned.body.items.map((item) => item.type)).toEqual(['mention']);
     const found = await call<{ results: Array<{ ref: string }> }>(
       ownerKey,
       'GET',
@@ -400,8 +427,9 @@ describe('wave B: issues ↔ tasks ↔ work', () => {
       `/projects/${project.id}/statuses`,
     );
     const done = statuses.body.items.find((status) => status.name === 'Done');
+    // Caden files it himself, so the resolution reaches his inbox.
     const issue = await call<{ id: string; ref: string }>(
-      memberKey,
+      memberWeb,
       'POST',
       `/projects/${project.id}/issues`,
       { title: 'Search ignores accents', body: 'Searching "cafe" misses "café".' },
@@ -439,11 +467,14 @@ describe('wave B: issues ↔ tasks ↔ work', () => {
       resolvedBy: { username: string } | null;
       linkedTasks: Array<{ status: { category: string } }>;
     }>(memberKey, 'GET', `/issues/${issue.body.id}`);
-    expect(resolved.body).toMatchObject({ resolved: true, resolvedBy: { username: 'ethan' } });
+    expect(resolved.body).toMatchObject({
+      resolved: true,
+      resolvedBy: { username: 'ethan-ai', kind: 'agent', agentOwner: { username: 'ethan' } },
+    });
     expect(resolved.body.linkedTasks[0]?.status.category).toBe('done');
 
     const inbox = await call<{ items: Array<{ type: string; title: string; viaKeyName: string }> }>(
-      memberKey,
+      memberWeb,
       'GET',
       '/notifications',
     );
@@ -452,13 +483,11 @@ describe('wave B: issues ↔ tasks ↔ work', () => {
       title: `${issue.body.ref}: Search ignores accents`,
       viaKeyName: 'Claude on laptop',
     });
-    // BAT-6: the owner moved it through a key, so the owner (the task's author) hears too.
+    // Ethan's agent moved it; the task's author is that agent (no inbox), and a resolution is not
+    // something Ethan needs to hear about (`needs_me`).
     expect(
-      events
-        .filter((event) => event.type === 'notification.created')
-        .map((event) => event.userId)
-        .sort(),
-    ).toEqual([member.id, owner.id].sort());
+      events.filter((event) => event.type === 'notification.created').map((event) => event.userId),
+    ).toEqual([member.id]);
     expect(events.map((event) => event.type)).toEqual(
       expect.arrayContaining(['task.updated', 'issue.updated']),
     );
@@ -503,7 +532,7 @@ describe('wave B: issues ↔ tasks ↔ work', () => {
     expect(task.status).toBe(201);
     // One notification per person per change: the assignment covers the mention.
     const afterCreate = await call<{ items: Array<{ type: string; entityId: string }> }>(
-      memberKey,
+      memberWeb,
       'GET',
       '/notifications',
     );
@@ -526,24 +555,21 @@ describe('wave B: issues ↔ tasks ↔ work', () => {
       body: 'Thanks!',
     });
     const inbox = await call<{ items: Array<{ type: string }> }>(
-      memberKey,
+      memberWeb,
       'GET',
       '/notifications',
     );
-    // BAT-6: the member's own "On it." went through their key, so it is in their inbox too.
-    expect(inbox.body.items.map((item) => item.type)).toEqual([
-      'reply',
-      'reply',
-      'role_mention',
-      'assigned',
-    ]);
+    // Replying subscribed Caden's agent, not Caden, and his agent's "On it." is nothing he needs to
+    // hear about (`needs_me`): the replies reach no inbox.
+    expect(inbox.body.items.map((item) => item.type)).toEqual(['role_mention', 'assigned']);
 
-    // The member's agent claims it; My tasks and the dashboard show both facts.
+    // The member's agent claims it; the member's My tasks and dashboard show the assignment, the
+    // agent's dashboard its claim.
     const claim = await call(memberKey, 'POST', `/tasks/${task.body.id}/claim`, {});
     expect(claim.status).toBe(200);
     const mine = await call<{
       items: Array<{ ref: string; assignment: { direct: boolean; roles: Array<{ id: string }> } }>;
-    }>(memberKey, 'GET', '/me/tasks?today=2026-09-25');
+    }>(memberWeb, 'GET', '/me/tasks?today=2026-09-25');
     expect(mine.body.items).toEqual([
       expect.objectContaining({
         ref: task.body.ref,
@@ -552,10 +578,15 @@ describe('wave B: issues ↔ tasks ↔ work', () => {
     ]);
     const dashboard = await call<{
       counts: { assigned: number; overdue: number; claimed: number };
+    }>(memberWeb, 'GET', '/me/dashboard?today=2026-09-25');
+    // "Claimed by you and your agents".
+    expect(dashboard.body.counts).toMatchObject({ assigned: 1, overdue: 1, claimed: 1 });
+    const agentDashboard = await call<{
+      counts: { assigned: number; claimed: number };
       claimed: Array<{ ref: string; claim: { via: { keyName: string } | null } | null }>;
     }>(memberKey, 'GET', '/me/dashboard?today=2026-09-25');
-    expect(dashboard.body.counts).toMatchObject({ assigned: 1, overdue: 1, claimed: 1 });
-    expect(dashboard.body.claimed[0]).toMatchObject({
+    expect(agentDashboard.body.counts).toMatchObject({ assigned: 0, claimed: 1 });
+    expect(agentDashboard.body.claimed[0]).toMatchObject({
       ref: task.body.ref,
       claim: { via: { keyName: 'Codex' } },
     });

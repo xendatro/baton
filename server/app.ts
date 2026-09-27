@@ -90,6 +90,8 @@ export function createApp(options: CreateAppOptions): Hono<AppEnv> {
       status: c.res.status,
       ms: Math.round(performance.now() - started),
       userId: actor?.userId,
+      // The person behind an agent member (agents A).
+      ownerId: actor?.ownerId,
       keyId: actor?.key?.id,
       ua: c.req.header('user-agent')?.slice(0, USER_AGENT_LOG_MAX),
     };

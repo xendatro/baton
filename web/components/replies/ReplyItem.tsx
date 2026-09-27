@@ -67,6 +67,7 @@ export function ReplyItem({ reply, footer }: ReplyItemProps) {
       <ActorAvatar
         user={reply.author}
         agentName={reply.via?.agentName}
+        keyName={reply.via?.keyName}
         size="lg"
         className="mt-0.5"
       />

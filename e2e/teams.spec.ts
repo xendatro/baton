@@ -73,7 +73,9 @@ test('create a team, invite someone, and they join with the link', async ({ page
 
   // The owner sees the new member and the use counted.
   await page.goto(`/t/${slug}/settings/members`);
-  await expect(page.getByText(`@${guest.user.username}`)).toBeVisible();
+  // The guest joined with their agent member (@…-ai), listed on its own row.
+  await expect(page.getByText(new RegExp(`^@${guest.user.username} · joined`))).toBeVisible();
+  await expect(page.getByText(new RegExp(`^@${guest.user.username}-ai · `))).toBeVisible();
   await page.goto(`/t/${slug}/settings/invites`);
   await expect(page.getByRole('row').filter({ hasText: code })).toContainText('1');
   await guest.page.context().close();
@@ -157,7 +159,7 @@ test('roles: create, grant permissions, assign to a member, reorder', async ({ p
   await expect(page).toHaveURL(new RegExp(`/t/${slug}/settings/members$`));
 
   // Grant the role from the members page.
-  await page.getByRole('button', { name: `Edit roles of ${guest.user.name}` }).click();
+  await page.getByRole('button', { name: `Edit roles of ${guest.user.name}`, exact: true }).click();
   await page.getByRole('option', { name: /Navigators/ }).click();
   await expect(page.getByText(`Gave ${guest.user.name} the Navigators role`)).toBeVisible();
   await page.keyboard.press('Escape');

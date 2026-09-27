@@ -34,6 +34,27 @@ describe('notification wording', () => {
     );
   });
 
+  it('names an agent member by its own name, without the key', () => {
+    const agent = {
+      id: 'u9',
+      username: 'ada-ai',
+      name: 'Ada Lovelace AI',
+      image: null,
+      kind: 'agent' as const,
+      agentOwner: ada,
+    };
+    expect(
+      notificationSentence(
+        notification({ type: 'reply', actor: agent, viaKeyName: 'MSI', viaAgentName: 'Claude' }),
+      ),
+    ).toBe('Ada Lovelace AI replied');
+    expect(
+      notificationSentence(
+        notification({ type: 'reply', viaKeyName: 'MSI', viaAgentName: 'Claude' }),
+      ),
+    ).toBe('Claude via Ada Lovelace’s MSI replied');
+  });
+
   it('finds the team and project from the notification', () => {
     const teams = testMe().teams;
     const context = notificationContext(notification(), teams);

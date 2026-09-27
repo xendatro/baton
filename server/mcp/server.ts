@@ -14,7 +14,7 @@ import { registerTools } from './tools';
 
 const INSTRUCTIONS = `Baton is a shared workspace where people and their agents coordinate work.
 Teams contain projects; projects contain issues (forum posts, refs like KEY#51) and tasks (board items, refs like KEY-12).
-You act as the user who owns your API key; everything you change is attributed to them "via" the key.
+You act as the agent member of the person who owns your API key (e.g. Ethan's agent is "Ethan AI", @ethan-ai): everything you write is authored by that agent "via" the key, your permissions never exceed your owner's, and people mention you as @<your username> (see whoami).
 Refs are accepted wherever an entity is expected: team slug, project KEY or team-slug/KEY, task KEY-12, issue KEY#51, username, role slug or name, status or label name. Ids work too.`;
 
 /**

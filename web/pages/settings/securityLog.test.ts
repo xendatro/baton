@@ -111,6 +111,50 @@ describe('describeSecurityEvent', () => {
       },
     );
     expect(describeSecurityEvent(viaKey).details).toEqual(['via Claude on laptop']);
+    const byAgent = entry(
+      'user.profile_updated',
+      {},
+      {
+        changes: { theme: { from: 'dark', to: 'light' } },
+        actor: {
+          user: {
+            id: 'u2',
+            username: 'ada-ai',
+            name: 'Ada AI',
+            image: null,
+            kind: 'agent',
+            agentOwner: { id: 'u1', username: 'ada', name: 'Ada', image: null },
+          },
+          via: { keyId: 'k1', keyName: 'MSI', agentName: 'Claude' },
+          source: 'mcp',
+        },
+      },
+    );
+    expect(describeSecurityEvent(byAgent)).toEqual({
+      kind: 'profile',
+      title: 'Changed your theme to Light',
+      details: ['by Ada AI via MSI'],
+    });
+  });
+
+  it('describes changes to your agent’s settings', () => {
+    const agentEntry = (changes: ActivityEntry['changes']) =>
+      describeSecurityEvent(entry('user.agent_settings_changed', {}, { changes }));
+    expect(agentEntry({ agentPaused: { from: false, to: true } })).toMatchObject({
+      kind: 'agent',
+      title: 'Paused your agent',
+    });
+    expect(agentEntry({ agentPaused: { from: true, to: false } }).title).toBe('Resumed your agent');
+    expect(agentEntry({ agentNotifications: { from: 'needs_me', to: 'all' } }).title).toBe(
+      'Changed agent notifications to everything',
+    );
+    expect(
+      agentEntry({
+        agentPaused: { from: false, to: true },
+        agentNotifications: { from: 'all', to: 'none' },
+      }).title,
+    ).toBe('Paused your agent and changed agent notifications to nothing');
+    expect(agentEntry({}).title).toBe('Changed your agent’s settings');
   });
 });
 

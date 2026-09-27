@@ -414,11 +414,14 @@ export function insertReply(tx: Tx, actor: Actor, prepared: PreparedReply): Repl
   const notified = new Set<string>();
   notifyMentions(tx, actor, target, reply.body, { notified });
   // The author of the answered reply hears about it even without a subscription (like Reddit).
-  if (answered?.authorId) notifyUsers(tx, actor, 'reply', [answered.authorId], target, notified);
+  if (answered?.authorId) {
+    notifyUsers(tx, actor, 'reply', [answered.authorId], target, notified, { direct: true });
+  }
   notifyReply(tx, actor, { type: item.type, id: item.id }, target, notified);
   recordAgentMentions(tx, actor, {
     id: reply.id,
     teamId: item.teamId,
+    projectId: item.projectId,
     parentType: item.type,
     parentId: item.id,
     body: reply.body,
@@ -499,7 +502,14 @@ export function editReply(
     recordAgentMentions(
       tx,
       actor,
-      { id, teamId: item.teamId, parentType: item.type, parentId: item.id, body: next.body },
+      {
+        id,
+        teamId: item.teamId,
+        projectId: item.projectId,
+        parentType: item.type,
+        parentId: item.id,
+        body: next.body,
+      },
       row.body,
     );
     emitAfterCommit(tx, {

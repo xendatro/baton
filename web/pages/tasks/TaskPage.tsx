@@ -22,6 +22,7 @@ import type { Attachment, MeProject, MeTeam } from '@shared/schemas/core';
 import type { Task, UpdateTaskInput } from '@shared/schemas/tasks';
 import { AttachmentList } from '@web/components/attachments/AttachmentList';
 import { AttachmentUploader } from '@web/components/attachments/AttachmentUploader';
+import { AgentBadge } from '@web/components/common/AgentBadge';
 import { BackLink } from '@web/components/common/BackLink';
 import { ConfirmDialog } from '@web/components/common/ConfirmDialog';
 import { DueDate } from '@web/components/common/DueDate';
@@ -59,6 +60,7 @@ import {
 } from '@web/components/ui/dropdown-menu';
 import { Input } from '@web/components/ui/input';
 import { Skeleton } from '@web/components/ui/skeleton';
+import { isAgentUser } from '@web/lib/agentMembers';
 import { errorMessage, isApiError } from '@web/lib/api';
 import { useMe } from '@web/lib/auth';
 import { useHotkey } from '@web/lib/hotkeys';
@@ -516,6 +518,7 @@ function TaskView({ task, team, project }: { task: Task; team: MeTeam; project: 
                         <span key={user.id} className="inline-flex min-w-0 items-center gap-1">
                           <UserAvatar user={user} size="xs" />
                           <span className="truncate">{user.name}</span>
+                          {isAgentUser(user) ? <AgentBadge /> : null}
                         </span>
                       ))}
                       {task.assignees.roles.map((role) => (

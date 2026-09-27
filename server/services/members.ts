@@ -14,7 +14,8 @@ import { clearProjectAccess } from './projectAccess';
 import { requireRole, teamRoles, type RoleRow } from './roles';
 import { unassignFromTasks } from './taskAssignees';
 import { requireTeam } from './teams';
-import { toUserSummary } from './users';
+import { findAgentId } from './agents';
+import { toUserSummaries, userSummaryColumns } from './users';
 
 /**
  * Team members (SPEC §1.3): list with roles, remove (`MANAGE_MEMBERS`, never the owner), leave
@@ -42,13 +43,7 @@ function loadMembers(db: DbExecutor, teamId: string, userIds?: readonly string[]
     .get();
   if (!team) return [];
   const rows = db
-    .select({
-      joinedAt: s.teamMember.joinedAt,
-      id: s.user.id,
-      username: s.user.username,
-      name: s.user.name,
-      image: s.user.image,
-    })
+    .select({ joinedAt: s.teamMember.joinedAt, ...userSummaryColumns })
     .from(s.teamMember)
     .innerJoin(s.user, eq(s.user.id, s.teamMember.userId))
     .where(
@@ -82,16 +77,21 @@ function loadMembers(db: DbExecutor, teamId: string, userIds?: readonly string[]
     rolesOf.set(assignment.userId, list);
   }
 
+  const summaries = new Map(toUserSummaries(db, rows).map((user) => [user.id, user]));
   return rows
-    .map((row): Member => {
+    .flatMap((row): Member[] => {
+      const user = summaries.get(row.id);
+      if (!user) return [];
       const memberRoles = (rolesOf.get(row.id) ?? []).sort((a, b) => b.position - a.position);
-      return {
-        user: toUserSummary(row),
-        joinedAt: row.joinedAt.toISOString(),
-        isOwner: row.id === team.ownerId,
-        roles: memberRoles.map(toMemberRole),
-        color: displayRoleColor(memberRoles),
-      };
+      return [
+        {
+          user,
+          joinedAt: row.joinedAt.toISOString(),
+          isOwner: row.id === team.ownerId,
+          roles: memberRoles.map(toMemberRole),
+          color: displayRoleColor(memberRoles),
+        },
+      ];
     })
     .sort(
       (a, b) =>
@@ -144,7 +144,7 @@ function moderationRefusal(membership: Membership, target: Membership): string |
  * go with the membership (ON DELETE CASCADE). Returns how many task assignments were removed and
  * invites revoked.
  */
-function clearMembership(
+export function clearMembership(
   tx: Tx,
   actor: Actor,
   teamId: string,
@@ -160,6 +160,41 @@ function clearMembership(
   return { unassignedTasks, revokedInvites };
 }
 
+/**
+ * A person leaving or being removed takes their agent member with them (agents A): the agent's
+ * membership is cleared the same way. Returns the agent's username when it was a member.
+ */
+export function clearAgentMembership(
+  tx: Tx,
+  actor: Actor,
+  teamId: string,
+  ownerId: string,
+  reason: 'member_removed' | 'member_left' | 'account_deleted',
+): string | null {
+  const agentId = findAgentId(tx, ownerId);
+  if (!agentId) return null;
+  const member = tx
+    .select({ username: s.user.username })
+    .from(s.teamMember)
+    .innerJoin(s.user, eq(s.user.id, s.teamMember.userId))
+    .where(and(eq(s.teamMember.teamId, teamId), eq(s.teamMember.userId, agentId)))
+    .get();
+  if (!member) return null;
+  unassignFromTasks(tx, actor, teamId, { userId: agentId }, reason);
+  tx.delete(s.teamMember)
+    .where(and(eq(s.teamMember.teamId, teamId), eq(s.teamMember.userId, agentId)))
+    .run();
+  revokeInvitesOf(tx, actor, teamId, agentId);
+  emitAfterCommit(tx, {
+    type: 'member.left',
+    teamId,
+    entityType: 'member',
+    entityId: agentId,
+    actorId: actor.userId,
+  });
+  return member.username ?? '';
+}
+
 /** Removes a member from the team (`MANAGE_MEMBERS`; never the owner or yourself). */
 export function removeMember(
   deps: AppDeps,
@@ -172,6 +207,9 @@ export function removeMember(
   if (userId === actor.userId) {
     throw errors.validation('To remove yourself, leave the team instead');
   }
+  if (userId === actor.ownerId) {
+    throw errors.forbidden('An agent can’t remove the person it works for');
+  }
   const target = requireTarget(orm, teamId, userId);
   const refusal = moderationRefusal(membership, target);
   if (refusal) throw errors.forbidden(refusal);
@@ -179,6 +217,8 @@ export function removeMember(
 
   deps.db.write((tx) => {
     const cleared = clearMembership(tx, actor, teamId, userId, 'member_removed');
+    // Their agent goes with them; an agent removed alone comes back when its owner re-joins.
+    const agent = clearAgentMembership(tx, actor, teamId, userId, 'member_removed');
     recordActivity(tx, actor, {
       teamId,
       entityType: 'member',
@@ -189,6 +229,7 @@ export function removeMember(
         name: member.user.name,
         roles: member.roles.map((role) => role.name),
         ...cleared,
+        ...(agent === null ? {} : { agent }),
       },
     });
     emitAfterCommit(tx, {
@@ -202,33 +243,42 @@ export function removeMember(
   return { ok: true };
 }
 
-/** Leaves the team. The owner must transfer ownership or delete the team first. */
+/**
+ * Leaves the team. The owner must transfer ownership or delete the team first. Membership is the
+ * person's (agents A): through an API key, the key's owner leaves, and their agent always goes
+ * with them.
+ */
 export function leaveTeam(deps: AppDeps, actor: Actor, teamId: string): { ok: true } {
   const { orm } = deps.db;
-  const { membership } = requireTeam(orm, actor, teamId);
+  requireTeam(orm, actor, teamId);
+  const personId = actor.ownerId ?? actor.userId;
+  const membership = getMembership(orm, teamId, personId);
+  if (!membership) throw errors.notFound('Team');
   if (membership.isOwner) {
     throw errors.forbidden('The owner can’t leave the team: transfer ownership or delete it first');
   }
-  const member = loadMember(orm, teamId, actor.userId);
+  const member = loadMember(orm, teamId, personId);
   deps.db.write((tx) => {
-    const cleared = clearMembership(tx, actor, teamId, actor.userId, 'member_left');
+    const cleared = clearMembership(tx, actor, teamId, personId, 'member_left');
+    const agent = clearAgentMembership(tx, actor, teamId, personId, 'member_left');
     recordActivity(tx, actor, {
       teamId,
       entityType: 'member',
-      entityId: actor.userId,
+      entityId: personId,
       action: 'member.left',
       meta: {
         username: member.user.username,
         name: member.user.name,
         roles: member.roles.map((role) => role.name),
         ...cleared,
+        ...(agent === null ? {} : { agent }),
       },
     });
     emitAfterCommit(tx, {
       type: 'member.left',
       teamId,
       entityType: 'member',
-      entityId: actor.userId,
+      entityId: personId,
       actorId: actor.userId,
     });
   });

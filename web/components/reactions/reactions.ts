@@ -1,8 +1,13 @@
 import type { ReactionSummary, Reactor } from '@shared/schemas/core';
+import { isAgentUser } from '@web/lib/agentMembers';
 
-/** "Ethan Ho", or "Claude via Ethan Ho’s MSI" for a reaction an agent added through a key. */
+/**
+ * "Ethan Ho", "Ethan Ho AI" for an agent member, or (older reactions, BAT-6) "Claude via Ethan
+ * Ho’s MSI" for a reaction an agent added through a person's key.
+ */
 export function reactorName(reactor: Reactor): string {
   const { via } = reactor;
+  if (isAgentUser(reactor)) return reactor.name;
   if (via?.agentName) return `${via.agentName} via ${reactor.name}’s ${via.keyName}`;
   if (via) return `${reactor.name} via ${via.keyName}`;
   return reactor.name;

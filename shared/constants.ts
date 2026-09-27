@@ -38,6 +38,9 @@ export const LIMITS = {
   page: { defaultSize: 50, maxSize: 100 },
 } as const;
 
+/** Longest username of anyone: agent members are `<username>-ai` (shared/principals.ts). */
+export const MAX_ANY_USERNAME_LENGTH = LIMITS.username.max + '-ai'.length;
+
 /** API keys look like `bat_` + 40 base62 characters. Only a SHA-256 hash is stored. */
 export const API_KEY = {
   prefix: 'bat_',
@@ -144,6 +147,18 @@ export const DEFAULT_LABEL_COLOR = '#6b7280';
 
 export const THEMES = ['system', 'light', 'dark'] as const;
 export type Theme = (typeof THEMES)[number];
+
+/**
+ * How much of their agent member's activity reaches an owner's inbox (`user.agent_notifications`,
+ * docs/design/agents-and-pipelines.md §1): `all` — whenever the agent's action notifies anyone;
+ * `needs_me` — only when it mentions, assigns or answers the owner; `none` — never.
+ */
+export const AGENT_NOTIFICATION_LEVELS = ['all', 'needs_me', 'none'] as const;
+export type AgentNotificationLevel = (typeof AGENT_NOTIFICATION_LEVELS)[number];
+
+/** Kinds of users: people, and the agent member every person has. */
+export const USER_KINDS = ['human', 'agent'] as const;
+export type UserKind = (typeof USER_KINDS)[number];
 
 /** Where a mutation came from (stored on every `activity` row). */
 export const ACTOR_SOURCES = ['web', 'mcp', 'api', 'system'] as const;

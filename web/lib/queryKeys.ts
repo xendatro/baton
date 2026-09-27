@@ -128,5 +128,7 @@ export const queryKeys = {
     connections: () => ['account', 'connections'] as const,
     securityLog: () => ['account', 'security-log'] as const,
     deletedTeams: () => ['account', 'deleted-teams'] as const,
+    /** Your agent member and its settings (`GET /api/me/agent`). */
+    agent: () => ['account', 'agent'] as const,
   },
 };

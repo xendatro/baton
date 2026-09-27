@@ -11,6 +11,7 @@ import { errors } from './lib/errors';
 import { validateJson } from './lib/validate';
 import {
   bearer,
+  createAgent,
   createApiKey,
   createTestContext,
   createUser,
@@ -254,10 +255,11 @@ describe('request log (LOG-01)', () => {
     return dir;
   }
 
-  it('names the user, key, client IP and user agent of each request', async () => {
+  it('names the user (the key owner’s agent and its owner), key, client IP and user agent', async () => {
     const { context, app, requests } = loggedApp();
     const user = createUser(context.db);
     const { apiKey, key } = createApiKey(context.db, { userId: user.id });
+    const agent = createAgent(context.db, user.id);
     await app.request('/api/me', {
       headers: { ...bearer(key), 'CF-Connecting-IP': '203.0.113.9', 'User-Agent': 'agent/1.0' },
     });
@@ -265,7 +267,8 @@ describe('request log (LOG-01)', () => {
       expect.objectContaining({
         level: 30,
         status: 200,
-        userId: user.id,
+        userId: agent.id,
+        ownerId: user.id,
         keyId: apiKey.id,
         ip: '203.0.113.9',
         ua: 'agent/1.0',

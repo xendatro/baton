@@ -1,5 +1,4 @@
 import { z } from 'zod';
-import { agentHandle } from '@shared/agents';
 import {
   type ActivityEntityType,
   ACTIVITY_ENTITY_TYPES,
@@ -40,7 +39,7 @@ import {
 } from '../../services/replies';
 import { search } from '../../services/search';
 import { setSubscription } from '../../services/subscriptions';
-import { getMe } from '../../services/users';
+import { getMe, getUserSummaries } from '../../services/users';
 import {
   qualifyRef,
   resolveItemRef,
@@ -84,27 +83,29 @@ const whoami = defineTool({
   name: 'whoami',
   title: 'Who am I',
   description:
-    'The user this API key acts for, the key itself, and the teams (with your permissions) and projects you can access. Call this first to learn team slugs and project keys (and the upload size limit).',
+    'Who you are: the agent member this API key acts as (e.g. "Ethan AI", @ethan-ai) and the person who owns it, the key itself, and the teams (with your permissions, never more than your owner\'s) and projects you can access. Call this first to learn team slugs and project keys (and the upload size limit).',
   input: toolInput({}),
   annotations: { readOnlyHint: true },
   handler: (ctx) => {
     const me = getMe(ctx.deps, ctx.actor);
+    const owner = ctx.actor.ownerId
+      ? getUserSummaries(ctx.deps.db.orm, [ctx.actor.ownerId]).get(ctx.actor.ownerId)
+      : undefined;
     return {
       user: {
         id: me.user.id,
         username: me.user.username,
         name: me.user.name,
-        email: me.user.email,
+        kind: owner ? 'agent' : 'human',
+        // `@ethan-ai` in a reply reaches you: see wait_for_mentions.
+        mentionHandle: me.user.username ? `@${me.user.username}` : null,
       },
+      owner: owner ? { id: owner.id, username: owner.username, name: owner.name } : null,
       via: ctx.actor.key
         ? {
             keyId: ctx.actor.key.id,
             keyName: ctx.actor.key.name,
             agentName: ctx.actor.key.agentName ?? null,
-            // `@claude` in a reply on an item you replied to or created: see wait_for_mentions.
-            mentionHandle: ctx.actor.key.agentName
-              ? `@${agentHandle(ctx.actor.key.agentName)}`
-              : null,
           }
         : null,
       teams: me.teams.map((team) => ({
@@ -122,7 +123,8 @@ const whoami = defineTool({
           url: toAbsolute(ctx.deps, appPaths.project(team.slug, project.key)),
         })),
       })),
-      unreadNotifications: me.unreadNotifications,
+      // Agents have no inbox: mentions reach you through wait_for_mentions.
+      unreadNotifications: owner ? 0 : me.unreadNotifications,
       limits: { maxUploadMb: ctx.deps.env.maxUploadMb },
     };
   },
@@ -167,7 +169,8 @@ const searchTool = defineTool({
 const listNotificationsTool = defineTool({
   name: 'list_notifications',
   title: 'List notifications',
-  description: 'Your inbox, newest first: mentions, assignments, replies, resolutions.',
+  description:
+    "Your inbox, newest first: mentions, assignments, replies, resolutions. Agent members have no inbox (their owner's stays private), so through an API key this is empty: use wait_for_mentions to hear when someone @mentions you.",
   input: toolInput({
     unreadOnly: z.boolean().default(false).describe('Only unread notifications'),
     limit: z.number().int().min(1).max(LIMITS.page.maxSize).default(20).describe('Page size'),
@@ -180,7 +183,15 @@ const listNotificationsTool = defineTool({
       limit: input.limit,
       cursor: input.cursor,
     });
-    return { items: withAbsoluteUrls(ctx.deps, page.items), nextCursor: page.nextCursor };
+    return {
+      items: withAbsoluteUrls(ctx.deps, page.items),
+      nextCursor: page.nextCursor,
+      ...(ctx.actor.ownerId
+        ? {
+            note: 'Agent members have no inbox. Use wait_for_mentions to hear when someone @mentions you.',
+          }
+        : {}),
+    };
   },
 });
 
@@ -583,7 +594,7 @@ const waitForMentionsTool = defineTool({
   name: 'wait_for_mentions',
   title: 'Wait for mentions',
   description:
-    'Waits until someone @mentions your agent (e.g. @claude; `whoami` shows your handle) in a reply on a task or issue you replied to or created, and returns those replies (each one once). Returns at once when mentions are pending; otherwise waits up to timeoutSeconds. Call it again to keep listening.',
+    'Waits until someone @mentions you (your agent member, e.g. @ethan-ai; `whoami` shows your handle) in a reply on a task or issue, and returns those replies (each one once per API key). Returns at once when mentions are pending; otherwise waits up to timeoutSeconds. Call it again to keep listening.',
   input: toolInput({
     timeoutSeconds: z
       .number()

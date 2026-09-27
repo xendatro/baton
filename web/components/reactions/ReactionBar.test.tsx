@@ -34,6 +34,17 @@ describe('reaction helpers', () => {
   it('names agents as "Claude via Ethan’s MSI" and the viewer as "You"', () => {
     expect(reactorName(claude)).toBe('Claude via Ethan’s MSI');
     expect(reactorName({ ...grace, via: { keyId: 'k2', keyName: 'CI' } })).toBe('Grace via CI');
+    expect(
+      reactorName({
+        id: 'u4',
+        username: 'ethan-ai',
+        name: 'Ethan AI',
+        image: null,
+        kind: 'agent',
+        agentOwner: { id: 'u3', username: 'ethan', name: 'Ethan', image: null },
+        via: { keyId: 'k1', keyName: 'MSI', agentName: 'Claude' },
+      }),
+    ).toBe('Ethan AI');
     expect(reactorsLabel(reactions[0]!, 'u1')).toBe(
       'Grace, You, Claude via Ethan’s MSI reacted with 🔥',
     );

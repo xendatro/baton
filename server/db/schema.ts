@@ -24,6 +24,7 @@ import {
 } from 'drizzle-orm/sqlite-core';
 import {
   ACTIVITY_ENTITY_TYPES,
+  AGENT_NOTIFICATION_LEVELS,
   ACTOR_SOURCES,
   ATTACHMENT_PARENT_TYPES,
   ISSUE_LINK_KINDS,
@@ -33,6 +34,7 @@ import {
   STATUS_CATEGORIES,
   SUBSCRIBABLE_TYPES,
   THEMES,
+  USER_KINDS,
   type PriorityValue,
 } from '../../shared/constants';
 import type { Permission } from '../../shared/permissions';
@@ -76,11 +78,15 @@ export const user = sqliteTable('user', {
   displayUsername: text('display_username'),
   theme: text('theme', { enum: THEMES }).default('system').notNull(),
   /** `agent`: the AI member of `agentOwnerId` (docs/design/agents-and-pipelines.md §1). */
-  kind: text('kind', { enum: ['human', 'agent'] })
-    .default('human')
-    .notNull(),
+  kind: text('kind', { enum: USER_KINDS }).default('human').notNull(),
   /** For agents: the human who owns it (one agent per human). */
   agentOwnerId: text('agent_owner_id').unique(),
+  /** Humans: when they paused their agent (its writes are refused while set). */
+  agentPausedAt: integer('agent_paused_at', { mode: 'timestamp_ms' }),
+  /** Humans: how much of their agent's activity reaches their inbox. */
+  agentNotifications: text('agent_notifications', { enum: AGENT_NOTIFICATION_LEVELS })
+    .default('needs_me')
+    .notNull(),
 });
 
 export const session = sqliteTable(
@@ -204,6 +210,8 @@ export const team = sqliteTable(
     ownerId: text('owner_id')
       .notNull()
       .references(() => user.id, { onDelete: 'restrict' }),
+    /** "Pause all agents": agent members' writes in the team are refused while set. */
+    agentsPausedAt: timestamp('agents_paused_at'),
     createdAt: createdAtColumn(),
     updatedAt: updatedAtColumn(),
     ...softDeleteColumns(),
@@ -338,6 +346,8 @@ export const project = sqliteTable(
     /** Last task number handed out. */
     taskSeq: integer('task_seq').notNull().default(0),
     createdById: text('created_by_id').references(() => user.id, { onDelete: 'set null' }),
+    /** "Pause all agents" of the project: agent members' writes in it are refused while set. */
+    agentsPausedAt: timestamp('agents_paused_at'),
     createdAt: createdAtColumn(),
     updatedAt: updatedAtColumn(),
     ...softDeleteColumns(),

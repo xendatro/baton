@@ -11,6 +11,7 @@ import type { Actor } from '../context';
 import * as s from '../db/schema';
 import {
   addMember,
+  createAgent,
   bearer,
   createApiKey,
   createIssue,
@@ -19,6 +20,7 @@ import {
   createTeam,
   createTestContext,
   createUser,
+  giveAgentOwnerRoles,
   json,
   type CreatedProject,
   type CreatedTeam,
@@ -48,6 +50,8 @@ beforeEach(() => {
   project = createProject(ctx.db, { teamId: team.team.id, key: 'API' });
   ownerKey = createApiKey(ctx.db, { userId: owner.id, name: 'Owner script' }).key;
   miaKey = createApiKey(ctx.db, { userId: mia.id, name: 'Mia script' }).key;
+  // Keys act as their owner's agent (agents A); the owner's agent administers the team with him.
+  giveAgentOwnerRoles(ctx.db, owner.id);
 });
 
 afterEach(() => {
@@ -158,10 +162,21 @@ describe('POST /api/trash/restore', () => {
     );
     expect(forbidden.status).toBe(403);
 
+    // Mia's key acts as her agent: it needs the role too (and Mia must have it, as the cap).
     const role = createRole(ctx.db, { teamId: team.team.id, permissions: ['MANAGE_TRASH'] });
+    const miaAgent = createAgent(ctx.db, mia.id);
     ctx.db.orm
       .insert(s.memberRole)
       .values({ teamId: team.team.id, userId: mia.id, roleId: role.id })
+      .run();
+    const capped = await ctx.app.request(
+      '/api/trash/restore',
+      json('POST', { type: 'reply', id: reply.id }, bearer(miaKey)),
+    );
+    expect(capped.status).toBe(403);
+    ctx.db.orm
+      .insert(s.memberRole)
+      .values({ teamId: team.team.id, userId: miaAgent.id, roleId: role.id })
       .run();
     const allowed = await ctx.app.request(
       '/api/trash/restore',

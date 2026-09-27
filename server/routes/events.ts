@@ -55,7 +55,8 @@ eventRoutes.get('/events', (c) => {
     /** False (and the stream ends) once the credential is no longer valid. */
     const stillAuthorized = () => {
       if (closed) return false;
-      if (isCredentialActive(deps, actor.userId, credential)) return true;
+      // Keys belong to the person, even when the stream is their agent's (agents A).
+      if (isCredentialActive(deps, actor.ownerId ?? actor.userId, credential)) return true;
       finish();
       return false;
     };

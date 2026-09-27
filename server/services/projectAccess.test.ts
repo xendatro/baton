@@ -29,6 +29,7 @@ import {
   createTeam,
   createTestContext,
   createUser,
+  giveAgentOwnerRoles,
   json,
   type CreatedProject,
   type CreatedTeam,
@@ -41,6 +42,7 @@ import { userEventFilter } from './events';
 import { createIssue } from './issues';
 import { removeMember } from './members';
 import { listMyTasks } from './myWork';
+import { listNotifications } from './notifications';
 import {
   assignProjectRole,
   createProjectRole,
@@ -367,13 +369,9 @@ describe('hidden projects (no VIEW_PROJECT)', () => {
       parentId: issue.id,
       body: 'again @bob',
     });
-    const { key } = createApiKey(ctx.db, { userId: bob.id });
+    // People's inboxes: a key acts as the agent, which has none (agents A), so read it directly.
     const count = async () =>
-      (
-        (await (await ctx.app.request('/api/notifications', { headers: bearer(key) })).json()) as {
-          items: unknown[];
-        }
-      ).items.length;
+      Promise.resolve(listNotifications(ctx.deps, actorOf(bob), { limit: 50 }).items.length);
     expect(await count()).toBeGreaterThan(0);
     hide(api.project.id, bob);
     expect(await count()).toBe(0);
@@ -383,6 +381,7 @@ describe('hidden projects (no VIEW_PROJECT)', () => {
 describe('project roles', () => {
   async function request(user: UserRow, method: string, url: string, body?: unknown) {
     const { key } = createApiKey(ctx.db, { userId: user.id });
+    giveAgentOwnerRoles(ctx.db, user.id); // the key acts as the agent (agents A)
     return ctx.app.request(
       url,
       body === undefined ? { method, headers: bearer(key) } : json(method, body, bearer(key)),
@@ -521,6 +520,7 @@ describe('project roles', () => {
 describe('permission overrides API', () => {
   it('sets, lists and removes overrides of project-level permissions only', async () => {
     const { key } = createApiKey(ctx.db, { userId: owner.id });
+    giveAgentOwnerRoles(ctx.db, owner.id); // the key acts as the agent (agents A)
     const url = `/api/projects/${api.project.id}/permissions`;
     const put = (body: unknown) =>
       ctx.app.request(`${url}/overrides`, json('PUT', body, bearer(key)));

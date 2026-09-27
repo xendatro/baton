@@ -8,6 +8,7 @@ import { errors } from '../lib/errors';
 import { newId } from '../lib/ids';
 import { appPaths } from '../lib/urls';
 import { requirePermission, requireProjectAccess, type Membership } from './access';
+import { assertAgentsNotPaused } from './agents';
 import { emitAfterCommit } from './events';
 import { findItem, requireItem, type ItemInfo } from './items';
 import { getUserSummaries, getViaKeys } from './users';
@@ -182,6 +183,8 @@ export function addReaction(deps: AppDeps, actor: Actor, input: ReactionInput): 
   const { orm } = deps.db;
   const resolved = resolveTarget(deps, actor, input);
   requirePermission(resolved.membership, 'REPLY', "You don't have permission to react here");
+  // Reactions record no activity, so the agent pause is checked here (agents A).
+  assertAgentsNotPaused(orm, actor, resolved.item.teamId, resolved.item.projectId);
   if (findOwnReaction(orm, actor, input)) return result(deps, actor, input, resolved);
 
   deps.db.write((tx) => {
@@ -231,6 +234,7 @@ export function addReaction(deps: AppDeps, actor: Actor, input: ReactionInput): 
  */
 export function removeReaction(deps: AppDeps, actor: Actor, input: ReactionInput): ReactionResult {
   const resolved = resolveTarget(deps, actor, input);
+  assertAgentsNotPaused(deps.db.orm, actor, resolved.item.teamId, resolved.item.projectId);
   if (findOwnReaction(deps.db.orm, actor, input)) {
     deps.db.write((tx) => {
       const removed = tx

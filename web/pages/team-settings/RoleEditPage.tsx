@@ -25,6 +25,7 @@ import { BackLink } from '@web/components/common/BackLink';
 import { ConfirmDialog } from '@web/components/common/ConfirmDialog';
 import { EmptyState } from '@web/components/common/EmptyState';
 import { ErrorState } from '@web/components/common/ErrorState';
+import { AgentBadge } from '@web/components/common/AgentBadge';
 import { UserAvatar } from '@web/components/common/UserAvatar';
 import { ColorPicker } from '@web/components/pickers/ColorPicker';
 import { Badge } from '@web/components/ui/badge';
@@ -34,6 +35,7 @@ import { Skeleton } from '@web/components/ui/skeleton';
 import { Switch } from '@web/components/ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@web/components/ui/tabs';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@web/components/ui/tooltip';
+import { agentOwnerLabel, isAgentUser } from '@web/lib/agentMembers';
 import { errorMessage } from '@web/lib/api';
 import { readableTextColor } from '@web/lib/colors';
 import { pluralize } from '@web/lib/format';
@@ -688,17 +690,23 @@ function MembersTab({
               <li key={member.user.id} className="flex items-center gap-3 px-4 py-2.5">
                 <UserAvatar user={member.user} size="lg" />
                 <div className="min-w-0 flex-1">
-                  <p
-                    className="truncate text-sm font-medium"
-                    style={
-                      member.color
-                        ? { color: readableTextColor(member.color, resolvedTheme) }
-                        : undefined
-                    }
-                  >
-                    {member.user.name}
+                  <p className="flex min-w-0 items-center gap-1.5 text-sm font-medium">
+                    <span
+                      className="truncate"
+                      style={
+                        member.color
+                          ? { color: readableTextColor(member.color, resolvedTheme) }
+                          : undefined
+                      }
+                    >
+                      {member.user.name}
+                    </span>
+                    {isAgentUser(member.user) ? <AgentBadge /> : null}
                   </p>
-                  <p className="truncate text-xs text-muted-foreground">@{member.user.username}</p>
+                  <p className="truncate text-xs text-muted-foreground">
+                    @{member.user.username}
+                    {isAgentUser(member.user) ? ` · ${agentOwnerLabel(member.user)}` : null}
+                  </p>
                 </div>
                 {refusal === null ? (
                   <Button

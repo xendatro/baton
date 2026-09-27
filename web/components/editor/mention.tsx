@@ -2,8 +2,9 @@ import type { JSONContent, MarkdownToken } from '@tiptap/core';
 import Mention from '@tiptap/extension-mention';
 import { UsersIcon } from 'lucide-react';
 import type { RoleSummary, UserSummary } from '@shared/schemas/core';
-import { AgentMark } from '@web/components/common/AgentAvatar';
+import { AgentBadge } from '@web/components/common/AgentBadge';
 import { UserAvatar } from '@web/components/common/UserAvatar';
+import { isAgentUser } from '@web/lib/agentMembers';
 import {
   EVERYONE_SLUG,
   formatMention,
@@ -15,26 +16,24 @@ import type { SuggestionItem } from './SuggestionMenu';
 import { suggestionRenderer } from './suggestionRenderer';
 
 /**
- * `@` mentions of people, roles and agents. In markdown they are `@username`, `@&role-slug`,
- * `@everyone` and `@agent-handle` (web/lib/mentions.ts); in the editor they are atomic chips.
+ * `@` mentions of people (and agent members), roles and everyone. In markdown they are
+ * `@username` (`@ethan-ai` for an agent), `@&role-slug` and `@everyone` (web/lib/mentions.ts); in
+ * the editor they are atomic chips.
  */
 
 /**
- * An agent that took part in a thread (BAT-12), offered as `@handle`: a reply naming it wakes the
- * agent's keys that replied to or created the item (`wait_for_mentions`).
+ * An agent member that took part in a thread (BAT-12, agents A), offered first as `@ethan-ai`.
  */
 export interface MentionAgent {
-  /** "Claude". */
-  name: string;
-  /** "claude" (`agentHandle`). */
-  handle: string;
-  /** The keys it wrote through, e.g. "Ethan’s MSI". */
-  keys: string[];
+  /** The agent member ("Ethan AI", `ethan-ai`). */
+  user: UserSummary;
+  /** The harness of its latest write in the thread ("Claude"), for the logo; null: generic. */
+  agentName: string | null;
 }
 
 export interface MentionItem extends SuggestionItem {
   kind: MentionKind;
-  /** Username, role slug or agent handle. */
+  /** Username or role slug. */
   id: string;
   label: string;
   user?: UserSummary;
@@ -66,20 +65,20 @@ export function toMentionItems(users: readonly UserSummary[], roles: readonly Ro
   ];
 }
 
-/**
- * The thread's agents whose name or handle contains `query`, as `@handle` user mentions (a
- * handle is a reserved username, so it serializes and parses like one).
- */
+/** The thread's agent members whose name or username contains `query`, as user mentions. */
 export function toAgentMentionItems(agents: readonly MentionAgent[], query: string) {
   const q = query.trim().toLowerCase();
   return agents
-    .filter((agent) => agent.handle.includes(q) || agent.name.toLowerCase().includes(q))
+    .filter(
+      ({ user }) => user.username.toLowerCase().includes(q) || user.name.toLowerCase().includes(q),
+    )
     .map((agent): MentionItem => ({
-      key: `agent:${agent.handle}`,
+      key: `agent:${agent.user.id}`,
       group: 'Agents',
       kind: 'user',
-      id: agent.handle,
-      label: agent.handle,
+      id: agent.user.username,
+      label: agent.user.username,
+      user: agent.user,
       agent,
     }));
 }
@@ -174,21 +173,11 @@ export function createMention(source: MentionSource | null) {
         label: 'Mention someone',
         emptyText: source ? 'No one matches.' : 'Mentions are unavailable here.',
         renderItem: (item) =>
-          item.agent ? (
+          item.user ? (
             <>
-              <AgentMark agentName={item.agent.name} className="size-5 shrink-0" />
-              <span className="min-w-0 truncate">
-                {item.agent.name}{' '}
-                <span className="text-muted-foreground">(via {item.agent.keys.join(', ')})</span>
-              </span>
-              <span className="ml-auto shrink-0 text-xs text-muted-foreground">
-                @{item.agent.handle}
-              </span>
-            </>
-          ) : item.user ? (
-            <>
-              <UserAvatar user={item.user} size="sm" />
+              <UserAvatar user={item.user} agentName={item.agent?.agentName} size="sm" />
               <span className="truncate">{item.user.name}</span>
+              {isAgentUser(item.user) ? <AgentBadge /> : null}
               <span className="ml-auto truncate text-xs text-muted-foreground">
                 @{item.user.username}
               </span>

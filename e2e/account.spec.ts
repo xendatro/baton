@@ -133,7 +133,8 @@ test('creates an API key, shows it once with agent setup, and revokes it', async
   const script = await newClient(playwright.request, { Authorization: `Bearer ${key}` });
   try {
     const me = await script.get('/api/me');
-    expect(meResponseSchema.parse(await me.json()).user.username).toBe(user.username);
+    // The key acts as the user's agent member (agents A).
+    expect(meResponseSchema.parse(await me.json()).user.username).toBe(`${user.username}-ai`);
 
     await page.getByRole('button', { name: 'Revoke Claude on laptop' }).click();
     await page.getByRole('alertdialog').getByRole('button', { name: 'Revoke key' }).click();
@@ -143,6 +144,46 @@ test('creates an API key, shows it once with agent setup, and revokes it', async
   } finally {
     await script.dispose();
   }
+});
+
+// Agents A: Settings → Agent shows the user's agent member, pauses it (its keys can read but not
+// write) and chooses how much of its activity reaches the inbox.
+test('pauses the agent from Settings → Agent', async ({ page, playwright }) => {
+  const user = await signedInUser(page);
+  const created = await page.request.post('/api/me/api-keys', {
+    data: { name: 'Claude on laptop' },
+    headers: ORIGIN,
+  });
+  expect(created.status(), await created.text()).toBe(201);
+  const { key } = (await created.json()) as { key: string };
+
+  await page.goto('/settings/agent');
+  await expect(page.getByText(`${user.name} AI`, { exact: true })).toBeVisible();
+  await expect(page.getByText(`@${user.username}-ai`)).toBeVisible();
+  await expect(page.getByRole('radio', { name: 'Only what needs you' })).toBeChecked();
+
+  const script = await newClient(playwright.request, { Authorization: `Bearer ${key}` });
+  try {
+    await page.getByRole('switch', { name: 'Pause your agent' }).click();
+    await expect(page.getByRole('switch', { name: 'Pause your agent' })).toBeChecked();
+    expect((await script.get('/api/me')).status()).toBe(200);
+    const refused = await script.post('/api/teams', { data: { name: 'Agent team' } });
+    expect(refused.status()).toBe(423);
+    expect(((await refused.json()) as { error: { code: string } }).error.code).toBe(
+      'agents_paused',
+    );
+
+    await page.getByRole('switch', { name: 'Pause your agent' }).click();
+    await expect(page.getByRole('switch', { name: 'Pause your agent' })).not.toBeChecked();
+    expect((await script.post('/api/teams', { data: { name: 'Agent team' } })).status()).toBe(201);
+  } finally {
+    await script.dispose();
+  }
+
+  await page.getByRole('radio', { name: 'Everything' }).click();
+  await expect(page.getByText('Agent notifications saved')).toBeVisible();
+  await page.reload();
+  await expect(page.getByRole('radio', { name: 'Everything' })).toBeChecked();
 });
 
 test('changes the password, signs out other sessions and logs it all', async ({

@@ -105,6 +105,16 @@ describe('errors', () => {
     });
     expect(errorFromResponse(413, undefined).code).toBe('payload_too_large');
     expect(errorFromResponse(429, undefined).code).toBe('rate_limited');
+    expect(errorFromResponse(423, undefined).code).toBe('agents_paused');
+  });
+
+  it('keeps the server’s message for paused agents', () => {
+    const message = 'Ethan AI is paused. Its API keys can read but not write.';
+    expect(errorFromResponse(423, { error: { code: 'agents_paused', message } })).toMatchObject({
+      code: 'agents_paused',
+      status: 423,
+      message,
+    });
   });
 
   it('reports network failures', async () => {

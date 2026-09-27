@@ -179,6 +179,8 @@ export const projectSchema = projectSummarySchema.extend({
   statuses: z.array(statusSchema),
   /** Alphabetical. */
   labels: z.array(labelSchema),
+  /** "Pause all agents" (agents A): agent members' writes in the project are refused since then. */
+  agentsPausedAt: timestampSchema.nullable().optional(),
 });
 export type Project = z.infer<typeof projectSchema>;
 
@@ -221,6 +223,8 @@ export const updateProjectInputSchema = z
      * the new README are attached automatically.
      */
     attachmentIds: z.array(idSchema).max(LIMITS.attachmentsPerItem).optional(),
+    /** Pause (true) or resume (false) every agent member's writes in the project. */
+    agentsPaused: z.boolean().optional(),
   })
   .refine((value) => Object.values(value).some((field) => field !== undefined), {
     message: 'Nothing to update',

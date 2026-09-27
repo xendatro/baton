@@ -52,7 +52,7 @@ web/
   components/layout/    app shell, sidebar, header
   pages/<area>/         one folder per feature area
 e2e/                    playwright specs
-desktop/                the Electron desktop app (own package: `cd desktop && npm run check`)
+desktop/                the Electron app: wraps the web app, adds the runner (own package: `cd desktop && npm run check`)
 ```
 
 The registration files (`server/routes/index.ts`, `server/mcp/tools/index.ts`, `server/jobs/index.ts`,
@@ -136,6 +136,10 @@ Add a `JobDefinition` (`{ name, schedule, run(deps) }`) to your module's list in
 `server/jobs/<file>.ts`. Jobs act as the system: `actor` is null or `source: 'system'` in activity.
 
 ## Web conventions
+
+- **Parity with the desktop app:** the desktop app shows this web app, so every feature is built once
+  here and works in both. Desktop-only pages (they need the computer: runner, folders, harnesses)
+  live in `web/pages/desktop/` and use `web/lib/desktop.ts`.
 
 - **Pages:** `web/router.tsx` already declares every route, each pointing at a placeholder in
   `web/pages/<area>/`. Replace the placeholder's contents and keep its default export. For a new

@@ -4,6 +4,10 @@ import {
   InboxIcon,
   ListChecksIcon,
   MonitorDownIcon,
+  BotIcon,
+  FolderIcon,
+  TerminalIcon,
+  SettingsIcon,
   PlusIcon,
   SearchIcon,
   type LucideIcon,
@@ -40,6 +44,7 @@ import {
   useSidebar,
 } from '@web/components/ui/sidebar';
 import { useMe } from '@web/lib/auth';
+import { isDesktopApp, useDesktopState } from '@web/lib/desktop';
 import { runShellAction, useShellActionAvailable } from '@web/lib/shellActions';
 import { LogoMark } from './Logo';
 import { useUnreadCount } from './useUnreadCount';
@@ -170,6 +175,7 @@ export function AppSidebar() {
   const { pathname } = useLocation();
   const me = useMe();
   const unread = useUnreadCount();
+  const desktop = isDesktopApp();
   const canCreateTeam = useShellActionAvailable('team.create');
   const { setOpenMobile } = useSidebar();
   const teams = me.data?.teams ?? [];
@@ -237,15 +243,18 @@ export function AppSidebar() {
                   active={pathname === '/'}
                   shortcut="g d"
                 />
-                <NavLink
-                  to="/download"
-                  label="Desktop app"
-                  icon={MonitorDownIcon}
-                  active={pathname === '/download'}
-                />
+                {desktop ? null : (
+                  <NavLink
+                    to="/download"
+                    label="Desktop app"
+                    icon={MonitorDownIcon}
+                    active={pathname === '/download'}
+                  />
+                )}
               </SidebarMenu>
             </SidebarGroupContent>
           </SidebarGroup>
+          {desktop ? <ThisComputer pathname={pathname} /> : null}
           <SidebarGroup>
             <SidebarGroupLabel>Teams</SidebarGroupLabel>
             <SidebarGroupContent>
@@ -292,5 +301,47 @@ export function AppSidebar() {
       </nav>
       <SidebarRail />
     </Sidebar>
+  );
+}
+
+/** The desktop app's own pages (BAT-26), only inside the Baton desktop app. */
+function ThisComputer({ pathname }: { pathname: string }) {
+  const { state } = useDesktopState();
+  const running = state?.runner?.jobs.length ?? 0;
+  return (
+    <SidebarGroup>
+      <SidebarGroupLabel>This computer</SidebarGroupLabel>
+      <SidebarGroupContent>
+        <SidebarMenu>
+          <NavLink
+            to="/desktop"
+            label="Running agents"
+            icon={BotIcon}
+            active={pathname === '/desktop'}
+            badge={running}
+          />
+          <NavLink
+            to="/desktop/folders"
+            label="Folders"
+            icon={FolderIcon}
+            active={pathname === '/desktop/folders'}
+          />
+          <NavLink
+            to="/desktop/harnesses"
+            label="Harnesses"
+            icon={TerminalIcon}
+            active={pathname === '/desktop/harnesses'}
+          />
+          {state && !state.connected ? (
+            <NavLink
+              to="/desktop/setup"
+              label="Set up this computer"
+              icon={SettingsIcon}
+              active={pathname === '/desktop/setup'}
+            />
+          ) : null}
+        </SidebarMenu>
+      </SidebarGroupContent>
+    </SidebarGroup>
   );
 }

@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; form-action baton-desktop:"
+    />
+    <title>Baton</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        font-family: system-ui, sans-serif;
+      }
+      body {
+        display: grid;
+        place-items: center;
+        min-height: 100vh;
+        margin: 0;
+        background: Canvas;
+        color: CanvasText;
+      }
+      main {
+        max-width: 440px;
+        padding: 24px;
+        text-align: center;
+      }
+      p {
+        color: GrayText;
+      }
+      input {
+        width: 100%;
+        box-sizing: border-box;
+        padding: 8px 10px;
+        border-radius: 8px;
+        border: 1px solid GrayText;
+        font: inherit;
+      }
+      button {
+        margin-top: 12px;
+        padding: 8px 16px;
+        border-radius: 8px;
+        border: none;
+        background: #4f46e5;
+        color: white;
+        font: inherit;
+        cursor: pointer;
+      }
+      details {
+        margin-top: 24px;
+        text-align: left;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Can’t reach Baton</h1>
+      <p id="reason">Check your connection. Your agent keeps working on this computer.</p>
+      <form action="baton-desktop://retry" method="get">
+        <button type="submit">Try again</button>
+      </form>
+      <details>
+        <summary>Use another Baton server</summary>
+        <form action="baton-desktop://server" method="get">
+          <label for="url">Server address</label>
+          <input
+            id="url"
+            name="url"
+            type="url"
+            placeholder="https://www.passthebaton.dev"
+            required
+          />
+          <button type="submit">Connect</button>
+        </form>
+      </details>
+    </main>
+    <script>
+      const params = new URLSearchParams(location.search);
+      if (params.get('server')) document.getElementById('url').value = params.get('server');
+      if (params.get('error'))
+        document.getElementById('reason').textContent =
+          `${params.get('error')}. Your agent keeps working on this computer.`;
+    </script>
+  </body>
+</html>

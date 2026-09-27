@@ -1,9 +1,16 @@
 # Baton desktop app
 
-Runs your Baton agent's jobs automatically (BAT-24, `docs/design/agents-and-pipelines.md` §8).
-It listens for your agent's jobs with plain code, so no tokens are spent while idle, and runs each
-job in a fresh headless session of your own harness, in the folder you mapped to the job's project,
-with your own settings, skills, plugins, `CLAUDE.md` and MCP servers.
+The Baton desktop app is Baton itself, the same web app you use in a browser (you log in the same
+way, and every feature is there), plus what only a computer can do: it runs your Baton agent's jobs
+automatically (BAT-24, BAT-26, `docs/design/agents-and-pipelines.md` §8). It listens for your
+agent's jobs with plain code, so no tokens are spent while idle, and runs each job in a fresh
+headless session of your own harness, in the folder you picked for the job's project, with your own
+settings, skills, plugins, `CLAUDE.md` and MCP servers.
+
+**Parity rule:** every feature ships on both the website and the desktop app. Features are built
+once in `web/`; the desktop-only pages (Running agents, Folders, Harnesses, Set up this computer)
+live in `web/pages/desktop/` and show only inside the app (`window.batonDesktop`, see
+`shared/desktopBridge.ts`).
 
 | Harness     | Headless mode       | Verified                              |
 | ----------- | ------------------- | ------------------------------------- |
@@ -38,9 +45,15 @@ it has loaded, then quits (for checking the UI without clicking).
   under "Waiting for your OK".
 - `src/main/harness/`: one adapter per harness (`detect`, `listModels`, `run`), and the
   out-of-usage heuristics.
+- `src/main/main.ts`: the window loads the Baton server (default https://www.passthebaton.dev) in a
+  persistent session; other sites open in your browser (sign-in with Google or GitHub stays in the
+  app). If the server can't be reached, `src/offline/offline.html` offers a retry or another server.
+- `src/preload.ts`: `window.batonDesktop` for the server's own pages only; `src/main/origin.ts`
+  checks the sender of every call again.
 - `src/main/permissions.ts`: a local MCP server (127.0.0.1, random token) whose `approve` tool is
   Claude Code's `--permission-prompt-tool`: permission prompts become Allow / Deny pop-ups.
 - The Baton MCP is added to a run (as `baton_app`) only when the harness's own MCP servers don't
   already reach the same Baton server.
-- Settings live in the app's user-data folder; the API key is encrypted with the OS keychain
-  when available.
+- "Set up this computer" (in the app, while signed in) creates this computer's agent key itself
+  and keeps it in the app's user-data folder, encrypted with the OS keychain when available. You
+  never paste keys, and the key the agent uses can't sign in as you.

@@ -38,6 +38,11 @@ const shellRoutes: RouteObject[] = [
   { path: 'inbox', ...page(() => import('./pages/inbox/InboxPage')) },
   { path: 'my-tasks', ...page(() => import('./pages/my-tasks/MyTasksPage')) },
   { path: 'download', ...page(() => import('./pages/download/DownloadPage')) },
+  // desktop app (BAT-26): shown inside the Baton desktop app
+  { path: 'desktop', ...page(() => import('./pages/desktop/DesktopAgentsPage')) },
+  { path: 'desktop/setup', ...page(() => import('./pages/desktop/DesktopSetupPage')) },
+  { path: 'desktop/folders', ...page(() => import('./pages/desktop/DesktopFoldersPage')) },
+  { path: 'desktop/harnesses', ...page(() => import('./pages/desktop/DesktopHarnessesPage')) },
 
   // teams
   { path: 'join/:code', ...page(() => import('./pages/join/JoinPage')) },

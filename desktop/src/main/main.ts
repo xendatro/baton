@@ -11,29 +11,32 @@ import {
   safeStorage,
   shell,
   Tray,
+  type IpcMainInvokeEvent,
 } from 'electron';
-import type { Chain, HarnessId, JobSources } from '@shared/schemas/agentRunner';
+import type { DesktopState } from '@shared/desktopBridge';
+import type { HarnessId } from '@shared/schemas/agentRunner';
 import { BatonApi } from './api';
 import { ConfigStore, type SecretBox } from './config';
 import { checkRepo } from './git';
 import { createAdapters } from './harness';
+import { isAllowedSender, navigationTarget, originOf } from './origin';
 import { describeToolCall, PermissionServer } from './permissions';
 import { Runner, type RunnerStore } from './runner';
 
 /**
- * The Baton desktop app's main process (BAT-24): one window (setup guide, HUD, waiting jobs,
- * projects & folders, models, stats), a tray icon (online, pause, jobs running), the runner, and
- * the local permission server for Allow / Deny pop-ups.
+ * The Baton desktop app's main process (BAT-24, BAT-26). The window shows the real Baton web app
+ * (you sign in as on the website, every feature is there), in a persistent session. The web
+ * app's Desktop pages talk to this process through `window.batonDesktop` (preload.ts), only from
+ * the Baton server's origin. Here: the runner (your agent's jobs, in your harness), the tray,
+ * Allow / Deny pop-ups for Claude Code's permission prompts, and an offline page.
  */
-
-const TRAY_ICON =
-  'iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAApUlEQVR4nM3WsQ3AIAxEUaZLm/0HyBxJlSISxmf7DgfJrf8TDYzzuEbntMazgNsZGcALpyCKcAiijruIHfElQhJ/D4KQxVEEFWCdCIAe926BAgjGTcCu+AdRAhTidUAxXgMQ4nkAKZ4DEONxADkeAwjiU8AUoYy7AFF8CRgIgBWHXkNyHAKYCHb8118yNsJseAAGYrkfAWQh0N4IAIWE9mUA1GkHPMu/8VXh9ISnAAAAAElFTkSuQmCC';
 
 let window: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let runner: Runner | null = null;
 let api: BatonApi | null = null;
 let permissions: PermissionServer | null = null;
+let quitting = false;
 const adapters = createAdapters();
 
 const secrets: SecretBox = {
@@ -44,6 +47,7 @@ const secrets: SecretBox = {
 
 let config: ConfigStore;
 const scratchRoot = () => path.join(app.getPath('userData'), 'scratch');
+const serverUrl = () => config.get().serverUrl;
 
 function store(): RunnerStore {
   return {
@@ -60,17 +64,12 @@ function store(): RunnerStore {
   };
 }
 
-function send(channel: string, payload: unknown) {
-  window?.webContents.send(channel, payload);
-}
-
-function state() {
+function state(): DesktopState {
   const cfg = config.get();
   return {
-    signedIn: api !== null,
-    serverUrl: cfg.serverUrl,
+    version: app.getVersion(),
+    connected: api !== null,
     machineName: cfg.machineName,
-    setupDone: cfg.setupDone,
     pausedHere: cfg.pausedHere,
     folders: cfg.folders,
     permissionModes: cfg.permissionModes,
@@ -78,13 +77,19 @@ function state() {
   };
 }
 
+function broadcast() {
+  window?.webContents.send('desktop:state', state());
+  updateTray();
+}
+
 function updateTray() {
   if (!tray) return;
   const snapshot = runner?.snapshot();
   const running = snapshot?.jobs.length ?? 0;
   const status = snapshot?.status ?? 'stopped';
-  const label =
-    status === 'online'
+  const label = !api
+    ? 'Not set up: open Baton → Desktop'
+    : status === 'online'
       ? running > 0
         ? `Online — ${running} running`
         : 'Online — waiting for jobs'
@@ -92,17 +97,21 @@ function updateTray() {
         ? 'Paused'
         : status === 'offline'
           ? 'Offline'
-          : 'Not running';
+          : 'Starting';
   tray.setToolTip(`Baton: ${label}`);
   tray.setContextMenu(
     Menu.buildFromTemplate([
       { label, enabled: false },
       { type: 'separator' },
       {
-        label: config.get().pausedHere ? 'Resume on this machine' : 'Pause on this machine',
+        label: config.get().pausedHere ? 'Resume on this computer' : 'Pause on this computer',
         click: () => setPausedHere(!config.get().pausedHere),
       },
       { label: 'Open Baton', click: () => showWindow() },
+      {
+        label: 'Running agents',
+        click: () => showWindow(`${serverUrl().replace(/\/+$/, '')}/desktop`),
+      },
       { type: 'separator' },
       { label: 'Quit', click: () => app.quit() },
     ]),
@@ -111,52 +120,114 @@ function updateTray() {
 
 function setPausedHere(paused: boolean) {
   config.update({ pausedHere: paused });
-  updateTray();
-  send('state', state());
+  broadcast();
 }
 
-function showWindow() {
+function showOffline(error: string | null) {
+  const query = new URLSearchParams({ server: serverUrl(), ...(error ? { error } : {}) });
+  void window?.loadFile(path.join(__dirname, 'offline.html'), { search: query.toString() });
+}
+
+function load(url = serverUrl()) {
+  void window?.loadURL(url).catch(() => undefined);
+}
+
+/** `baton-desktop://retry` and `baton-desktop://server?url=` from the offline page. */
+function handleAppLink(url: string) {
+  const link = new URL(url);
+  if (link.hostname === 'server') {
+    const next = originOf(link.searchParams.get('url'));
+    if (next && next !== originOf(serverUrl())) {
+      // Another server: another account, so this computer needs setting up again there.
+      config.update({ serverUrl: next });
+      config.setApiKey(null);
+      void connect();
+      // The preload reads the server from the window's arguments: open a fresh window.
+      const old = window;
+      window = null;
+      showWindow();
+      old?.destroy();
+      return;
+    }
+  }
+  load();
+}
+
+function showWindow(url?: string) {
   if (window) {
+    if (url) load(url);
     window.show();
     window.focus();
     return;
   }
   window = new BrowserWindow({
-    width: 1100,
-    height: 760,
+    width: 1280,
+    height: 820,
+    minWidth: 400,
     title: 'Baton',
+    icon: path.join(__dirname, 'icon.png'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
       sandbox: true,
       nodeIntegration: false,
+      partition: 'persist:baton',
+      additionalArguments: [`--baton-server=${originOf(serverUrl()) ?? ''}`],
     },
   });
   window.removeMenu();
-  void window.loadFile(path.join(__dirname, 'index.html'));
-  // Development: BATON_DESKTOP_SCREENSHOT=<file.png> saves the window once loaded, then quits.
-  const screenshot = process.env.BATON_DESKTOP_SCREENSHOT;
-  if (screenshot) {
-    window.webContents.once('did-finish-load', () => {
-      setTimeout(() => {
-        void window?.webContents.capturePage().then((image) => {
-          writeFileSync(screenshot, image.toPNG());
-          quitting = true;
-          app.quit();
-        });
-      }, 2_500);
-    });
-  }
+  const contents = window.webContents;
+  // Links to other sites open in the browser; the server's own pages (and sign-in) stay here.
+  contents.setWindowOpenHandler(({ url }) => {
+    if (isAllowedSender(url, serverUrl())) load(url);
+    else if (/^https?:\/\//.test(url)) void shell.openExternal(url);
+    return { action: 'deny' };
+  });
+  contents.on('will-navigate', (event, url) => {
+    if (url.startsWith('baton-desktop:')) {
+      event.preventDefault();
+      handleAppLink(url);
+      return;
+    }
+    if (navigationTarget(url, serverUrl()) === 'browser') {
+      event.preventDefault();
+      void shell.openExternal(url);
+    }
+  });
+  contents.on('did-fail-load', (_event, code, description, url, isMainFrame) => {
+    // -3: aborted (a new navigation replaced it).
+    if (!isMainFrame || code === -3 || url.startsWith('file:')) return;
+    showOffline(description || 'The Baton server didn’t answer');
+  });
+  load(url);
   window.on('close', (event) => {
-    // Closing the window keeps the app (and its runner) in the tray.
+    // Closing the window keeps the app (and your agent) running in the tray.
     if (!quitting) {
       event.preventDefault();
       window?.hide();
     }
   });
+  // Development: BATON_DESKTOP_SCREENSHOT=<file.png> saves the window once loaded, then quits.
+  const screenshot = process.env.BATON_DESKTOP_SCREENSHOT;
+  if (screenshot) {
+    contents.once('did-finish-load', () => {
+      setTimeout(
+        () => {
+          void contents
+            .executeJavaScript('typeof window.batonDesktop')
+            .then((type: unknown) => process.stdout.write(`bridge: ${String(type)}\n`))
+            .catch(() => undefined);
+          void contents.capturePage().then((image) => {
+            writeFileSync(screenshot, image.toPNG());
+            quitting = true;
+            app.quit();
+          });
+        },
+        Number(process.env.BATON_DESKTOP_SCREENSHOT_DELAY ?? 4_000),
+      );
+    });
+  }
 }
-
-let quitting = false;
 
 /** Allow / Deny for a tool call Claude Code wants to make (the permission-prompt tool). */
 async function askPermission(request: {
@@ -189,43 +260,43 @@ async function askPermission(request: {
   return response === 0;
 }
 
+/** Starts (or restarts) the runner with this computer's agent key. */
 async function connect(): Promise<void> {
   const key = config.apiKey();
   runner?.stop();
   runner = null;
   api = null;
-  if (!key) return;
-  api = new BatonApi(config.get().serverUrl, key);
-  runner = new Runner(api, adapters, store(), permissions);
-  runner.on('change', (snapshot) => {
-    send('runner', snapshot);
-    updateTray();
+  if (key) {
+    api = new BatonApi(serverUrl(), key);
+    runner = new Runner(api, adapters, store(), permissions);
+    runner.on('change', () => broadcast());
+    runner.on('output', (payload) => window?.webContents.send('desktop:output', payload));
+    await runner.start();
+  }
+  broadcast();
+}
+
+/** An IPC handler only the Baton server's own pages may call. */
+function handle(channel: string, run: (...args: never[]) => unknown) {
+  ipcMain.handle(`desktop:${channel}`, (event: IpcMainInvokeEvent, ...args: unknown[]) => {
+    if (!isAllowedSender(event.senderFrame?.url, serverUrl())) throw new Error('Not allowed');
+    return (run as (...values: unknown[]) => unknown)(...args);
   });
-  runner.on('output', (payload) => send('output', payload));
-  await runner.start();
 }
 
 function registerIpc() {
-  ipcMain.handle('state', () => state());
-
-  ipcMain.handle('signIn', async (_event, serverUrl: string, key: string) => {
-    const candidate = new BatonApi(serverUrl.trim().replace(/\/+$/, ''), key.trim());
-    const me = await candidate.me();
-    config.update({ serverUrl: candidate.baseUrl });
-    config.setApiKey(key.trim());
+  handle('state', () => state());
+  handle('connect', async (key: string) => {
+    config.setApiKey(String(key).trim());
     await connect();
-    return { name: me.user.name, username: me.user.username };
-  });
-
-  ipcMain.handle('signOut', () => {
-    config.setApiKey(null);
-    runner?.stop();
-    runner = null;
-    api = null;
     return state();
   });
-
-  ipcMain.handle('harnesses', async () => {
+  handle('disconnect', async () => {
+    config.setApiKey(null);
+    await connect();
+    return state();
+  });
+  handle('harnesses', async () => {
     const list = [];
     for (const adapter of adapters.values()) {
       const detected = await adapter.detect();
@@ -241,101 +312,62 @@ function registerIpc() {
     }
     return list;
   });
-
-  ipcMain.handle('projects', async () => {
-    if (!api) return [];
-    const me = await api.me();
-    return me.teams.flatMap((team) =>
-      team.projects.map((project) => ({
-        id: project.id,
-        ref: `${team.slug}/${project.key}`,
-        name: project.name,
-        team: team.name,
-        folder: config.get().folders[project.id] ?? null,
-      })),
-    );
-  });
-
-  ipcMain.handle('pickFolder', async (_event, projectId: string, label: string) => {
+  handle('pickFolder', async (projectId: string, label: string, repoUrl: string | null) => {
+    const options = {
+      properties: ['openDirectory', 'createDirectory'] as Array<
+        'openDirectory' | 'createDirectory'
+      >,
+    };
     const result = window
-      ? await dialog.showOpenDialog(window, { properties: ['openDirectory', 'createDirectory'] })
-      : await dialog.showOpenDialog({ properties: ['openDirectory', 'createDirectory'] });
+      ? await dialog.showOpenDialog(window, options)
+      : await dialog.showOpenDialog(options);
     const folder = result.filePaths[0];
     if (result.canceled || !folder) return null;
-    config.update({ folders: { ...config.get().folders, [projectId]: { path: folder, label } } });
+    config.update({
+      folders: {
+        ...config.get().folders,
+        [String(projectId)]: { path: folder, label: String(label) },
+      },
+    });
     await runner?.refresh();
-    const repoUrl = api ? (await api.project(projectId).catch(() => null))?.repoUrl : null;
+    broadcast();
     return checkRepo(folder, repoUrl);
   });
-
-  ipcMain.handle('setScratch', async (_event, projectId: string, label: string) => {
-    config.update({ folders: { ...config.get().folders, [projectId]: { path: null, label } } });
+  handle('useScratch', async (projectId: string, label: string) => {
+    config.update({
+      folders: {
+        ...config.get().folders,
+        [String(projectId)]: { path: null, label: String(label) },
+      },
+    });
     await runner?.refresh();
+    broadcast();
     return state();
   });
-
-  ipcMain.handle('unmap', async (_event, projectId: string) => {
+  handle('unmap', async (projectId: string) => {
     const folders = { ...config.get().folders };
-    delete folders[projectId];
+    delete folders[String(projectId)];
     config.update({ folders });
     await runner?.refresh();
+    broadcast();
     return state();
   });
-
-  ipcMain.handle('checkRepo', async (_event, projectId: string) => {
-    const folder = config.get().folders[projectId]?.path;
-    if (!folder || !api) return null;
-    const repoUrl = (await api.project(projectId).catch(() => null))?.repoUrl;
-    return checkRepo(folder, repoUrl);
+  handle('checkRepo', async (projectId: string, repoUrl: string | null) => {
+    const folder = config.get().folders[String(projectId)]?.path;
+    return folder ? checkRepo(folder, repoUrl) : null;
   });
-
-  ipcMain.handle('setPermissionMode', (_event, harness: HarnessId, mode: string) => {
-    config.update({ permissionModes: { ...config.get().permissionModes, [harness]: mode } });
+  handle('setPermissionMode', (harness: HarnessId, mode: string) => {
+    config.update({
+      permissionModes: { ...config.get().permissionModes, [harness]: String(mode) },
+    });
+    broadcast();
     return state();
   });
-
-  ipcMain.handle('models', () => api?.models() ?? null);
-  ipcMain.handle('setDefaultChain', async (_event, chain: Chain) => {
-    if (!api) return null;
-    const current = await api.models();
-    return api.setModels({ ...current, default: { ...current.default, chain } });
-  });
-
-  ipcMain.handle('jobSources', () => api?.jobSources() ?? null);
-  ipcMain.handle('setJobSources', (_event, sources: JobSources) => api?.setJobSources(sources));
-
-  ipcMain.handle('waiting', () => api?.waiting() ?? { jobs: [] });
-  ipcMain.handle('decide', (_event, jobId: string, decision: 'approve' | 'dismiss') =>
-    api?.decide(jobId, decision),
-  );
-
-  ipcMain.handle('stats', (_event, days: number) => api?.stats(days) ?? null);
-  ipcMain.handle('kill', (_event, jobId: string) => runner?.kill(jobId));
-  ipcMain.handle('pauseHere', (_event, paused: boolean) => {
-    setPausedHere(paused);
-    return state();
-  });
-  ipcMain.handle('pauseEverywhere', async () => {
-    await api?.pauseEverywhere();
-    await runner?.refresh();
-    return state();
-  });
-
-  ipcMain.handle('setMachineName', async (_event, name: string) => {
-    config.update({ machineName: name.trim() || config.get().machineName });
-    await runner?.refresh();
-    return state();
-  });
-
-  ipcMain.handle('finishSetup', () => {
-    config.update({ setupDone: true });
-    return state();
-  });
-
-  /** A test run: the harness in a scratch folder, asked to check it can reach Baton. */
-  ipcMain.handle('testRun', async (_event, harness: HarnessId) => {
+  handle('testRun', async (harness: HarnessId) => {
     const adapter = adapters.get(harness);
-    if (!adapter || !api) return { ok: false, output: 'Sign in first.' };
+    if (!adapter || !api) {
+      return { ok: false, outcome: 'failed', output: 'Set up this computer first.' };
+    }
     const cwd = path.join(scratchRoot(), 'test');
     mkdirSync(cwd, { recursive: true });
     const lines: string[] = [];
@@ -357,17 +389,23 @@ function registerIpc() {
       },
       signal: new AbortController().signal,
       onEvent: (event) => {
-        if (event.type !== 'session') {
-          lines.push(event.text);
-          send('output', { jobId: 'test', text: event.text });
-        }
+        if (event.type === 'session') return;
+        lines.push(event.text);
+        window?.webContents.send('desktop:output', { jobId: 'test', text: event.text });
       },
     });
-    return { ok: result.outcome === 'done', output: lines.join('\n'), outcome: result.outcome };
+    return { ok: result.outcome === 'done', outcome: result.outcome, output: lines.join('\n') };
   });
-
-  ipcMain.handle('openExternal', (_event, url: string) => {
-    if (/^https?:\/\//.test(url)) void shell.openExternal(url);
+  handle('kill', (jobId: string) => runner?.kill(String(jobId)));
+  handle('pauseHere', (paused: boolean) => {
+    setPausedHere(Boolean(paused));
+    return state();
+  });
+  handle('setMachineName', async (name: string) => {
+    config.update({ machineName: String(name).trim() || config.get().machineName });
+    await runner?.refresh();
+    broadcast();
+    return state();
   });
 }
 
@@ -388,11 +426,11 @@ if (!app.requestSingleInstanceLock()) {
     permissions = new PermissionServer(askPermission);
     await permissions.start();
     registerIpc();
-    tray = new Tray(nativeImage.createFromDataURL(`data:image/png;base64,${TRAY_ICON}`));
+    const icon = nativeImage.createFromPath(path.join(__dirname, 'icon.png'));
+    tray = new Tray(icon.resize({ width: 16, height: 16 }));
     tray.on('click', () => showWindow());
-    updateTray();
     showWindow();
-    await connect().catch((error: unknown) => send('error', String(error)));
+    await connect().catch(() => undefined);
     updateTray();
   });
 }

@@ -42,6 +42,7 @@ import { Skeleton } from '@web/components/ui/skeleton';
 import { Switch } from '@web/components/ui/switch';
 import { errorMessage } from '@web/lib/api';
 import { useMe } from '@web/lib/auth';
+import { isDesktopApp } from '@web/lib/desktop';
 import { pluralize } from '@web/lib/format';
 import { cn } from '@web/lib/utils';
 import { useDifficulties } from '../projects/difficultyQueries';
@@ -124,12 +125,18 @@ function DesktopCard() {
       title="Desktop apps"
       description="Each machine running the Baton desktop app. It takes jobs only for the projects you mapped to a folder there."
       action={
-        <Button asChild size="sm" variant="outline">
-          <Link to="/download">
-            <DownloadIcon aria-hidden="true" />
-            Download the app
-          </Link>
-        </Button>
+        isDesktopApp() ? (
+          <Button asChild size="sm" variant="outline">
+            <Link to="/desktop">This computer</Link>
+          </Button>
+        ) : (
+          <Button asChild size="sm" variant="outline">
+            <Link to="/download">
+              <DownloadIcon aria-hidden="true" />
+              Download the app
+            </Link>
+          </Button>
+        )
       }
     >
       {runners.isPending ? (

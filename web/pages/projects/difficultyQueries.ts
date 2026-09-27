@@ -4,12 +4,17 @@ import {
   difficultyListResponseSchema,
   difficultySchema,
   type CreateDifficultyInput,
+  type Difficulty,
+  type DifficultyListResponse,
   type UpdateDifficultyInput,
 } from '@shared/schemas/projects';
 import { api } from '@web/lib/api';
 import { queryKeys } from '@web/lib/queryKeys';
 
-/** A project's difficulty levels (BAT-24), easiest first, and the changes to them. */
+/**
+ * A project's difficulty levels (BAT-24), easiest first as the API sends them (show them with
+ * `hardestFirst` from `@web/lib/difficulty`), and the changes to them.
+ */
 
 const enc = encodeURIComponent;
 
@@ -64,7 +69,29 @@ export function useReorderDifficulties(projectId: string) {
         { difficultyIds },
         { schema: difficultyListResponseSchema },
       ),
-    onSuccess: () => refresh(queryClient, projectId),
+    // Show the new order at once, so a dragged row doesn't jump back until the server answers.
+    onMutate: async (difficultyIds) => {
+      const key = queryKeys.projects.difficulties(projectId);
+      await queryClient.cancelQueries({ queryKey: key });
+      const previous = queryClient.getQueryData<DifficultyListResponse>(key);
+      if (previous) {
+        const byId = new Map(previous.items.map((level) => [level.id, level]));
+        const items = difficultyIds
+          .map((id, position) => {
+            const level = byId.get(id);
+            return level ? { ...level, position } : null;
+          })
+          .filter((level): level is Difficulty => level !== null);
+        if (items.length === previous.items.length) queryClient.setQueryData(key, { items });
+      }
+      return { previous };
+    },
+    onError: (_error, _ids, context) => {
+      if (context?.previous) {
+        queryClient.setQueryData(queryKeys.projects.difficulties(projectId), context.previous);
+      }
+    },
+    onSettled: () => refresh(queryClient, projectId),
   });
 }
 

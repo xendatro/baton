@@ -15,6 +15,7 @@ import { relations, sql } from 'drizzle-orm';
 import {
   check,
   foreignKey,
+  type AnySQLiteColumn,
   index,
   integer,
   primaryKey,
@@ -36,6 +37,13 @@ import {
   type PriorityValue,
 } from '../../shared/constants';
 import type { Permission } from '../../shared/permissions';
+import type { PrincipalRule } from '../../shared/principals';
+import type {
+  ApprovalDecision,
+  ApprovalsRule,
+  ExitCriterion,
+  Handoff,
+} from '../../shared/schemas/pipelines';
 import type { FieldChange } from '../../shared/schemas/core';
 import { newId } from '../lib/ids';
 
@@ -462,6 +470,28 @@ export const status = sqliteTable(
     /** Column order, ascending. */
     position: integer('position').notNull(),
     isDefault: bool('is_default').notNull().default(false),
+    // Pipeline rules (docs/design/agents-and-pipelines.md §5); the defaults change nothing.
+    /** Markdown: what to do in this stage. */
+    instructions: text('instructions').notNull().default(''),
+    /** On enter: who gets the task (null: keep the assignees). */
+    handoff: text('handoff', { mode: 'json' }).$type<Handoff>(),
+    /** On enter: who is notified. */
+    notify: text('notify', { mode: 'json' }).$type<PrincipalRule>(),
+    /** To leave forward: each needs evidence. */
+    exitCriteria: text('exit_criteria', { mode: 'json' })
+      .$type<ExitCriterion[]>()
+      .notNull()
+      .default(sql`'[]'`),
+    /** To leave forward: who may move it out (null: whoever may move tasks). */
+    moveRule: text('move_rule', { mode: 'json' }).$type<PrincipalRule>(),
+    /** To leave forward: approvals needed. */
+    approvals: text('approvals', { mode: 'json' }).$type<ApprovalsRule>(),
+    autoAdvance: bool('auto_advance').notNull().default(false),
+    /** The next stage (null: the next column). */
+    nextStatusId: text('next_status_id').references((): AnySQLiteColumn => status.id, {
+      onDelete: 'set null',
+    }),
+    allowSendBack: bool('allow_send_back').notNull().default(true),
     createdAt: createdAtColumn(),
     updatedAt: updatedAtColumn(),
   },
@@ -586,6 +616,11 @@ export const task = sqliteTable(
     claimExpiresAt: timestamp('claim_expires_at'),
     /** Set when the task enters a `done` status, cleared when it leaves. */
     completedAt: timestamp('completed_at'),
+    /**
+     * Who may claim it while it waits in a `pool` hand-off stage (design §5); cleared when it is
+     * claimed, assigned or leaves the stage.
+     */
+    poolRule: text('pool_rule', { mode: 'json' }).$type<PrincipalRule>(),
     replyCount: integer('reply_count').notNull().default(0),
     lastActivityAt: timestamp('last_activity_at')
       .notNull()
@@ -691,6 +726,103 @@ export const taskDependency = sqliteTable(
     primaryKey({ columns: [t.taskId, t.blockedByTaskId] }),
     index('task_dependency_blocked_by_idx').on(t.blockedByTaskId),
     check('task_dependency_not_self', sql`${t.taskId} <> ${t.blockedByTaskId}`),
+  ],
+);
+
+// =============================================================================================
+// Pipelines (docs/design/agents-and-pipelines.md §5)
+// =============================================================================================
+
+/**
+ * One visit of a task to a stage: when it entered, who moved it, whom the hand-off assigned, and
+ * (once it left) who held it then (`stage_holder` hand-offs and round-robin read these).
+ */
+export const taskStageEntry = sqliteTable(
+  'task_stage_entry',
+  {
+    id: idColumn(),
+    taskId: text('task_id')
+      .notNull()
+      .references(() => task.id, { onDelete: 'cascade' }),
+    statusId: text('status_id')
+      .notNull()
+      .references(() => status.id, { onDelete: 'cascade' }),
+    enteredAt: timestamp('entered_at').notNull(),
+    enteredById: text('entered_by_id').references(() => user.id, { onDelete: 'set null' }),
+    enteredViaKeyId: text('entered_via_key_id').references(() => apiKey.id, {
+      onDelete: 'set null',
+    }),
+    /** The hand-off mode applied on entry. */
+    handoffMode: text('handoff_mode'),
+    /** Users the hand-off assigned on entry. */
+    assignedUserIds: text('assigned_user_ids', { mode: 'json' })
+      .$type<string[]>()
+      .notNull()
+      .default(sql`'[]'`),
+    leftAt: timestamp('left_at'),
+    /** The task's user assignees when it left the stage. */
+    holderUserIds: text('holder_user_ids', { mode: 'json' }).$type<string[]>(),
+  },
+  (t) => [
+    index('task_stage_entry_task_idx').on(t.taskId, t.statusId, t.enteredAt),
+    index('task_stage_entry_status_idx').on(t.statusId, t.enteredAt),
+    index('task_stage_entry_entered_by_idx').on(t.enteredById),
+    index('task_stage_entry_via_key_idx').on(t.enteredViaKeyId),
+  ],
+);
+
+/** Evidence for an exit criterion of a stage; editable only while the task is in that stage. */
+export const taskStageEvidence = sqliteTable(
+  'task_stage_evidence',
+  {
+    id: idColumn(),
+    taskId: text('task_id')
+      .notNull()
+      .references(() => task.id, { onDelete: 'cascade' }),
+    statusId: text('status_id')
+      .notNull()
+      .references(() => status.id, { onDelete: 'cascade' }),
+    criterionId: text('criterion_id').notNull(),
+    text: text('text').notNull(),
+    userId: text('user_id').references(() => user.id, { onDelete: 'set null' }),
+    viaKeyId: text('via_key_id').references(() => apiKey.id, { onDelete: 'set null' }),
+    createdAt: createdAtColumn(),
+    updatedAt: updatedAtColumn(),
+  },
+  (t) => [
+    uniqueIndex('task_stage_evidence_unique').on(t.taskId, t.statusId, t.criterionId),
+    index('task_stage_evidence_status_idx').on(t.statusId),
+    index('task_stage_evidence_user_idx').on(t.userId),
+    index('task_stage_evidence_via_key_idx').on(t.viaKeyId),
+  ],
+);
+
+/**
+ * An Approve / Request changes decision on a task's stage. Only non-dismissed rows of the stage the
+ * task is in count; entering a stage dismisses leftovers of an earlier visit.
+ */
+export const taskApproval = sqliteTable(
+  'task_approval',
+  {
+    id: idColumn(),
+    taskId: text('task_id')
+      .notNull()
+      .references(() => task.id, { onDelete: 'cascade' }),
+    statusId: text('status_id')
+      .notNull()
+      .references(() => status.id, { onDelete: 'cascade' }),
+    userId: text('user_id').references(() => user.id, { onDelete: 'set null' }),
+    viaKeyId: text('via_key_id').references(() => apiKey.id, { onDelete: 'set null' }),
+    decision: text('decision').$type<ApprovalDecision>().notNull(),
+    comment: text('comment'),
+    createdAt: createdAtColumn(),
+    dismissedAt: timestamp('dismissed_at'),
+  },
+  (t) => [
+    index('task_approval_task_idx').on(t.taskId, t.statusId),
+    index('task_approval_status_idx').on(t.statusId),
+    index('task_approval_user_idx').on(t.userId),
+    index('task_approval_via_key_idx').on(t.viaKeyId),
   ],
 );
 

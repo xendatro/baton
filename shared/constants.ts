@@ -232,6 +232,8 @@ export const NOTIFICATION_TYPES = [
   'issue_resolved',
   'issue_reopened',
   'task_done',
+  /** A task entered a pipeline stage whose `notify` rule names you (design §5). */
+  'stage_entered',
 ] as const;
 export type NotificationType = (typeof NOTIFICATION_TYPES)[number];
 

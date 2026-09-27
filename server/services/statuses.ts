@@ -20,6 +20,7 @@ import { requirePermission, requireProjectAccess, type Membership } from './acce
 import { recordActivity } from './activity';
 import { emitAfterCommit } from './events';
 import { queueLinkedIssueEvents } from './linkEvents';
+import { enterStage, mergeRules, ruleChanges, ruleColumns, rulesOf } from './pipelines';
 import { requireProject, type ProjectRow } from './projects';
 import { applyStatusTransition, taskMeta, type TaskRow } from './tasks';
 
@@ -64,6 +65,7 @@ function toStatus(row: StatusRow, taskCount: number): Status {
     position: row.position,
     isDefault: row.isDefault,
     taskCount,
+    rules: rulesOf(row),
   };
 }
 
@@ -194,6 +196,16 @@ export function createStatus(
       .returning()
       .get();
     if (input.isDefault) setDefault(tx, projectId, row.id);
+    if (input.rules) {
+      const rules = mergeRules(
+        tx,
+        { teamId: project.teamId, projectId },
+        row.id,
+        rulesOf(row),
+        input.rules,
+      );
+      tx.update(s.status).set(ruleColumns(rules)).where(eq(s.status.id, row.id)).run();
+    }
     recordActivity(tx, actor, {
       teamId: project.teamId,
       projectId,
@@ -226,7 +238,12 @@ export function updateStatus(
 ): Status {
   const { orm } = deps.db;
   const { status, project } = requireManageableStatus(deps, actor, statusId);
-  const changes = diffFields(status, input);
+  const { rules: rulesPatch, ...fields } = input;
+  const changes = diffFields(status, fields);
+  const scope = { teamId: project.teamId, projectId: project.id };
+  // Pipeline rules (design §5): validated against the project, audited in words.
+  const rules = rulesPatch ? mergeRules(orm, scope, statusId, rulesOf(status), rulesPatch) : null;
+  if (rules) Object.assign(changes, ruleChanges(orm, rulesOf(status), rules));
   if (Object.keys(changes).length === 0) return statusById(orm, project.id, statusId);
 
   deps.db.write((tx) => {
@@ -246,6 +263,7 @@ export function updateStatus(
         ...(input.name !== undefined ? { name: input.name } : {}),
         ...(input.color !== undefined ? { color: input.color } : {}),
         ...(input.category !== undefined ? { category: input.category } : {}),
+        ...(rules ? ruleColumns(rules) : {}),
         updatedAt: new Date(),
       })
       .where(eq(s.status.id, statusId))
@@ -410,6 +428,18 @@ export function deleteStatus(
         meta: { ...taskMeta(task, project.key), status: target.name, reason: 'status_deleted' },
       });
       transition.recordRelease();
+      // The tasks enter `target`: its hand-off and notify rules apply (no exit rules are checked).
+      const moved = tx.select().from(s.task).where(eq(s.task.id, task.id)).get();
+      if (moved) {
+        enterStage(
+          tx,
+          actor,
+          { task: moved, projectKey: project.key, teamSlug },
+          source,
+          target,
+          now,
+        );
+      }
     }
 
     tx.delete(s.status).where(eq(s.status.id, statusId)).run();

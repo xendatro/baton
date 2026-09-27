@@ -79,6 +79,9 @@ export const queryKeys = {
     roles: (projectId: string) => ['projects', projectId, 'roles'] as const,
     /** The project's permission overrides and the viewer's permissions there. */
     permissions: (projectId: string) => ['projects', projectId, 'permissions'] as const,
+    /** What copying another project's pipeline into this one would do (design §5). */
+    pipelineCopy: (projectId: string, fromProjectId: string) =>
+      ['projects', projectId, 'pipeline-copy', fromProjectId] as const,
   },
 
   issues: {

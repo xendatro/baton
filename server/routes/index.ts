@@ -24,6 +24,7 @@ import { meRoutes } from './me';
 import { memberRoutes } from './members';
 import { myWorkRoutes } from './myWork';
 import { notificationRoutes } from './notifications';
+import { pipelineRoutes } from './pipelines';
 import { projectAccessRoutes } from './projectAccess';
 import { projectRoutes } from './projects';
 import { reactionRoutes } from './reactions';
@@ -71,6 +72,7 @@ const routers: ReadonlyArray<Hono<AppEnv>> = [
   taskRoutes,
   claimRoutes,
   taskLinkRoutes,
+  pipelineRoutes,
   // work
   myWorkRoutes,
   dashboardRoutes,

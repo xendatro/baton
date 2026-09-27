@@ -11,12 +11,22 @@ import type {
 import type { Actor, AppDeps } from '../context';
 import type { Tx } from '../db';
 import * as s from '../db/schema';
+import type { Changes } from '../lib/diff';
 import { errors } from '../lib/errors';
 import { requirePermission, type Membership } from './access';
 import { recordActivity } from './activity';
 import { isClaimValid, isHolder } from './claimLease';
 import { emitAfterCommit } from './events';
 import { queueLinkedIssueEvents } from './linkEvents';
+import { onPoolTaskClaimed } from './pipelineHooks';
+import {
+  canClaimFromPool,
+  enterStage,
+  guardStageMove,
+  poolClaimRefusal,
+  recordForced,
+  takeFromPool,
+} from './pipelines';
 import { requireProject } from './projects';
 import { insertReply, prepareReply } from './replies';
 import {
@@ -44,7 +54,6 @@ import { getUserSummaries, getViaKeys } from './users';
  * `UPDATE_TASKS` (or being the task's author); taking over someone else's claim needs
  * `UPDATE_TASKS` and is audited as a takeover.
  */
-
 
 /** "ethan via Claude on laptop" / "ethan (web)" for audit meta and messages. */
 function holderLabel(tx: Tx, task: Pick<TaskRow, 'claimedById' | 'claimedViaKeyId'>): string {
@@ -74,21 +83,38 @@ function requireClaimPermission(membership: Membership, task: Pick<TaskRow, 'aut
   }
 }
 
+interface ClaimMove {
+  /** Columns to set with the claim. */
+  patch: Partial<TaskRow>;
+  /** Applies the target stage's entry rules; run after the task row is written. */
+  enter: () => void;
+}
+
+const NO_MOVE: ClaimMove = { patch: {}, enter: () => undefined };
+
 /**
  * Moves a claimed task to `statusId` inside the claim's write (end of the column), audited as
- * `task.moved`. Returns the columns to set.
+ * `task.moved`, after checking the stage rules (design §5). Returns the columns to set and the
+ * entry rules to apply once they are written.
  */
 function moveOnClaim(
   tx: Tx,
   actor: Actor,
-  access: Pick<TaskAccess, 'project' | 'team'>,
+  access: Pick<TaskAccess, 'project' | 'team' | 'membership'>,
   task: TaskRow,
   statusId: string,
   now: Date,
-): Partial<TaskRow> {
-  if (statusId === task.statusId) return {};
+): ClaimMove {
+  if (statusId === task.statusId) return NO_MOVE;
   const from = statusOfProject(tx, task.projectId, task.statusId);
   const to = statusOfProject(tx, task.projectId, statusId);
+  const guard = guardStageMove(
+    tx,
+    actor,
+    { task, project: access.project, membership: access.membership },
+    from,
+    to,
+  );
   const patch: Partial<TaskRow> = {
     statusId: to.id,
     position: appendPosition(tx, to.id),
@@ -113,7 +139,22 @@ function moveOnClaim(
   });
   // Linked issues of other projects show the task's status.
   queueLinkedIssueEvents(tx, actor, [task.id]);
-  return patch;
+  return {
+    patch,
+    enter: () => {
+      const moved = tx.select().from(s.task).where(eq(s.task.id, task.id)).get();
+      if (!moved) return;
+      recordForced(tx, actor, moved, access.project.key, from, to, guard.bypassed, undefined);
+      enterStage(
+        tx,
+        actor,
+        { task: moved, projectKey: access.project.key, teamSlug: access.team.slug },
+        from,
+        to,
+        now,
+      );
+    },
+  };
 }
 
 /** The status to move claimed tasks to; it must be an open-category status of the project. */
@@ -130,6 +171,9 @@ function requireOpenStatus(tx: Tx, projectId: string, statusId: string) {
 // ---------------------------------------------------------------------------------------------
 // claim_next_task
 // ---------------------------------------------------------------------------------------------
+
+/** Candidates read per claim_next_task, in order, to skip pool tasks the caller can't claim. */
+const CANDIDATES = 200;
 
 /**
  * Claims the best eligible task of a project, atomically: in an open-category status, not
@@ -167,7 +211,7 @@ export function claimNextTask(
   const claimedId = deps.db.write((tx) => {
     const now = new Date();
     if (input.moveToStatusId) requireOpenStatus(tx, projectId, input.moveToStatusId);
-    const candidate = tx
+    const candidates = tx
       .select()
       .from(s.task)
       .innerJoin(s.status, eq(s.status.id, s.task.statusId))
@@ -195,18 +239,20 @@ export function claimNextTask(
         asc(s.task.dueDate),
         asc(s.task.number),
       )
-      .limit(1)
-      .get();
+      .limit(CANDIDATES)
+      .all();
+    // Tasks waiting in a stage's pool (design §5) go only to the pool's members.
+    const candidate = candidates.find(
+      (row) => !row.task.poolRule || canClaimFromPool(tx, row.task, actor.userId),
+    );
     if (!candidate) return null;
     const task = candidate.task;
-    const patch: Partial<TaskRow> = {
-      ...claimColumns(actor, now),
-      ...(input.moveToStatusId
-        ? moveOnClaim(tx, actor, { project, team }, task, input.moveToStatusId, now)
-        : {}),
-    };
+    const poolChanges = task.poolRule ? takeFromPool(tx, actor, task) : null;
+    const move = input.moveToStatusId
+      ? moveOnClaim(tx, actor, { project, team, membership }, task, input.moveToStatusId, now)
+      : NO_MOVE;
     tx.update(s.task)
-      .set({ ...patch, updatedAt: now })
+      .set({ ...claimColumns(actor, now), ...move.patch, updatedAt: now })
       .where(eq(s.task.id, task.id))
       .run();
     recordActivity(tx, actor, {
@@ -215,11 +261,15 @@ export function claimNextTask(
       entityType: 'task',
       entityId: task.id,
       action: 'task.claimed',
+      ...(poolChanges ? { changes: poolChanges } : {}),
       meta: {
         ...taskMeta(task, project.key),
         next: true,
+        ...(poolChanges ? { fromPool: true } : {}),
       },
     });
+    if (poolChanges) onPoolTaskClaimed(tx, task, actor);
+    move.enter();
     emitAfterCommit(tx, taskEvent('task.claimed', task, actor));
     return task.id;
   });
@@ -258,8 +308,16 @@ export function claimTask(
   const { orm } = deps.db;
   const access = requireTask(orm, actor, taskId);
   const { project, membership } = access;
-  requireClaimPermission(membership, access.task);
   const ref = formatTaskRef(project.key, access.task.number);
+  // A task in a stage's pool (design §5) is claimed by the pool's members, who need no other
+  // permission; claiming assigns it to them.
+  if (access.task.poolRule) {
+    if (!canClaimFromPool(orm, access.task, actor.userId)) {
+      throw errors.forbidden(poolClaimRefusal(orm, access.task, ref));
+    }
+  } else {
+    requireClaimPermission(membership, access.task);
+  }
 
   deps.db.write((tx) => {
     const now = new Date();
@@ -283,11 +341,16 @@ export function claimTask(
       );
     }
     const previousHolder = takeover ? holderLabel(tx, task) : null;
+    if (task.poolRule && !canClaimFromPool(tx, task, actor.userId)) {
+      throw errors.forbidden(poolClaimRefusal(tx, task, ref));
+    }
+    const poolChanges: Changes | null = task.poolRule ? takeFromPool(tx, actor, task) : null;
+    const move = input.moveToStatusId
+      ? moveOnClaim(tx, actor, access, task, input.moveToStatusId, now)
+      : NO_MOVE;
     const patch: Partial<TaskRow> = {
       ...(mineAlready ? {} : claimColumns(actor, now)),
-      ...(input.moveToStatusId
-        ? moveOnClaim(tx, actor, access, task, input.moveToStatusId, now)
-        : {}),
+      ...move.patch,
     };
     tx.update(s.task)
       .set({ ...patch, updatedAt: now })
@@ -303,11 +366,15 @@ export function claimTask(
         : takeover
           ? 'task.claim_taken_over'
           : 'task.claimed',
+      ...(poolChanges ? { changes: poolChanges } : {}),
       meta: {
         ...taskMeta(task, project.key),
         ...(previousHolder ? { previousHolder } : {}),
+        ...(poolChanges ? { fromPool: true } : {}),
       },
     });
+    if (poolChanges) onPoolTaskClaimed(tx, task, actor);
+    move.enter();
     emitAfterCommit(tx, taskEvent('task.claimed', task, actor));
   });
   return getTask(deps, actor, taskId);

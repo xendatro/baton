@@ -7,6 +7,7 @@ import {
   SquareCheckBigIcon,
   UserPlusIcon,
   UsersIcon,
+  WorkflowIcon,
   type LucideIcon,
 } from 'lucide-react';
 import type { NotificationType } from '@shared/constants';
@@ -66,6 +67,12 @@ export const NOTIFICATION_KINDS: Record<NotificationType, NotificationKind> = {
     verb: 'completed a task',
     label: 'Task done',
     tone: 'text-emerald-600 dark:text-emerald-400',
+  },
+  stage_entered: {
+    icon: WorkflowIcon,
+    verb: 'moved a task into a stage you follow',
+    label: 'Stage',
+    tone: 'text-indigo-600 dark:text-indigo-400',
   },
 };
 

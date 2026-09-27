@@ -52,7 +52,8 @@ function make(code: ErrorCode, message: string, details?: unknown): AppError {
 /** Shorthands with the default status for each code. */
 export const errors = {
   unauthorized: (message = 'Sign in to continue') => make('unauthorized', message),
-  forbidden: (message = "You don't have permission to do that") => make('forbidden', message),
+  forbidden: (message = "You don't have permission to do that", details?: unknown) =>
+    make('forbidden', message, details),
   /** Also used for resources in teams the caller doesn't belong to (never leak existence). */
   notFound: (what = 'Resource') => make('not_found', `${what} not found`),
   /** `not_found` with a specific message (e.g. naming the ref and the valid values). */

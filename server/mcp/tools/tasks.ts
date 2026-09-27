@@ -6,6 +6,7 @@ import {
   claimNextTaskInputSchema,
   createTaskInputSchema,
   listTasksQuerySchema,
+  moveTaskInputSchema,
   PRIORITY_INPUT_MESSAGE,
   priorityInputSchema,
   TASK_BLOCKED_FILTERS,
@@ -18,6 +19,7 @@ import {
   type TaskCard,
 } from '@shared/schemas/tasks';
 import type { Reply } from '@shared/schemas/core';
+import { APPROVAL_DECISIONS, PIPELINE_LIMITS } from '@shared/schemas/pipelines';
 import { errors, isAppError } from '../../lib/errors';
 import { appPaths } from '../../lib/urls';
 import { listEntityActivity } from '../../services/activity';
@@ -32,7 +34,9 @@ import {
   resolveTask,
   resolveUser,
 } from '../../services/refs';
+import { decideApproval } from '../../services/pipelines';
 import { listReplyPage } from '../../services/replies';
+import { listStatuses } from '../../services/statuses';
 import {
   createTask,
   createTaskFromIssue,
@@ -94,6 +98,34 @@ const issueLinkField = toolInput({
       "fixes: the issue is resolved when the task is done (only for the issue's author or with RESOLVE_ISSUES); relates: just a reference",
     ),
 });
+const evidenceField = z
+  .array(
+    toolInput({
+      criterion: z.string().min(1).describe("The criterion's id (get_task stage.criteria[].id)"),
+      text: z
+        .string()
+        .max(PIPELINE_LIMITS.evidence)
+        .describe('What you did to meet it: a summary, a link, test output ("" removes it)'),
+    }),
+  )
+  .max(PIPELINE_LIMITS.criteria)
+  .describe(
+    "Evidence for the current stage's exit criteria, one entry per criterion. Saved even when the move is still blocked",
+  );
+
+/** The tools' evidence list as the services take it (criterion id → text). */
+function evidenceOf(list: Array<{ criterion: string; text: string }> | undefined) {
+  return list ? Object.fromEntries(list.map((item) => [item.criterion, item.text])) : undefined;
+}
+const forceField = z
+  .boolean()
+  .describe(
+    'Team owner or administrator only: move past the stage rules (needs reason; audited). Never use it to skip a review',
+  );
+const reasonField = z
+  .string()
+  .max(PIPELINE_LIMITS.reason)
+  .describe('Why the move is forced (with force: true)');
 const leaseField = z
   .number()
   .int()
@@ -191,6 +223,22 @@ function cardOut(ctx: ToolContext, card: TaskCard, teamSlug: string) {
   };
 }
 
+/** The stage with blocked moves keyed by status name (agents move by name). */
+function stageOut(ctx: ToolContext, task: Task) {
+  const { stage } = task;
+  if (!stage) return {};
+  const names = new Map(
+    listStatuses(ctx.deps, ctx.actor, task.projectId).items.map((status) => [
+      status.id,
+      status.name,
+    ]),
+  );
+  const blockedMoves = Object.fromEntries(
+    Object.entries(stage.blockedMoves).map(([id, reason]) => [names.get(id) ?? id, reason]),
+  );
+  return { stage: { ...stage, blockedMoves } };
+}
+
 /** The full task with team-qualified refs and absolute URLs everywhere. */
 function taskOut(ctx: ToolContext, task: Task) {
   const { path, position: _position, ...rest } = task;
@@ -208,6 +256,7 @@ function taskOut(ctx: ToolContext, task: Task) {
     blocking: task.blocking.map(linked),
     issues: task.issues.map(linked),
     attachments: withAbsoluteUrls(ctx.deps, task.attachments),
+    ...stageOut(ctx, task),
   };
 }
 
@@ -350,7 +399,7 @@ const getTaskTool = defineTool({
   name: 'get_task',
   title: 'Get task',
   description:
-    'Full context of a task before you work on it: description (markdown), status, priority, due date, assignees, labels, blockers (blockedBy) and tasks waiting for it (blocking) with their statuses, linked issues (fixes/relates), the claim (holder, key, expiry), attachments, the latest 20 replies, each with parentReplyId (the reply it answers, null for a top-level comment) (replyCount says how many there are; list_replies pages through them all) and the latest 20 history entries (get_activity pages through all of them).',
+    "Full context of a task before you work on it: description (markdown), status, priority, due date, assignees, labels, blockers (blockedBy) and tasks waiting for it (blocking) with their statuses, linked issues (fixes/relates), the claim (holder, key, expiry), attachments, the latest 20 replies, each with parentReplyId (the reply it answers, null for a top-level comment) (replyCount says how many there are; list_replies pages through them all) and the latest 20 history entries (get_activity pages through all of them). When the project has a pipeline, `stage` tells you what to do: the stage's instructions, its exit criteria with the evidence given so far, approvals (given, required, whether you may approve), `missing` (what still blocks moving on), `next` (the stage it moves on to), `blockedMoves` (why other statuses are refused) and `pool` (claim it with claim_task).",
   input: toolInput({ task: taskRef }),
   annotations: { readOnlyHint: true },
   handler: (ctx, input) => {
@@ -481,6 +530,9 @@ const updateTaskTool = defineTool({
       .max(LIMITS.attachmentsPerItem)
       .optional()
       .describe('Pending uploads (from upload_attachment) to attach'),
+    evidence: evidenceField.optional(),
+    force: forceField.optional(),
+    reason: reasonField.optional(),
   }),
   annotations: { destructiveHint: false },
   handler: (ctx, input) => {
@@ -515,6 +567,9 @@ const updateTaskTool = defineTool({
             }
           : undefined,
         attachmentIds: input.attachmentIds,
+        evidence: evidenceOf(input.evidence),
+        force: input.force,
+        reason: input.reason,
       },
       TASK_FIELD_NAMES,
     );
@@ -526,7 +581,7 @@ const moveTaskTool = defineTool({
   name: 'move_task',
   title: 'Move task',
   description:
-    'Moves a task to another status and/or position on the board: right after `after`, right before `before`, or (neither) to the end of the column. Moving into a done status marks it finished: it resolves the issues it fixes, notifies the author and assignees, and releases your claim — the usual last step of your work.',
+    "Moves a task to another status and/or position on the board: right after `after`, right before `before`, or (neither) to the end of the column. Moving into a done status marks it finished: it resolves the issues it fixes, notifies the author and assignees, and releases your claim — the usual last step of your work. In a project with a pipeline, leaving a stage forward needs its exit criteria met (pass `evidence`), its approvals and the right mover; a refused move says exactly what is missing. Stages can't be skipped, and moving back only goes to the previous stage. Passing only `evidence` saves it without moving.",
   input: toolInput({
     task: taskRef,
     status: statusRef.optional().describe('Target status (default: the current one)'),
@@ -538,16 +593,53 @@ const moveTaskTool = defineTool({
       .string()
       .optional()
       .describe('Place right before this task (KEY-12) of the target column'),
+    evidence: evidenceField.optional(),
+    force: forceField.optional(),
+    reason: reasonField.optional(),
   }),
   annotations: { destructiveHint: false },
   handler: (ctx, input) => {
     const { task, project } = taskOf(ctx, input.task);
-    return taskOut(
-      ctx,
-      moveTask(ctx.deps, ctx.actor, task.id, {
+    const data = parseToolInput(
+      moveTaskInputSchema,
+      {
         statusId: statusId(ctx, project.id, input.status),
         afterId: input.after ? taskOf(ctx, input.after).task.id : undefined,
         beforeId: input.before ? taskOf(ctx, input.before).task.id : undefined,
+        evidence: evidenceOf(input.evidence),
+        force: input.force,
+        reason: input.reason,
+      },
+      TASK_FIELD_NAMES,
+    );
+    return taskOut(ctx, moveTask(ctx.deps, ctx.actor, task.id, data));
+  },
+});
+
+const approveTaskTool = defineTool({
+  name: 'approve_task',
+  title: 'Approve task',
+  description:
+    "Approves the task's current pipeline stage, or requests changes (decision: request_changes), with an optional comment shown in the task's history. Only the people and agents the stage names as approvers may do it (get_task's stage.approvals.canApprove); each counts once, and a new decision replaces your previous one. Requesting changes sends the task back to the previous stage when the stage allows it. When the last needed approval arrives and the stage auto-advances, the task moves on.",
+  input: toolInput({
+    task: taskRef,
+    decision: z
+      .enum(APPROVAL_DECISIONS)
+      .describe('approve, or request_changes (explain what to change in comment)'),
+    comment: z
+      .string()
+      .max(PIPELINE_LIMITS.comment)
+      .optional()
+      .describe('Why: what you checked, or what has to change'),
+  }),
+  annotations: { destructiveHint: false },
+  handler: (ctx, input) => {
+    const { task } = taskOf(ctx, input.task);
+    return taskOut(
+      ctx,
+      decideApproval(ctx.deps, ctx.actor, task.id, {
+        decision: input.decision,
+        comment: input.comment,
       }),
     );
   },
@@ -667,7 +759,7 @@ const claimTaskTool = defineTool({
   name: 'claim_task',
   title: 'Claim task',
   description:
-    'Claims a specific task (needs UPDATE_TASKS or being its author), telling everyone you are working on it. Claiming a task you already hold renews it. If someone else holds a valid claim it fails with who holds it, unless force: true, which takes the claim over (UPDATE_TASKS; audited as a takeover) — only do that when the holder has clearly stopped. A task in a done status must be moved to an open status (moveToStatus) to be claimed.',
+    "Claims a specific task (needs UPDATE_TASKS or being its author), telling everyone you are working on it. Claiming a task you already hold renews it. If someone else holds a valid claim it fails with who holds it, unless force: true, which takes the claim over (UPDATE_TASKS; audited as a takeover) — only do that when the holder has clearly stopped. A task in a done status must be moved to an open status (moveToStatus) to be claimed. A task waiting in a pipeline stage's pool (get_task's stage.pool) can be claimed by the pool's members only, and claiming assigns it to you.",
   input: toolInput({
     task: taskRef,
     force: z.boolean().optional().describe("Take over someone else's claim"),
@@ -733,6 +825,7 @@ export const tasksTools: McpTool[] = [
   createTaskTool,
   updateTaskTool,
   moveTaskTool,
+  approveTaskTool,
   deleteTaskTool,
   restoreTaskTool,
   createFromIssueTool,

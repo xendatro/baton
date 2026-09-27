@@ -64,6 +64,8 @@ const DOCUMENTED_ADDITIONS = [
   'get_project_permissions',
   'set_project_permission_override',
   'remove_project_permission_override',
+  // tasks (DECISIONS 2026-09-27 pipelines D)
+  'approve_task',
 ].sort();
 
 let ctx: TestContext;

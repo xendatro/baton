@@ -72,6 +72,8 @@ import { useMarkItemRead } from '../inbox/useMarkItemRead';
 import { copyText } from '../teams/clipboard';
 import { useCreateLabel, useLabels, useStatuses } from '../projects/queries';
 import { ClaimPanel } from './ClaimPanel';
+import { ForceMoveDialog } from './ForceMoveDialog';
+import { StagePanel } from './StagePanel';
 import {
   restoreDeletedTask,
   useAssignables,
@@ -164,6 +166,8 @@ function TaskView({ task, team, project }: { task: Task; team: MeTeam; project: 
   const [editingTitle, setEditingTitle] = useState(false);
   const [editingDescription, setEditingDescription] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  /** A move the stage rules block, which the viewer may force (owner / administrator). */
+  const [forcing, setForcing] = useState<{ statusId: string; reason: string } | null>(null);
 
   const save = (input: UpdateTaskInput, optimistic?: Partial<Task>, success?: string) =>
     update.mutateAsync({ input, optimistic }).then(
@@ -231,7 +235,7 @@ function TaskView({ task, team, project }: { task: Task; team: MeTeam; project: 
   useHotkey('escape', back.goBack, {
     description: 'Close the task',
     group: 'Task',
-    enabled: picker === null && !editingTitle && !editingDescription && !confirmDelete,
+    enabled: picker === null && !editingTitle && !editingDescription && !confirmDelete && !forcing,
   });
 
   const url = `${window.location.origin}${task.path}`;
@@ -360,6 +364,27 @@ function TaskView({ task, team, project }: { task: Task; team: MeTeam; project: 
 
   const statusList = statuses.data ?? [];
   const labelList = labels.data ?? [];
+  const blockedMoves = task.stage?.blockedMoves ?? {};
+
+  /** Changes the status, or explains why the pipeline blocks it (design §5). */
+  const changeStatus = (statusId: string) => {
+    const next = statusList.find((status) => status.id === statusId);
+    if (!next || statusId === task.status.id) return;
+    const blocked = blockedMoves[statusId];
+    if (blocked) {
+      if (task.stage?.canForce) setForcing({ statusId, reason: blocked });
+      else toast.error(`Can’t move to ${next.name}: ${blocked}`);
+      return;
+    }
+    quietly(
+      save(
+        { statusId },
+        {
+          status: { id: next.id, name: next.name, color: next.color, category: next.category },
+        },
+      ),
+    );
+  };
 
   return (
     <PageContainer>
@@ -422,7 +447,7 @@ function TaskView({ task, team, project }: { task: Task; team: MeTeam; project: 
           <ClaimPanel
             task={task}
             viewerId={viewerId}
-            canClaim={canUpdate}
+            canClaim={canUpdate || Boolean(task.stage?.pool?.canClaim)}
             canTakeOver={access.has('UPDATE_TASKS')}
           />
           <dl className="grid grid-cols-1 gap-1">
@@ -434,23 +459,8 @@ function TaskView({ task, team, project }: { task: Task; team: MeTeam; project: 
                 onOpenChange={(open) => setPicker(open ? 'status' : null)}
                 disabled={!canUpdate}
                 align="end"
-                onChange={(statusId) => {
-                  const next = statusList.find((status) => status.id === statusId);
-                  if (!next || statusId === task.status.id) return;
-                  quietly(
-                    save(
-                      { statusId },
-                      {
-                        status: {
-                          id: next.id,
-                          name: next.name,
-                          color: next.color,
-                          category: next.category,
-                        },
-                      },
-                    ),
-                  );
-                }}
+                reasons={blockedMoves}
+                onChange={changeStatus}
               >
                 <PropertyButton disabled={!canUpdate} label={`Status: ${task.status.name}`}>
                   <StatusBadge status={task.status} />
@@ -646,7 +656,24 @@ function TaskView({ task, team, project }: { task: Task; team: MeTeam; project: 
         </aside>
 
         <div className="min-w-0 lg:col-start-1 lg:row-start-2">
-          <section aria-labelledby="description-heading" className="lg:mt-6">
+          {task.stage ? (
+            <div className="lg:mt-6">
+              <StagePanel
+                task={{ ...task, stage: task.stage }}
+                teamId={team.id}
+                moving={update.isPending}
+                onMoveOn={
+                  task.stage.next
+                    ? () => changeStatus(task.stage?.next?.id ?? task.status.id)
+                    : undefined
+                }
+              />
+            </div>
+          ) : null}
+          <section
+            aria-labelledby="description-heading"
+            className={cn(task.stage ? 'mt-6' : 'lg:mt-6')}
+          >
             <div className="mb-2 flex items-center justify-between gap-2">
               <h2 id="description-heading" className="text-sm font-semibold">
                 Description
@@ -745,6 +772,19 @@ function TaskView({ task, team, project }: { task: Task; team: MeTeam; project: 
           </section>
         </div>
       </div>
+      <ForceMoveDialog
+        open={forcing !== null}
+        onOpenChange={(open) => (open ? undefined : setForcing(null))}
+        target={statusList.find((status) => status.id === forcing?.statusId)?.name ?? ''}
+        blockedBy={forcing?.reason ?? ''}
+        onConfirm={(reason) =>
+          save(
+            { statusId: forcing?.statusId ?? task.status.id, force: true, reason },
+            undefined,
+            'Moved past the stage rules',
+          ).then(() => setForcing(null))
+        }
+      />
       <ConfirmDialog
         open={confirmDelete}
         onOpenChange={setConfirmDelete}

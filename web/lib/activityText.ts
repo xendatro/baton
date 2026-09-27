@@ -416,6 +416,78 @@ function joinChanges(
   return parts;
 }
 
+/** Pipeline actions (design §5): approvals, forced moves, evidence, copied pipelines. */
+function pipelineSentence(entry: ActivityEntry, subject: ActivitySubject): ActivityPart[] | null {
+  const stage = metaString(entry, 'stage');
+  const inStage: ActivityPart[] = stage ? [{ text: 'in' }, { text: stage, emphasis: true }] : [];
+  const item: ActivityPart[] =
+    subject === 'this' ? [] : entityPhrase(entry, { withNoun: false, withTitle: false });
+  const comment = metaString(entry, 'comment');
+  const quoted: ActivityPart[] = comment ? [{ text: ':' }, { text: `“${comment}”` }] : [];
+  switch (entry.action) {
+    case 'task.approved':
+      return [
+        { text: 'approved' },
+        ...(item.length ? item : [{ text: 'this' }]),
+        ...inStage,
+        ...quoted,
+      ];
+    case 'task.changes_requested':
+      return [
+        { text: 'requested changes' },
+        ...(item.length ? [{ text: 'on' }, ...item] : []),
+        ...inStage,
+        ...quoted,
+      ];
+    case 'task.forced': {
+      const status = entry.changes.status;
+      const reason = metaString(entry, 'reason');
+      return [
+        { text: 'forced' },
+        ...(item.length ? item : [{ text: 'a move' }]),
+        ...(status
+          ? [
+              { text: 'from' },
+              { text: formatValue(status.from), emphasis: true },
+              { text: 'to' },
+              { text: formatValue(status.to), emphasis: true },
+            ]
+          : []),
+        { text: 'past the stage rules' },
+        ...(reason ? [{ text: ':' }, { text: `“${reason}”` }] : []),
+      ];
+    }
+    case 'task.approvals_dismissed': {
+      const count = typeof entry.meta.count === 'number' ? entry.meta.count : 0;
+      return [
+        { text: `dismissed ${count === 1 ? 'an approval' : `${count} approvals`}` },
+        ...(item.length ? [{ text: 'of' }, ...item] : []),
+        ...inStage,
+        { text: entry.meta.reason === 'evidence' ? 'by changing the evidence' : 'by editing it' },
+      ];
+    }
+    case 'task.evidence_updated': {
+      const criteria = Object.keys(entry.changes);
+      return [
+        { text: 'gave evidence for' },
+        { text: criteria.map((name) => `“${name}”`).join(', ') || 'a criterion', emphasis: true },
+        ...(item.length ? [{ text: 'on' }, ...item] : []),
+        ...inStage,
+      ];
+    }
+    case 'project.pipeline_copied': {
+      const from = metaString(entry, 'from');
+      return [
+        { text: 'copied the pipeline of' },
+        { text: from ?? 'another project', emphasis: true },
+        ...(subject === 'this' ? [] : [{ text: 'into' }, ...item]),
+      ];
+    }
+    default:
+      return null;
+  }
+}
+
 /** The sentence after the actor's name, as parts to render. */
 export function describeActivity(
   entry: ActivityEntry,
@@ -424,6 +496,8 @@ export function describeActivity(
   const subject = options.subject ?? 'this';
   const verb = verbOf(entry.action);
   const changes = Object.entries(entry.changes);
+  const pipeline = pipelineSentence(entry, subject);
+  if (pipeline) return pipeline;
 
   if (subject === 'this') {
     if (changes.length > 0 && !LIFECYCLE.has(verb)) {

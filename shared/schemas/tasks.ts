@@ -17,6 +17,12 @@ import {
   userSummarySchema,
   viaKeySchema,
 } from './core';
+import {
+  evidenceInputSchema,
+  forceMoveFields,
+  taskPipelineSummarySchema,
+  taskStageSchema,
+} from './pipelines';
 import { statusSchema } from './projects';
 
 /**
@@ -146,6 +152,8 @@ export const taskCardSchema = taskSummarySchema.extend({
    * board and the list.
    */
   unreadCount: z.number().int().nonnegative().optional(),
+  /** What blocks it in its stage (design §5); null when the stage has no such rules. */
+  pipeline: taskPipelineSummarySchema.nullable().optional(),
 });
 export type TaskCard = z.infer<typeof taskCardSchema>;
 
@@ -195,6 +203,11 @@ export const taskSchema = taskCardSchema.extend({
   reactions: z.array(reactionSummarySchema),
   /** Whether the viewer gets reply notifications. */
   subscribed: z.boolean(),
+  /**
+   * The task's stage in the project's pipeline (design §5): instructions, exit criteria with
+   * evidence, approvals, what is missing to move on. Null when the project has no stage rules.
+   */
+  stage: taskStageSchema.nullable().optional(),
 });
 export type Task = z.infer<typeof taskSchema>;
 
@@ -401,6 +414,10 @@ export const updateTaskInputSchema = z
     issueLinks: issueLinksChangeSchema.optional(),
     /** Pending uploads to attach. */
     attachmentIds: idListSchema(LIMITS.attachmentsPerItem).optional(),
+    /** Evidence for the current stage's exit criteria (criterion id → text). */
+    evidence: evidenceInputSchema.optional(),
+    /** Owner/administrator: move past the stage rules (needs `reason`). */
+    ...forceMoveFields,
   })
   .refine((value) => Object.values(value).some((field) => field !== undefined), {
     message: 'Nothing to update',
@@ -417,6 +434,10 @@ export const moveTaskInputSchema = z.object({
   statusId: idSchema.optional(),
   afterId: idSchema.optional(),
   beforeId: idSchema.optional(),
+  /** Evidence for the current stage's exit criteria (criterion id → text), saved first. */
+  evidence: evidenceInputSchema.optional(),
+  /** Owner/administrator: move past the stage rules (needs `reason`). */
+  ...forceMoveFields,
 });
 export type MoveTaskInput = z.infer<typeof moveTaskInputSchema>;
 

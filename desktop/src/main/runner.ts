@@ -17,7 +17,9 @@ import { DEFAULT_BACKOFF_MS } from './harness/usageLimits';
  * headless harness session, with no cap on how many run at once. A job's chain is tried in
  * order: harnesses not installed or out of usage until later are skipped, and a harness that
  * runs out of usage mid-job hands the job to the next one. A killed or failed run goes back to
- * the owner ("Waiting for your OK") rather than straight back into the queue.
+ * the owner ("Waiting for your OK") rather than straight back into the queue. A job cancelled on
+ * Baton meanwhile (its task was deleted, BAT-33) is killed when a heartbeat reports it, and isn't
+ * held.
  */
 
 const HEARTBEAT_MS = 30_000;
@@ -90,6 +92,8 @@ export class Runner extends EventEmitter {
   private runnerId: string | null = null;
   private waitingCount = 0;
   private readonly running = new Map<string, RunningJob>();
+  /** Running jobs cancelled on Baton: killed, and released without holding them. */
+  private readonly cancelled = new Set<string>();
   private installed = new Map<HarnessId, HarnessInfo>();
   private stopController: AbortController | null = null;
 
@@ -159,6 +163,20 @@ export class Runner extends EventEmitter {
     this.running.get(jobId)?.controller.abort();
   }
 
+  /** Kills the harness of jobs cancelled on Baton (e.g. their task was deleted, BAT-33). */
+  cancel(jobIds: readonly string[]): void {
+    for (const jobId of jobIds) {
+      const entry = this.running.get(jobId);
+      if (!entry || this.cancelled.has(jobId)) continue;
+      this.cancelled.add(jobId);
+      this.log(
+        entry,
+        '■ This job was cancelled on Baton (its task may have been deleted); stopping.',
+      );
+      entry.controller.abort();
+    }
+  }
+
   private async register(): Promise<string> {
     const state = await this.api.register({
       machineId: this.store.machineId(),
@@ -193,10 +211,12 @@ export class Runner extends EventEmitter {
         const runnerId = this.runnerId ?? (await this.register());
         const state = await this.api.heartbeat(runnerId, {
           running: this.running.size,
+          jobIds: [...this.running.keys()],
           harnesses: [...this.installed.values()],
           projectIds: this.store.projectIds(),
         });
         this.waitingCount = state.waitingCount;
+        this.cancel(state.cancelledJobIds ?? []);
         this.setStatus(
           state.paused ? 'paused' : this.store.pausedHere() ? 'paused' : 'online',
           state.pausedReason ?? (this.store.pausedHere() ? 'Paused on this machine' : null),
@@ -269,16 +289,22 @@ export class Runner extends EventEmitter {
       const outcome = await this.runChain(entry, brief, folder, usage);
       entry.state = 'finishing';
       this.changed();
-      if (outcome === 'done') {
+      if (this.cancelled.has(job.jobId)) {
+        entry.note = 'Cancelled on Baton; stopped.';
+        await this.api.finish(job.jobId, 'release', { usage });
+      } else if (outcome === 'done') {
         await this.api.finish(job.jobId, 'complete', { usage });
       } else {
         await this.api.finish(job.jobId, 'release', { usage, hold: outcome !== 'out_of_usage' });
       }
     } catch (error) {
       entry.note = error instanceof Error ? error.message : String(error);
-      await this.api.finish(job.jobId, 'release', { usage, hold: true }).catch(() => undefined);
+      await this.api
+        .finish(job.jobId, 'release', { usage, hold: !this.cancelled.has(job.jobId) })
+        .catch(() => undefined);
     } finally {
       this.running.delete(job.jobId);
+      this.cancelled.delete(job.jobId);
       this.changed();
       this.emit('finished', { ...entry, controller: undefined });
     }

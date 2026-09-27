@@ -366,9 +366,11 @@ test('task page: edit the title, change status, claim, release, delete and undo'
   await details.getByRole('button', { name: 'Release' }).click();
   await expect(details.getByText('Nobody is working on this.')).toBeVisible();
 
-  await page.getByRole('button', { name: 'Task actions' }).click();
-  await page.getByRole('menuitem', { name: 'Delete task' }).click();
-  await page.getByRole('alertdialog').getByRole('button', { name: 'Delete task' }).click();
+  // BAT-33: a visible Delete button in the header (also in the Task actions menu).
+  await page.getByRole('button', { name: 'Delete task' }).click();
+  const confirm = page.getByRole('alertdialog');
+  await expect(confirm).toContainText('agents working on it are stopped');
+  await confirm.getByRole('button', { name: 'Delete task' }).click();
   await expect(page).toHaveURL(new RegExp(`${project.path}/tasks$`));
   const toast = page.locator('[data-sonner-toast]', { hasText: `Deleted ${task.ref}` });
   await toast.getByRole('button', { name: 'Undo' }).click();

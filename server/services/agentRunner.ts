@@ -25,6 +25,7 @@ import { errors } from '../lib/errors';
 import { newId } from '../lib/ids';
 import { canViewProject, getProjectAccess } from './access';
 import {
+  cancelledJobIds,
   completeJob,
   jobChanged,
   jobContexts,
@@ -255,7 +256,10 @@ export function runnerHeartbeat(
     .returning()
     .get();
   if (!isOnline(deps, current) || current.running !== row.running) announce(deps, agent, row);
-  return runnerState(deps, agent, row);
+  return {
+    ...runnerState(deps, agent, row),
+    cancelledJobIds: cancelledJobIds(orm, agent.id, input.jobIds ?? []),
+  };
 }
 
 /**

@@ -503,6 +503,27 @@ function stageSection(stage: TaskStage): string {
       }.`,
     );
   }
+  const decisions = [
+    ...(stage.previousApprovals ?? []).flatMap((group) =>
+      group.decisions.map((decision) => ({ ...decision, stage: group.status.name })),
+    ),
+    ...(stage.approvals?.given ?? []).map((decision) => ({
+      ...decision,
+      stage: stage.status.name,
+    })),
+  ].filter((decision) => decision.comment?.trim());
+  if (decisions.length > 0) {
+    parts.push(
+      `### What reviewers said (follow it)\n\n${decisions
+        .map(
+          (decision) =>
+            `- **@${decision.user?.username ?? 'someone'}** ${
+              decision.decision === 'approve' ? 'approved' : 'requested changes'
+            } in ${decision.stage}:\n${quote(decision.comment ?? '')}`,
+        )
+        .join('\n')}`,
+    );
+  }
   if (stage.missing.length > 0) {
     parts.push(
       `### Still missing before it can move on\n\n${stage.missing.map((item) => `- ${item}`).join('\n')}`,

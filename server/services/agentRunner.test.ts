@@ -38,7 +38,9 @@ import {
 import { listDifficulties } from './difficulties';
 import { getTeamPresence } from './presence';
 import { createReply } from './replies';
-import { updateTask } from './tasks';
+import { decideApproval } from './pipelines';
+import { updateStatus } from './statuses';
+import { getTask, updateTask } from './tasks';
 
 /**
  * The desktop app's runners (BAT-24): registering, claiming jobs, whose jobs run without asking,
@@ -209,6 +211,41 @@ describe('job briefs, sessions and usage', () => {
       projectIds: [projectId],
     }).runner;
     expect(jobBrief(ctx.deps, runnerKey, jobId, laptop.id).resume).toEqual({});
+  });
+
+  it('carries reviewers’ comments from earlier stages into the brief', async () => {
+    const runner = register();
+    const statuses = ctx.db.orm
+      .select()
+      .from(s.status)
+      .where(eq(s.status.projectId, projectId))
+      .orderBy(s.status.position)
+      .all();
+    const [open, done] = statuses;
+    if (!open || !done) throw new Error('statuses');
+    updateStatus(ctx.deps, ethanWeb, open.id, {
+      rules: {
+        approvals: {
+          count: 1,
+          rule: { allow: [{ type: 'user', userId: ethan.id }], deny: [] },
+          dismissOnChange: false,
+        },
+      },
+    });
+    decideApproval(ctx.deps, ethanWeb, task.id, {
+      decision: 'approve',
+      comment: 'Add a download link on the web too',
+    });
+    mention(ethanWeb, 'Go @ethan-ai');
+    const [job] = (await nextRunnerJobs(ctx.deps, runnerKey, runner.id, 0)).jobs;
+    const brief = jobBrief(ctx.deps, runnerKey, job?.jobId ?? '', runner.id);
+    expect(brief.prompt).toContain('What reviewers said');
+    expect(brief.prompt).toContain('Add a download link on the web too');
+    // Once the task moves on, the decision is still there, under the stage it was given in.
+    updateTask(ctx.deps, ethanWeb, task.id, { statusId: done.id });
+    expect(getTask(ctx.deps, ethanWeb, task.id).stage?.previousApprovals).toMatchObject([
+      { status: { name: 'Open' }, decisions: [{ comment: 'Add a download link on the web too' }] },
+    ]);
   });
 
   it('records usage when a job completes or is released, and sums it in stats', async () => {

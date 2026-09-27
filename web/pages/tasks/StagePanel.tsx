@@ -112,6 +112,7 @@ export function StagePanel({ task, teamId, onMoveOn, moving }: StagePanelProps) 
         ) : null
       ) : null}
 
+      <PreviousReviews stage={stage} />
       {stage.previousEvidence.length > 0 ? <PreviousEvidence stage={stage} /> : null}
     </section>
   );
@@ -370,6 +371,38 @@ function Approvals({ task }: { task: Task & { stage: TaskStage } }) {
           ) : null}
         </div>
       ) : null}
+    </div>
+  );
+}
+
+/** What reviewers said in earlier stages (their comments stay visible after the task moves on). */
+function PreviousReviews({ stage }: { stage: TaskStage }) {
+  const groups = (stage.previousApprovals ?? [])
+    .map((group) => ({
+      ...group,
+      decisions: group.decisions.filter((decision) => decision.comment?.trim()),
+    }))
+    .filter((group) => group.decisions.length > 0);
+  if (groups.length === 0) return null;
+  return (
+    <div className="mt-4 border-t pt-3">
+      <h3 className="mb-2 text-xs font-medium text-muted-foreground">
+        Reviews from earlier stages
+      </h3>
+      <ul className="grid gap-2" aria-label="Reviews from earlier stages">
+        {groups.flatMap((group) =>
+          group.decisions.map((decision) => (
+            <li key={decision.id} className="rounded-md bg-muted/50 px-3 py-2 text-sm">
+              <p className="text-xs text-muted-foreground">
+                @{decision.user?.username ?? 'someone'}{' '}
+                {decision.decision === 'approve' ? 'approved' : 'requested changes'} in{' '}
+                {group.status.name}
+              </p>
+              <p className="whitespace-pre-wrap">{decision.comment}</p>
+            </li>
+          )),
+        )}
+      </ul>
     </div>
   );
 }

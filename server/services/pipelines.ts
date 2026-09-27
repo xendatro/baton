@@ -1669,6 +1669,39 @@ export function stageOf(db: DbExecutor, viewer: Actor, task: TaskRow): TaskStage
       ];
     });
 
+  const earlierDecisions = db
+    .select()
+    .from(s.taskApproval)
+    .where(and(eq(s.taskApproval.taskId, task.id), isNull(s.taskApproval.dismissedAt)))
+    .orderBy(asc(s.taskApproval.createdAt))
+    .all()
+    .filter((row) => row.statusId !== current.id);
+  const deciders = getUserSummaries(
+    db,
+    earlierDecisions.map((row) => row.userId),
+  );
+  const decisionKeys = getViaKeys(
+    db,
+    earlierDecisions.map((row) => row.viaKeyId),
+  );
+  const previousApprovals = statuses.flatMap((row) => {
+    const decisions = earlierDecisions.filter((decision) => decision.statusId === row.id);
+    if (decisions.length === 0) return [];
+    return [
+      {
+        status: { id: row.id, name: row.name },
+        decisions: decisions.map((decision) => ({
+          id: decision.id,
+          user: decision.userId ? (deciders.get(decision.userId) ?? null) : null,
+          via: decision.viaKeyId ? (decisionKeys.get(decision.viaKeyId) ?? null) : null,
+          decision: decision.decision,
+          comment: decision.comment,
+          createdAt: decision.createdAt.toISOString(),
+        })),
+      },
+    ];
+  });
+
   return {
     status: { id: current.id, name: current.name },
     instructions: rules.instructions,
@@ -1698,6 +1731,7 @@ export function stageOf(db: DbExecutor, viewer: Actor, task: TaskRow): TaskStage
     missing: nextCheck?.missing ?? [],
     blockedMoves,
     previousEvidence,
+    previousApprovals,
   };
 }
 

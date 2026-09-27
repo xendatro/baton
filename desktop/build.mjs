@@ -9,6 +9,9 @@ import { fileURLToPath } from 'node:url';
 const root = path.dirname(fileURLToPath(import.meta.url));
 const out = path.join(root, 'dist');
 const alias = { '@shared': path.resolve(root, '..', 'shared') };
+// Shared code's own imports (zod) resolve from the app's node_modules too, so a release build
+// doesn't need the repository root installed.
+const nodePaths = [path.join(root, 'node_modules')];
 mkdirSync(out, { recursive: true });
 
 await build({
@@ -24,6 +27,7 @@ await build({
   target: 'node22',
   external: ['electron'],
   alias,
+  nodePaths,
   sourcemap: true,
 });
 
@@ -35,6 +39,7 @@ await build({
   format: 'iife',
   target: 'chrome130',
   alias,
+  nodePaths,
   sourcemap: true,
 });
 

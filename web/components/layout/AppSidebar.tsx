@@ -3,6 +3,7 @@ import {
   HomeIcon,
   InboxIcon,
   ListChecksIcon,
+  MonitorDownIcon,
   PlusIcon,
   SearchIcon,
   type LucideIcon,
@@ -235,6 +236,12 @@ export function AppSidebar() {
                   icon={HomeIcon}
                   active={pathname === '/'}
                   shortcut="g d"
+                />
+                <NavLink
+                  to="/download"
+                  label="Desktop app"
+                  icon={MonitorDownIcon}
+                  active={pathname === '/download'}
                 />
               </SidebarMenu>
             </SidebarGroupContent>

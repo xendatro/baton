@@ -325,6 +325,13 @@ export const taskStageSchema = z.object({
   previousEvidence: z.array(
     z.object({ status: stageRefSchema, criteria: z.array(stageCriterionSchema) }),
   ),
+  /**
+   * Approvals and change requests given in earlier stages, with their comments (read-only), so
+   * what a reviewer asked for isn't lost once the task moves on. Optional for older fixtures.
+   */
+  previousApprovals: z
+    .array(z.object({ status: stageRefSchema, decisions: z.array(stageApprovalSchema) }))
+    .optional(),
 });
 export type TaskStage = z.infer<typeof taskStageSchema>;
 

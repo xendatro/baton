@@ -37,6 +37,7 @@ const shellRoutes: RouteObject[] = [
   { index: true, ...page(() => import('./pages/dashboard/DashboardPage')) },
   { path: 'inbox', ...page(() => import('./pages/inbox/InboxPage')) },
   { path: 'my-tasks', ...page(() => import('./pages/my-tasks/MyTasksPage')) },
+  { path: 'download', ...page(() => import('./pages/download/DownloadPage')) },
 
   // teams
   { path: 'join/:code', ...page(() => import('./pages/join/JoinPage')) },

@@ -2,6 +2,7 @@ import {
   ArrowDownIcon,
   ArrowUpIcon,
   CheckIcon,
+  DownloadIcon,
   MonitorIcon,
   PauseIcon,
   PlusIcon,
@@ -9,6 +10,7 @@ import {
   XIcon,
 } from 'lucide-react';
 import { useId, useState, type ReactNode } from 'react';
+import { Link } from 'react-router';
 import { toast } from 'sonner';
 import { resolveChain } from '@shared/agentChains';
 import {
@@ -121,6 +123,14 @@ function DesktopCard() {
     <SettingsCard
       title="Desktop apps"
       description="Each machine running the Baton desktop app. It takes jobs only for the projects you mapped to a folder there."
+      action={
+        <Button asChild size="sm" variant="outline">
+          <Link to="/download">
+            <DownloadIcon aria-hidden="true" />
+            Download the app
+          </Link>
+        </Button>
+      }
     >
       {runners.isPending ? (
         <Skeleton className="h-12" />
@@ -135,6 +145,14 @@ function DesktopCard() {
           icon={MonitorIcon}
           title="No desktop app yet"
           description="Install the Baton desktop app and sign in: its setup guide detects your harnesses, maps projects to folders and runs a test job."
+          action={
+            <Button asChild>
+              <Link to="/download">
+                <DownloadIcon aria-hidden="true" />
+                Download the desktop app
+              </Link>
+            </Button>
+          }
           className="py-6"
         />
       ) : (

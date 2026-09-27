@@ -1,0 +1,82 @@
+name: Desktop release
+
+# Builds the Baton desktop app for Windows, macOS and Linux and publishes it as a GitHub release
+# (the web app links to the latest release's Baton-Setup.exe, Baton.dmg and Baton.AppImage).
+# Run it by pushing a tag `desktop-v<version>` or from the Actions tab.
+
+on:
+  push:
+    tags: ['desktop-v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: --win
+            file: desktop/release/Baton-Setup.exe
+          - os: macos-latest
+            target: --mac
+            file: desktop/release/Baton.dmg
+          - os: ubuntu-latest
+            target: --linux
+            file: desktop/release/Baton.AppImage
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    env:
+      # Unsigned builds for now: no code-signing certificates yet.
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+
+      - run: npm ci
+        working-directory: desktop
+
+      - run: npm run build
+        working-directory: desktop
+
+      - run: npx electron-builder ${{ matrix.target }} --publish never
+        working-directory: desktop
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.os }}
+          path: ${{ matrix.file }}
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(node -p "require('./desktop/package.json').version")
+          tag="${GITHUB_REF_NAME}"
+          if [[ "$tag" != desktop-v* ]]; then tag="desktop-v${version}"; fi
+          notes="Baton desktop app ${version}. Windows: Baton-Setup.exe · macOS: Baton.dmg · Linux: Baton.AppImage. The builds aren't code-signed yet: Windows may show a SmartScreen warning (More info → Run anyway) and macOS a Gatekeeper warning (right-click → Open)."
+          if gh release view "$tag" > /dev/null 2>&1; then
+            gh release upload "$tag" artifacts/* --clobber
+          else
+            gh release create "$tag" artifacts/* --title "Baton desktop ${version}" --notes "$notes" --latest
+          fi

@@ -93,3 +93,14 @@ test('models, whose jobs run and a job waiting for my OK', async ({ page, browse
     [{ harness: 'codex', model: '', effort: 'high' }],
   ]);
 });
+
+test('the desktop app is one click away in the sidebar', async ({ page }) => {
+  await signedInUser(page);
+  await page.goto('/');
+  await page.getByRole('link', { name: 'Desktop app' }).click();
+  await expect(page.getByRole('heading', { name: 'The Baton desktop app' })).toBeVisible();
+  await expect(page.getByRole('link', { name: /^Download for / })).toHaveAttribute(
+    'href',
+    /^https:\/\/github\.com\/xendatro\/baton\/releases\/latest\/download\/Baton/,
+  );
+});

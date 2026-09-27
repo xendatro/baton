@@ -12,8 +12,9 @@
     "typecheck": "tsc -p . --noEmit",
     "test": "vitest run",
     "check": "npm run typecheck && npm run test",
-    "dist:win": "npm run build && electron-builder --win",
-    "dist:mac": "npm run build && electron-builder --mac"
+    "dist:win": "npm run build && electron-builder --win --publish never",
+    "dist:mac": "npm run build && electron-builder --mac --publish never",
+    "dist:linux": "npm run build && electron-builder --linux --publish never"
   },
   "build": {
     "appId": "dev.passthebaton.desktop",
@@ -26,32 +27,60 @@
       "dist/**",
       "package.json"
     ],
+    "extraMetadata": {
+      "main": "dist/main.cjs"
+    },
+    "icon": "build/icon.png",
     "win": {
       "target": [
-        "nsis"
-      ]
-    },
-    "mac": {
-      "target": [
-        "dmg"
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
       ],
-      "category": "public.app-category.developer-tools"
+      "artifactName": "Baton-Setup.${ext}"
     },
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true
-    }
+    },
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "universal"
+          ]
+        }
+      ],
+      "artifactName": "Baton.${ext}",
+      "category": "public.app-category.developer-tools",
+      "identity": null
+    },
+    "linux": {
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "Baton.${ext}",
+      "category": "Development"
+    },
+    "publish": null
   },
   "devDependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.1",
     "@types/node": "^26.6.3",
     "electron": "^44.4.5",
     "electron-builder": "^26.15.3",
     "esbuild": "^0.28.2",
     "typescript": "^6.0.3",
-    "vitest": "^5.0.1"
-  },
-  "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.30.1",
+    "vitest": "^5.0.1",
     "zod": "^4.6.5"
   }
 }

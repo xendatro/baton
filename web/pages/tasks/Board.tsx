@@ -26,7 +26,15 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { PlusIcon } from 'lucide-react';
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react';
+import {
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+  type RefObject,
+} from 'react';
 import { Link } from 'react-router';
 import type { BoardColumn, BoardResponse, TaskCard } from '@shared/schemas/tasks';
 import { StatusIcon } from '@web/components/common/StatusBadge';
@@ -84,9 +92,22 @@ export interface BoardProps {
   onQuickAdd: (statusId: string) => void;
   /** True while filters are applied (empty columns say "No matching tasks"). */
   filtered: boolean;
+  /**
+   * Shown in the first column instead of its "No tasks" placeholder (the project has no tasks
+   * yet), so the columns stay visible behind a small prompt rather than a page-wide empty state.
+   */
+  hint?: ReactNode;
 }
 
-export function Board({ board, canMove, canCreate, onMove, onQuickAdd, filtered }: BoardProps) {
+export function Board({
+  board,
+  canMove,
+  canCreate,
+  onMove,
+  onQuickAdd,
+  filtered,
+  hint,
+}: BoardProps) {
   const [dragLayout, setDragLayout] = useState<Layout | null>(null);
   const [activeId, setActiveId] = useState<string | null>(null);
   // BAT-7: after a drop the dropped layout stays until the board data changes. The optimistic
@@ -260,7 +281,7 @@ export function Board({ board, canMove, canCreate, onMove, onQuickAdd, filtered 
         role="region"
         aria-label="Board"
       >
-        {board.columns.map((column) => (
+        {board.columns.map((column, index) => (
           <Column
             key={column.status.id}
             column={column}
@@ -270,6 +291,7 @@ export function Board({ board, canMove, canCreate, onMove, onQuickAdd, filtered 
             canCreate={canCreate}
             onQuickAdd={onQuickAdd}
             filtered={filtered}
+            hint={index === 0 ? hint : undefined}
           />
         ))}
       </div>
@@ -321,9 +343,19 @@ interface ColumnProps {
   canCreate: boolean;
   onQuickAdd: (statusId: string) => void;
   filtered: boolean;
+  hint?: ReactNode;
 }
 
-function Column({ column, ids, cards, canMove, canCreate, onQuickAdd, filtered }: ColumnProps) {
+function Column({
+  column,
+  ids,
+  cards,
+  canMove,
+  canCreate,
+  onQuickAdd,
+  filtered,
+  hint,
+}: ColumnProps) {
   const { status } = column;
   const { setNodeRef, isOver } = useDroppable({ id: `${COLUMN_PREFIX}${status.id}` });
   const hidden = column.count - column.tasks.length;
@@ -368,7 +400,8 @@ function Column({ column, ids, cards, canMove, canCreate, onQuickAdd, filtered }
             const card = cards.get(id);
             return card ? <SortableCard key={id} task={card} disabled={!canMove} /> : null;
           })}
-          {ids.length === 0 ? (
+          {ids.length === 0 && hint ? <li>{hint}</li> : null}
+          {ids.length === 0 && !hint ? (
             <li className="rounded-lg border border-dashed px-3 py-6 text-center text-xs text-muted-foreground">
               {filtered ? 'No matching tasks' : 'No tasks'}
             </li>

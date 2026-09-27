@@ -3,6 +3,7 @@ import {
   KanbanSquareIcon,
   ListIcon,
   PlusIcon,
+  SparklesIcon,
   SquareKanbanIcon,
   UserIcon,
 } from 'lucide-react';
@@ -30,6 +31,7 @@ import { useProjectAccess } from '@web/lib/permissions';
 import { useRouteContext } from '@web/lib/routeContext';
 import { runShellAction, useShellActionAvailable } from '@web/lib/shellActions';
 import { useDocumentTitle } from '@web/lib/title';
+import { cn } from '@web/lib/utils';
 import { useLabels, useStatuses } from '../projects/queries';
 import { Board, BoardSkeleton } from './Board';
 import { FILTER_SEARCH_ID, FilterBar } from './FilterBar';
@@ -198,24 +200,7 @@ function Tasks({ team, project }: { team: MeTeam; project: MeProject }) {
   const current = view === 'board' ? board : list;
   const total = view === 'board' ? board.data?.total : list.data?.total;
   const nothingYet = total === 0 && filterCount === 0;
-
-  const emptyProject = (
-    <div className="px-4 sm:px-6">
-      <EmptyState
-        icon={KanbanSquareIcon}
-        title="No tasks yet"
-        description="Tasks are the work items of this project. Create one here, or let an agent pick up work with claim_next_task over MCP."
-        action={
-          canCreate && createAvailable ? (
-            <Button onClick={() => newTask()}>
-              <PlusIcon aria-hidden="true" />
-              Create a task
-            </Button>
-          ) : undefined
-        }
-      />
-    </div>
-  );
+  const onCreate = canCreate && createAvailable ? () => newTask() : undefined;
 
   let content;
   if (current.isError && !current.data) {
@@ -231,14 +216,14 @@ function Tasks({ team, project }: { team: MeTeam; project: MeProject }) {
   } else if (view === 'board') {
     content = !board.data ? (
       <BoardSkeleton />
-    ) : nothingYet ? (
-      emptyProject
     ) : (
       <Board
         board={board.data}
         canMove={canMove}
         canCreate={canCreate && createAvailable}
         filtered={filterCount > 0}
+        // Viewers who can't add tasks just see the empty columns.
+        hint={nothingYet && onCreate ? <NoTasksHint onCreate={onCreate} /> : undefined}
         onQuickAdd={(statusId) => newTask(statusId)}
         onMove={(variables) =>
           move.mutate(variables, {
@@ -251,7 +236,17 @@ function Tasks({ team, project }: { team: MeTeam; project: MeProject }) {
     content = !list.data ? (
       <TaskListSkeleton />
     ) : nothingYet ? (
-      emptyProject
+      <>
+        <TaskList
+          tasks={[]}
+          statuses={statuses.data ?? []}
+          options={listOptions}
+          onSort={(sort, order) => setListOptions({ sort, order })}
+        />
+        <div className="px-4 py-3 sm:px-6">
+          <NoTasksHint onCreate={onCreate} className="max-w-md" />
+        </div>
+      </>
     ) : list.data.items.length === 0 ? (
       <div className="px-4 sm:px-6">
         <EmptyState
@@ -303,6 +298,43 @@ function Tasks({ team, project }: { team: MeTeam; project: MeProject }) {
         ) : null}
       </div>
       {content}
+    </div>
+  );
+}
+
+/**
+ * The prompt of a project without tasks: a compact card in the board's first column (or under the
+ * list's headers) instead of a page-wide empty state, so the project's statuses stay visible.
+ * Announced once as it appears (a polite status); the button opens the New task dialog, like `c`.
+ */
+function NoTasksHint({ onCreate, className }: { onCreate?: () => void; className?: string }) {
+  return (
+    <div
+      role="status"
+      className={cn(
+        'rounded-lg border border-dashed border-primary/40 bg-card p-3 text-sm shadow-xs',
+        className,
+      )}
+    >
+      <p className="flex items-center gap-2 font-medium">
+        <SparklesIcon className="size-4 shrink-0 text-primary" aria-hidden="true" />
+        No tasks yet
+      </p>
+      <p className="mt-1 text-xs text-muted-foreground">
+        {onCreate
+          ? 'Add the first one, or let an agent pick up work with claim_next_task over MCP.'
+          : 'Tasks added to this project will show up here.'}
+      </p>
+      {onCreate ? (
+        <Button size="sm" className="mt-3" onClick={onCreate}>
+          <PlusIcon aria-hidden="true" />
+          Create a task
+          <Kbd
+            keys="c"
+            className="ml-1 hidden border-primary-foreground/30 bg-primary-foreground/15 text-primary-foreground sm:inline-flex"
+          />
+        </Button>
+      ) : null}
     </div>
   );
 }

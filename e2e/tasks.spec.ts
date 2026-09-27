@@ -87,9 +87,12 @@ function column(page: Page, name: string) {
 test('creates tasks from the dialog and a column quick-add', async ({ page }) => {
   const project = await setup(page);
   await page.goto(`${project.path}/tasks`);
-  await expect(page.getByRole('heading', { name: 'No tasks yet' })).toBeVisible();
-  // `c` works once the shell has loaded the dialog (the New task button shows it).
-  await expect(page.getByRole('button', { name: 'Create a task' })).toBeVisible();
+  // An empty project still shows its columns, with a small prompt in the first one.
+  await expect(column(page, 'Done')).toBeVisible();
+  const hint = column(page, 'Open').getByRole('status').filter({ hasText: 'No tasks yet' });
+  await expect(hint).toBeVisible();
+  // `c` works once the shell has loaded the dialog (the prompt's button shows it).
+  await expect(hint.getByRole('button', { name: 'Create a task' })).toBeVisible();
 
   await page.keyboard.press('c');
   const dialog = page.getByRole('dialog', { name: 'New task' });
@@ -107,6 +110,7 @@ test('creates tasks from the dialog and a column quick-add', async ({ page }) =>
   await expect(page.locator('[data-sonner-toast]', { hasText: 'Created RKT-2' })).toBeVisible();
   await page.keyboard.press('Escape');
   await expect(dialog).toBeHidden();
+  await expect(page.getByText('No tasks yet')).toBeHidden();
 
   const open = column(page, 'Open');
   await expect(open.getByRole('link', { name: /Launch checklist/ })).toBeVisible();

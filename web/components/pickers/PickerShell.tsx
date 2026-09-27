@@ -26,6 +26,8 @@ export interface PickerShellProps {
   emptyText?: string;
   align?: 'start' | 'center' | 'end';
   className?: string;
+  /** Below the list, outside the search's reach (e.g. a "Manage labels" link). */
+  footer?: ReactNode;
   children: ReactNode;
 }
 
@@ -43,6 +45,7 @@ export function PickerShell({
   emptyText = 'No results.',
   align = 'start',
   className,
+  footer,
   children,
 }: PickerShellProps) {
   return (
@@ -61,6 +64,7 @@ export function PickerShell({
             {children}
           </CommandList>
         </Command>
+        {footer ? <div className="border-t p-1">{footer}</div> : null}
       </PopoverContent>
     </Popover>
   );

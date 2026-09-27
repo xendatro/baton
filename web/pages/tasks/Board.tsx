@@ -33,6 +33,7 @@ import { StatusIcon } from '@web/components/common/StatusBadge';
 import { Button } from '@web/components/ui/button';
 import { Skeleton } from '@web/components/ui/skeleton';
 import { cn } from '@web/lib/utils';
+import { ColumnMenu } from './CustomizeMenu';
 import { columnOfItem, COLUMN_PREFIX, dropTarget, layoutOf, type Layout } from './helpers';
 import type { MoveVariables } from './queries';
 import { TaskCardBody } from './TaskCard';
@@ -84,9 +85,19 @@ export interface BoardProps {
   onQuickAdd: (statusId: string) => void;
   /** True while filters are applied (empty columns say "No matching tasks"). */
   filtered: boolean;
+  /** Where a column's "Edit statuses" goes; no column menu without it. */
+  editStatusHref?: (statusId: string) => string;
 }
 
-export function Board({ board, canMove, canCreate, onMove, onQuickAdd, filtered }: BoardProps) {
+export function Board({
+  board,
+  canMove,
+  canCreate,
+  onMove,
+  onQuickAdd,
+  filtered,
+  editStatusHref,
+}: BoardProps) {
   const [dragLayout, setDragLayout] = useState<Layout | null>(null);
   const [activeId, setActiveId] = useState<string | null>(null);
   // BAT-7: after a drop the dropped layout stays until the board data changes. The optimistic
@@ -270,6 +281,7 @@ export function Board({ board, canMove, canCreate, onMove, onQuickAdd, filtered 
             canCreate={canCreate}
             onQuickAdd={onQuickAdd}
             filtered={filtered}
+            editStatusHref={editStatusHref}
           />
         ))}
       </div>
@@ -321,9 +333,19 @@ interface ColumnProps {
   canCreate: boolean;
   onQuickAdd: (statusId: string) => void;
   filtered: boolean;
+  editStatusHref?: (statusId: string) => string;
 }
 
-function Column({ column, ids, cards, canMove, canCreate, onQuickAdd, filtered }: ColumnProps) {
+function Column({
+  column,
+  ids,
+  cards,
+  canMove,
+  canCreate,
+  onQuickAdd,
+  filtered,
+  editStatusHref,
+}: ColumnProps) {
   const { status } = column;
   const { setNodeRef, isOver } = useDroppable({ id: `${COLUMN_PREFIX}${status.id}` });
   const hidden = column.count - column.tasks.length;
@@ -331,7 +353,7 @@ function Column({ column, ids, cards, canMove, canCreate, onQuickAdd, filtered }
   return (
     <section
       aria-labelledby={headingId}
-      className="flex max-h-full w-[85vw] max-w-[18.5rem] shrink-0 snap-start flex-col rounded-xl bg-muted/50 sm:w-72 dark:bg-muted/30"
+      className="group/column flex max-h-full w-[85vw] max-w-[18.5rem] shrink-0 snap-start flex-col rounded-xl bg-muted/50 sm:w-72 dark:bg-muted/30"
     >
       <header className="flex items-center gap-2 px-3 pt-3 pb-2">
         <StatusIcon status={status} />
@@ -354,6 +376,13 @@ function Column({ column, ids, cards, canMove, canCreate, onQuickAdd, filtered }
           >
             <PlusIcon aria-hidden="true" />
           </Button>
+        ) : null}
+        {editStatusHref ? (
+          <ColumnMenu
+            statusName={status.name}
+            editHref={editStatusHref(status.id)}
+            className={canCreate ? '-ml-1' : 'ml-auto'}
+          />
         ) : null}
       </header>
       <SortableContext id={status.id} items={ids} strategy={verticalListSortingStrategy}>

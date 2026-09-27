@@ -86,6 +86,7 @@ import {
   useUpdateTask,
 } from './queries';
 import { tasksViewPath, useTaskView } from './filters';
+import { projectSettingsPath } from './settingsPaths';
 import { TaskRelations } from './TaskRelations';
 
 /**
@@ -552,6 +553,11 @@ function TaskView({ task, team, project }: { task: Task; team: MeTeam; project: 
                 onCreate={
                   access.has('MANAGE_LABELS')
                     ? (name) => createLabel.mutateAsync({ name })
+                    : undefined
+                }
+                manageHref={
+                  access.has('MANAGE_LABELS')
+                    ? projectSettingsPath(`/t/${team.slug}/p/${project.key}`, 'labels')
                     : undefined
                 }
                 onChange={(labelIds) =>

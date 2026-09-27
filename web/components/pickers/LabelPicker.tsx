@@ -1,5 +1,6 @@
-import { PlusIcon, TagIcon } from 'lucide-react';
+import { PlusIcon, Settings2Icon, TagIcon } from 'lucide-react';
 import { useState } from 'react';
+import { Link } from 'react-router';
 import { LabelChip } from '@web/components/common/LabelChip';
 import { Button } from '@web/components/ui/button';
 import { CommandGroup, CommandItem } from '@web/components/ui/command';
@@ -26,6 +27,8 @@ export interface LabelPickerProps extends PickerControlProps {
    * the callback returns it.
    */
   onCreate?: (name: string) => Promise<LabelOption | void> | LabelOption | void;
+  /** Adds a "Manage labels" link to the project's label settings at the bottom. */
+  manageHref?: string;
 }
 
 /** Multi-select label picker; the popover stays open while toggling. */
@@ -34,6 +37,7 @@ export function LabelPicker({
   value,
   onChange,
   onCreate,
+  manageHref,
   open,
   onOpenChange,
   disabled,
@@ -101,6 +105,18 @@ export function LabelPicker({
       onSearchChange={setSearch}
       emptyText={onCreate ? 'No labels yet.' : 'No labels found.'}
       align={align}
+      footer={
+        manageHref ? (
+          <Link
+            to={manageHref}
+            onClick={() => setOpen(false)}
+            className="flex items-center gap-2 rounded-sm px-2 py-1.5 text-sm text-muted-foreground outline-none hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:text-accent-foreground focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <Settings2Icon className="size-4" aria-hidden="true" />
+            Manage labels
+          </Link>
+        ) : undefined
+      }
     >
       {labels.length ? (
         <CommandGroup>

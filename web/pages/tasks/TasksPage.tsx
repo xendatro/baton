@@ -4,8 +4,10 @@ import {
   ListIcon,
   PlusIcon,
   SquareKanbanIcon,
+  TagsIcon,
   UserIcon,
 } from 'lucide-react';
+import { useNavigate } from 'react-router';
 import { toast } from 'sonner';
 import type { MeProject, MeTeam } from '@shared/schemas/core';
 import { EmptyState } from '@web/components/common/EmptyState';
@@ -32,6 +34,7 @@ import { runShellAction, useShellActionAvailable } from '@web/lib/shellActions';
 import { useDocumentTitle } from '@web/lib/title';
 import { useLabels, useStatuses } from '../projects/queries';
 import { Board, BoardSkeleton } from './Board';
+import { CustomizeMenu } from './CustomizeMenu';
 import { FILTER_SEARCH_ID, FilterBar } from './FilterBar';
 import {
   activeFilterCount,
@@ -45,6 +48,7 @@ import {
   type TaskView,
 } from './filters';
 import { useAssignables, useBoard, useMoveTask, useTaskList } from './queries';
+import { projectSettingsPath } from './settingsPaths';
 import { TaskList, TaskListSkeleton } from './TaskList';
 
 /**
@@ -70,6 +74,10 @@ function Tasks({ team, project }: { team: MeTeam; project: MeProject }) {
   const access = useProjectAccess(team.id, project.id);
   const canCreate = access.has('CREATE_TASKS');
   const canMove = access.has('UPDATE_TASKS');
+  const canManageStatuses = access.has('MANAGE_STATUSES');
+  const canManageLabels = access.has('MANAGE_LABELS');
+  const projectBase = `/t/${team.slug}/p/${project.key}`;
+  const navigate = useNavigate();
   const createAvailable = useShellActionAvailable('task.create');
   const [view, setView] = useTaskView(project.id);
   const { filters, listOptions, setFilters, setListOptions } = useTaskFilters();
@@ -126,6 +134,30 @@ function Tasks({ team, project }: { team: MeTeam; project: MeProject }) {
           },
         ]
       : []),
+    ...(canManageStatuses
+      ? [
+          {
+            id: `tasks.${project.id}.editStatuses`,
+            label: 'Edit statuses',
+            group: 'Board',
+            icon: KanbanSquareIcon,
+            keywords: ['customize board', 'columns', 'workflow', 'status settings'],
+            perform: () => void navigate(projectSettingsPath(projectBase, 'statuses')),
+          },
+        ]
+      : []),
+    ...(canManageLabels
+      ? [
+          {
+            id: `tasks.${project.id}.editLabels`,
+            label: 'Edit labels',
+            group: 'Board',
+            icon: TagsIcon,
+            keywords: ['customize board', 'tags', 'label settings'],
+            perform: () => void navigate(projectSettingsPath(projectBase, 'labels')),
+          },
+        ]
+      : []),
   ]);
 
   const actions = (
@@ -161,6 +193,11 @@ function Tasks({ team, project }: { team: MeTeam; project: MeProject }) {
           </TooltipContent>
         </Tooltip>
       </ToggleGroup>
+      <CustomizeMenu
+        projectBase={projectBase}
+        canManageStatuses={canManageStatuses}
+        canManageLabels={canManageLabels}
+      />
       {canCreate && createAvailable ? (
         <Button size="sm" onClick={() => newTask()}>
           <PlusIcon aria-hidden="true" />
@@ -239,6 +276,11 @@ function Tasks({ team, project }: { team: MeTeam; project: MeProject }) {
         canMove={canMove}
         canCreate={canCreate && createAvailable}
         filtered={filterCount > 0}
+        editStatusHref={
+          canManageStatuses
+            ? (statusId) => projectSettingsPath(projectBase, 'statuses', statusId)
+            : undefined
+        }
         onQuickAdd={(statusId) => newTask(statusId)}
         onMove={(variables) =>
           move.mutate(variables, {

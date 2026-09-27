@@ -557,7 +557,7 @@ const updateTaskTool = defineTool({
   name: 'update_task',
   title: 'Update task',
   description:
-    'Changes any field of a task. Lists (assignees, assigneeRoles, labels, blockedBy, issues) take {set} or {add, remove}. Title and description need to be the author or EDIT_ANY_CONTENT; the rest the author or UPDATE_TASKS. A new status puts the task at the end of that column (use move_task to place it exactly) and applies that stage’s rules (its hand-off decides the assignees there; onEnter may resolve the issues it fixes, notify the author and release the claim). Assignees are those of the task’s current stage; setting them together with a new status makes them the new stage’s assignees.',
+    'Changes any field of a task. Lists (assignees, assigneeRoles, labels, blockedBy, issues) take {set} (replaces the whole list) or {add, remove} (incremental: keeps everything else, so use {add} to bring more people or roles onto a task at any time, in any stage, including one that hands off to a pool, which it then leaves; added people are notified and added agents get an assigned job). Title and description need to be the author or EDIT_ANY_CONTENT; the rest the author or UPDATE_TASKS. A new status puts the task at the end of that column (use move_task to place it exactly) and applies that stage’s rules (its hand-off decides the assignees there; onEnter may resolve the issues it fixes, notify the author and release the claim). Assignees are those of the task’s current stage; setting them together with a new status makes them the new stage’s assignees.',
   input: toolInput({
     task: taskRef,
     title: z.string().min(1).max(LIMITS.title.max).optional().describe('New title'),

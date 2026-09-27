@@ -1,4 +1,5 @@
 import { UserPlusIcon, UsersIcon } from 'lucide-react';
+import type { ReactNode } from 'react';
 import type { RoleSummary, UserSummary } from '@shared/schemas/core';
 import { AgentBadge } from '@web/components/common/AgentBadge';
 import { AvatarStack, UserAvatar } from '@web/components/common/UserAvatar';
@@ -13,11 +14,24 @@ export interface AssigneeValue {
   roleIds: string[];
 }
 
+/** One person or role added (`add`) or removed, as a single change applied right away. */
+export type AssigneeToggle =
+  | { kind: 'user'; assignee: UserSummary; add: boolean }
+  | { kind: 'role'; assignee: RoleSummary; add: boolean };
+
 export interface AssigneePickerProps extends PickerControlProps {
   users: readonly UserSummary[];
   roles: readonly RoleSummary[];
   value: AssigneeValue;
-  onChange: (value: AssigneeValue) => void;
+  /** The whole selection after a toggle (forms that save later). */
+  onChange?: (value: AssigneeValue) => void;
+  /**
+   * Each toggle on its own, instead of `onChange` (pages that apply it at once: the task page adds
+   * or removes that one assignee, keeping any others added meanwhile).
+   */
+  onToggle?: (toggle: AssigneeToggle) => void;
+  /** Shown under the list, e.g. which stage the assignments belong to. */
+  note?: ReactNode;
   /** Listed first and marked "(you)". */
   currentUserId?: string;
 }
@@ -32,6 +46,8 @@ export function AssigneePicker({
   roles,
   value,
   onChange,
+  onToggle,
+  note,
   currentUserId,
   open,
   onOpenChange,
@@ -83,6 +99,7 @@ export function AssigneePicker({
       emptyText="No one matches."
       align={align}
       className="w-72"
+      footer={note ? <p className="px-2 py-1 text-xs text-muted-foreground">{note}</p> : undefined}
     >
       {sortedUsers.length ? (
         <CommandGroup heading="People">
@@ -93,7 +110,11 @@ export function AssigneePicker({
                 key={user.id}
                 value={`user.${user.id}`}
                 keywords={[user.name, user.username]}
-                onSelect={() => onChange({ ...value, userIds: toggle(value.userIds, user.id) })}
+                onSelect={() =>
+                  onToggle
+                    ? onToggle({ kind: 'user', assignee: user, add: !checked })
+                    : onChange?.({ ...value, userIds: toggle(value.userIds, user.id) })
+                }
               >
                 <CheckBox checked={checked} />
                 <UserAvatar user={user} size="sm" />
@@ -121,7 +142,11 @@ export function AssigneePicker({
                 key={role.id}
                 value={`role.${role.id}`}
                 keywords={[role.name, role.slug]}
-                onSelect={() => onChange({ ...value, roleIds: toggle(value.roleIds, role.id) })}
+                onSelect={() =>
+                  onToggle
+                    ? onToggle({ kind: 'role', assignee: role, add: !checked })
+                    : onChange?.({ ...value, roleIds: toggle(value.roleIds, role.id) })
+                }
               >
                 <CheckBox checked={checked} />
                 <span

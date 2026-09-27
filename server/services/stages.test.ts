@@ -7,6 +7,7 @@ import type { Actor } from '../context';
 import * as s from '../db/schema';
 import {
   addMember,
+  createAgent,
   createIssue,
   createProject,
   createRole,
@@ -387,5 +388,64 @@ describe('blocksDependents', () => {
     expect(getTask(ctx.deps, web(owner), waiting.id).blocked).toBe(true);
     // Nothing to pick: the waiting task is blocked and Done isn't claimable.
     expect(claimNextTask(ctx.deps, web(ann), project.project.id, {}).task).toBeNull();
+  });
+});
+
+describe('adding and removing assignees at any time', () => {
+  const only = (user: UserRow) => ({
+    allow: [{ type: 'user' as const, userId: user.id }],
+    deny: [],
+  });
+
+  it('adds and removes one at a time, keeping everyone added meanwhile', () => {
+    const task = newTask({ assigneeUserIds: [ann.id] });
+    // Two viewers add someone each, from pages that don't know about the other's change.
+    updateTask(ctx.deps, web(owner), task.id, { assigneeUsers: { add: [ben.id] } });
+    updateTask(ctx.deps, web(ann), task.id, { assigneeRoles: { add: [backend.id] } });
+    expect(current(task.id)).toEqual(['@ann', '@ben', 'Backend']);
+    updateTask(ctx.deps, web(owner), task.id, { assigneeUsers: { remove: [ann.id] } });
+    expect(current(task.id)).toEqual(['@ben', 'Backend']);
+    // Only the current stage's rows change.
+    expect(rowsOf(task.id, todo)).toEqual(['@ben', 'Backend']);
+    expect(rowsOf(task.id, doing)).toEqual([]);
+    // The newly added person is notified; removing notifies nobody.
+    expect(notificationsOf(ben).map((n) => n.type)).toEqual(['assigned']);
+    expect(notificationsOf(ann).filter((n) => n.type === 'assigned')).toHaveLength(1);
+  });
+
+  it('assigns in a stage that hands off to a pool: the task leaves the pool', () => {
+    setRules(review, { handoff: { mode: 'pool', rule: only(ann) } });
+    const task = newTask({ assigneeUserIds: [ben.id] });
+    move(task.id, review);
+    expect(getTask(ctx.deps, web(owner), task.id).stage?.pool).toBeTruthy();
+    updateTask(ctx.deps, web(owner), task.id, { assigneeUsers: { add: [ben.id] } });
+    expect(current(task.id)).toEqual(['@ben']);
+    expect(getTask(ctx.deps, web(owner), task.id).stage?.pool ?? null).toBeNull();
+    updateTask(ctx.deps, web(owner), task.id, { assigneeUsers: { add: [ann.id] } });
+    expect(current(task.id)).toEqual(['@ann', '@ben']);
+    expect(rowsOf(task.id, review)).toEqual(['@ann', '@ben']);
+    expect(notificationsOf(ann).filter((n) => n.type === 'assigned')).toHaveLength(1);
+  });
+
+  it('adds to whoever a round-robin hand-off picked', () => {
+    setRules(doing, { handoff: { mode: 'round_robin', rule: only(ann) } });
+    const task = newTask();
+    move(task.id, doing);
+    expect(current(task.id)).toEqual(['@ann']);
+    updateTask(ctx.deps, web(owner), task.id, { assigneeUsers: { add: [ben.id] } });
+    expect(current(task.id)).toEqual(['@ann', '@ben']);
+  });
+
+  it('gives an added agent an assigned job', () => {
+    const agent = createAgent(ctx.db, ann.id);
+    const task = newTask({ assigneeUserIds: [ben.id] });
+    updateTask(ctx.deps, web(owner), task.id, { assigneeUsers: { add: [agent.id] } });
+    expect(current(task.id)).toEqual(['@ann-ai', '@ben']);
+    const jobs = ctx.db.orm
+      .select()
+      .from(s.agentJob)
+      .where(eq(s.agentJob.agentUserId, agent.id))
+      .all();
+    expect(jobs.map((job) => [job.kind, job.targetId])).toEqual([['assigned', task.id]]);
   });
 });

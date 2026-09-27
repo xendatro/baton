@@ -214,7 +214,7 @@ describe('StatusDialog', () => {
       Promise.resolve({ ...statuses[0], id: 'new', name: input.name } as Status),
     );
     renderDialog({ state: { mode: 'create' }, onCreate });
-    expect(screen.getByRole('heading', { name: 'New status' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'New stage' })).toBeInTheDocument();
     // Later steps are locked until reached.
     expect(screen.getByRole('button', { name: /Exit criteria/ })).toBeDisabled();
 
@@ -246,7 +246,7 @@ describe('StatusDialog', () => {
     // New statuses let their assignees move tasks on; add whoever claimed it too.
     expect(screen.getByRole('checkbox', { name: 'Assignees' })).toBeChecked();
     await user.click(screen.getByRole('checkbox', { name: 'Whoever claimed it' }));
-    await user.click(screen.getByRole('button', { name: 'Create status' }));
+    await user.click(screen.getByRole('button', { name: 'Create stage' }));
 
     await waitFor(() => expect(onCreate).toHaveBeenCalled());
     const input = onCreate.mock.calls[0]?.[0];

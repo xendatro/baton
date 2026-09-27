@@ -44,7 +44,7 @@ import {
 /**
  * A status in one dialog (Project settings → Statuses): its basics, instructions, what happens
  * when a task arrives, how tasks behave while here, its exit criteria and how tasks move on.
- * Creating walks the categories in order (Next checks each, Create status saves them all at once);
+ * Creating walks the categories in order (Next checks each, Create stage saves them all at once);
  * editing opens any category and saves it on its own.
  */
 
@@ -406,7 +406,7 @@ function StatusForm({
     );
   };
 
-  const title = creating ? 'New status' : `Edit ${status?.name ?? ''}`;
+  const title = creating ? 'New stage' : `Edit ${status?.name ?? ''}`;
   const sectionDirty = dirtySections.some((candidate) => candidate.id === section);
 
   return (
@@ -569,7 +569,7 @@ function StatusForm({
               ) : (
                 <Button type="button" onClick={create} disabled={pending}>
                   {pending ? <Spinner /> : null}
-                  Create status
+                  Create stage
                 </Button>
               )}
             </>
@@ -692,7 +692,7 @@ function BasicsSection({
         label="New tasks can start here"
         help={
           draft.isDefault && !wasDefault
-            ? 'The default status always accepts new tasks when you make it the default.'
+            ? 'The default stage always accepts new tasks when you make it the default.'
             : 'People and agents can create tasks straight in this status (the + on its column, the status picker of New task). Off: tasks only get here by moving.'
         }
         checked={draft.rules.allowCreate}

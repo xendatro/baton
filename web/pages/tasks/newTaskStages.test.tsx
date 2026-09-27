@@ -113,7 +113,7 @@ describe('the board', () => {
   it('warns and disables New task when no stage accepts new tasks', async () => {
     renderBoard([status('s-open', 'Open', 0, false), status('s-done', 'Done', 1, false)]);
     const notice = await screen.findByTestId('no-start-stage');
-    expect(notice).toHaveTextContent('No status accepts new tasks');
+    expect(notice).toHaveTextContent('No stage accepts new tasks');
     expect(within(notice).getByRole('link', { name: 'Edit stages' })).toHaveAttribute(
       'href',
       '/t/acme/p/WEB/settings/pipelines?pipeline=pl-a',

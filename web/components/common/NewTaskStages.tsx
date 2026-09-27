@@ -51,7 +51,7 @@ export function NoStartStageNotice({
     >
       <TriangleAlertIcon className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
       <p className="min-w-0 flex-1">
-        No status{pipelineName ? ` of ${pipelineName}` : ''} accepts new tasks, so none can be
+        No stage{pipelineName ? ` of ${pipelineName}` : ''} accepts new tasks, so none can be
         created. Turn on <strong>New tasks can start here</strong> on one in its settings.
       </p>
       {action}

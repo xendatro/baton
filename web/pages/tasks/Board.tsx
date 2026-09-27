@@ -26,7 +26,7 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { PlusIcon } from 'lucide-react';
-import { useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { Link } from 'react-router';
 import type { BoardColumn, BoardResponse, TaskCard } from '@shared/schemas/tasks';
 import { StatusIcon } from '@web/components/common/StatusBadge';
@@ -114,6 +114,14 @@ export function Board({ board, canMove, canCreate, onMove, onQuickAdd, filtered 
       keyboardCodes: { start: ['Space'], cancel: ['Escape'], end: ['Space'] },
     }),
   );
+  const movedColumn = useRef(false);
+  useEffect(() => {
+    if (!movedColumn.current) return;
+    const frame = requestAnimationFrame(() => {
+      movedColumn.current = false;
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [dragLayout]);
   const { ref, height } = useFillViewport();
   const refocus = useRefocusMovedCard(ref);
 
@@ -152,6 +160,10 @@ export function Board({ board, canMove, canCreate, onMove, onQuickAdd, filtered 
    * what keyboard moves produce) or, over a column's empty space, the column's nearest card.
    */
   const collisionDetection: CollisionDetection = (args) => {
+    // BAT-17: right after the card moved to another column, keep it where it is until that layout
+    // has painted. Otherwise the shifted cards can put it "over" the old column again, and the two
+    // moves repeat on every render until React stops with "Maximum update depth exceeded" (#185).
+    if (movedColumn.current && args.active) return [{ id: args.active.id }];
     const pointer = pointerWithin(args);
     const hits = pointer.length > 0 ? pointer : rectIntersection(args);
     const overId = getFirstCollision(hits, 'id');
@@ -186,6 +198,7 @@ export function Board({ board, canMove, canCreate, onMove, onQuickAdd, filtered 
       const from = columnOfItem(base, active.id);
       const to = columnOfItem(base, over.id);
       if (!from || !to || from === to) return base;
+      movedColumn.current = true;
       const source = (base[from] ?? []).filter((id) => id !== String(active.id));
       const target = [...(base[to] ?? [])];
       const overIndex = target.indexOf(String(over.id));

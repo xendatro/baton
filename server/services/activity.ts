@@ -20,6 +20,7 @@ import type {
   ActivityListResponse,
   AuditLogQuery,
   EntityActivityQuery,
+  ViaKey,
 } from '@shared/schemas/core';
 import type { Actor, AppDeps } from '../context';
 import { queueLiveEvent, type DbExecutor, type Tx } from '../db';
@@ -40,7 +41,7 @@ import {
 } from './access';
 import { canSeeAttachmentHistory } from './attachments';
 import { trashedItem, trashedReply } from './items';
-import { getUserSummaries } from './users';
+import { getUserSummaries, getViaKeys } from './users';
 
 /**
  * The append-only audit log (SPEC §1.11). Every mutation calls `recordActivity` inside its
@@ -66,8 +67,9 @@ export interface ActivityInput {
 
 /**
  * Appends an activity row in the caller's transaction and queues an `activity.created` live event
- * (delivered after commit). A null actor records a system action. The key name is snapshotted,
- * so the log keeps saying "via Claude on laptop" after the key is renamed or deleted.
+ * (delivered after commit). A null actor records a system action. The key name and its agent are
+ * snapshotted, so the log keeps saying "Claude via Ethan's laptop" after the key is renamed or
+ * deleted.
  */
 export function recordActivity(tx: Tx, actor: Actor | null, input: ActivityInput): ActivityRow {
   const row = tx
@@ -80,6 +82,7 @@ export function recordActivity(tx: Tx, actor: Actor | null, input: ActivityInput
       source: actor?.source ?? 'system',
       viaKeyId: actor?.key?.id ?? null,
       viaKeyName: actor?.key?.name ?? null,
+      viaAgentName: actor?.key?.agentName ?? null,
       entityType: input.entityType,
       entityId: input.entityId,
       action: input.action,
@@ -308,11 +311,26 @@ function readableMeta(row: ActivityRow): Record<string, unknown> {
   };
 }
 
+/**
+ * The row's via-key snapshot ("Claude via Ethan's laptop"). Rows written before the agent was
+ * snapshotted (BAT-10) take the key's current agent from `currentKeys`, when it has one.
+ */
+function viaOf(row: ActivityRow, currentKeys: ReadonlyMap<string, ViaKey>): ViaKey | null {
+  if (!row.viaKeyId || !row.viaKeyName) return null;
+  const agentName = row.viaAgentName ?? currentKeys.get(row.viaKeyId)?.agentName ?? null;
+  return { keyId: row.viaKeyId, keyName: row.viaKeyName, ...(agentName ? { agentName } : {}) };
+}
+
 /** Hydrates activity rows into wire entries (actor summaries, via-key snapshots, URLs). */
 export function toActivityEntries(db: DbExecutor, rows: readonly ActivityRow[]): ActivityEntry[] {
   const users = getUserSummaries(
     db,
     rows.map((row) => row.actorId),
+  );
+  // Only older rows without an agent snapshot need the keys' current agents.
+  const currentKeys = getViaKeys(
+    db,
+    rows.filter((row) => row.viaAgentName === null).map((row) => row.viaKeyId),
   );
   const urls = resolveEntityUrls(db, rows);
   return rows.map((row) => ({
@@ -321,7 +339,7 @@ export function toActivityEntries(db: DbExecutor, rows: readonly ActivityRow[]):
     projectId: row.projectId,
     actor: {
       user: row.actorId ? (users.get(row.actorId) ?? null) : null,
-      via: row.viaKeyId && row.viaKeyName ? { keyId: row.viaKeyId, keyName: row.viaKeyName } : null,
+      via: viaOf(row, currentKeys),
       source: row.source,
     },
     entityType: row.entityType,

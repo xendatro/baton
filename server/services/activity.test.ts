@@ -19,6 +19,7 @@ import {
   createTeam,
   createTestContext,
   createUser,
+  json,
   type CreatedProject,
   type CreatedTeam,
   type TestContext,
@@ -95,6 +96,77 @@ describe('recordActivity', () => {
         parentId: project.project.id,
       }) as unknown,
     ]);
+  });
+
+  it('snapshots the key’s agent, so the history keeps naming it (BAT-10)', () => {
+    const { apiKey } = createApiKey(ctx.db, { userId: owner.id, name: 'MSI' });
+    const row = record({
+      userId: owner.id,
+      source: 'mcp',
+      key: { id: apiKey.id, name: 'MSI', agentName: 'Claude' },
+    });
+    expect(row.viaAgentName).toBe('Claude');
+    // Another agent later using the same key does not rewrite the past.
+    ctx.db.orm.update(s.apiKey).set({ agentName: 'Codex' }).where(eq(s.apiKey.id, apiKey.id)).run();
+
+    const [entry] = listEntityActivity(ctx.deps, web(owner), {
+      entityType: 'project',
+      entityId: project.project.id,
+    }).items;
+    expect(entry?.actor.via).toEqual({ keyId: apiKey.id, keyName: 'MSI', agentName: 'Claude' });
+  });
+
+  it('gives older rows without an agent snapshot the key’s current agent (BAT-10)', () => {
+    const { apiKey: named } = createApiKey(ctx.db, { userId: owner.id, name: 'MSI' });
+    const { apiKey: unnamed } = createApiKey(ctx.db, { userId: owner.id, name: 'Script' });
+    record({ userId: owner.id, source: 'mcp', key: { id: named.id, name: 'MSI' } });
+    record({ userId: owner.id, source: 'api', key: { id: unnamed.id, name: 'Script' } });
+    expect(ctx.db.orm.select({ agent: s.activity.viaAgentName }).from(s.activity).all()).toEqual([
+      { agent: null },
+      { agent: null },
+    ]);
+    ctx.db.orm.update(s.apiKey).set({ agentName: 'Claude' }).where(eq(s.apiKey.id, named.id)).run();
+
+    const entries = listEntityActivity(ctx.deps, web(owner), {
+      entityType: 'project',
+      entityId: project.project.id,
+    }).items;
+    expect(entries.map((entry) => entry.actor.via)).toEqual([
+      { keyId: named.id, keyName: 'MSI', agentName: 'Claude' },
+      { keyId: unnamed.id, keyName: 'Script' },
+    ]);
+  });
+
+  it('names the agent on rows written through an API key over REST (BAT-10)', async () => {
+    const { key, apiKey } = createApiKey(ctx.db, { userId: owner.id, name: 'MSI' });
+    ctx.db.orm
+      .update(s.apiKey)
+      .set({ agentName: 'Claude' })
+      .where(eq(s.apiKey.id, apiKey.id))
+      .run();
+    const task = createTask(ctx.db, { project: project.project, authorId: owner.id });
+    const res = await ctx.app.request(
+      `/api/tasks/${task.id}`,
+      json('PATCH', { title: 'Renamed by Claude' }, bearer(key)),
+    );
+    expect(res.status).toBe(200);
+    const row = ctx.db.orm
+      .select()
+      .from(s.activity)
+      .where(eq(s.activity.entityId, task.id))
+      .all()
+      .at(-1);
+    expect(row).toMatchObject({ viaKeyId: apiKey.id, viaAgentName: 'Claude' });
+
+    const history = await ctx.app.request(`/api/activity?entityType=task&entityId=${task.id}`, {
+      headers: bearer(key),
+    });
+    const body = activityListResponseSchema.parse(await history.json());
+    expect(body.items.at(-1)?.actor.via).toEqual({
+      keyId: apiKey.id,
+      keyName: 'MSI',
+      agentName: 'Claude',
+    });
   });
 
   it('records system actions with a null actor', () => {

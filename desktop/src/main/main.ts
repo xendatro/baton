@@ -14,8 +14,10 @@ import {
   type IpcMainInvokeEvent,
 } from 'electron';
 import type { DesktopState } from '@shared/desktopBridge';
+import { desktopVersionText } from '@shared/desktopVersion';
 import type { HarnessId } from '@shared/schemas/agentRunner';
 import { BatonApi } from './api';
+import { COMMIT } from './buildInfo';
 import { ConfigStore, type SecretBox } from './config';
 import { checkRepo } from './git';
 import { createAdapters } from './harness';
@@ -99,6 +101,7 @@ function state(): DesktopState {
   const cfg = config.get();
   return {
     version: app.getVersion(),
+    commit: COMMIT,
     connected: api !== null,
     machineName: cfg.machineName,
     pausedHere: cfg.pausedHere,
@@ -129,6 +132,16 @@ function updateMenuItem(): Electron.MenuItemConstructorOptions {
     enabled: update.status !== 'checking',
     click: () => void updates.check(),
   };
+}
+
+/** "Baton desktop 0.3.0 (abc1234) · Latest: 0.3.1" in the tray menu (BAT-31). */
+function versionLabel(): string {
+  const { installed, latest } = desktopVersionText({
+    version: app.getVersion(),
+    commit: COMMIT,
+    update: updates.state,
+  });
+  return latest ? `${installed} · ${latest}` : installed;
 }
 
 function broadcast() {
@@ -167,6 +180,7 @@ function updateTray() {
         click: () => showWindow(`${serverUrl().replace(/\/+$/, '')}/desktop`),
       },
       { type: 'separator' },
+      { label: versionLabel(), enabled: false },
       updateMenuItem(),
       { label: 'Quit', click: () => app.quit() },
     ]),

@@ -47,6 +47,7 @@ import { useMe } from '@web/lib/auth';
 import { isDesktopApp, useDesktopState } from '@web/lib/desktop';
 import { runShellAction, useShellActionAvailable } from '@web/lib/shellActions';
 import { DesktopUpdateNotice } from './DesktopUpdateNotice';
+import { DesktopVersionLine } from './DesktopVersionLine';
 import { LogoMark } from './Logo';
 import { useUnreadCount } from './useUnreadCount';
 import { UserMenu } from './UserMenu';
@@ -342,6 +343,7 @@ function ThisComputer({ pathname }: { pathname: string }) {
           />
         </SidebarMenu>
       </SidebarGroupContent>
+      <DesktopVersionLine state={state} />
       <DesktopUpdateNotice update={state?.update} />
     </SidebarGroup>
   );

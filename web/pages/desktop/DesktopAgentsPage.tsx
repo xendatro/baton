@@ -4,6 +4,7 @@ import { Link } from 'react-router';
 import { toast } from 'sonner';
 import { HARNESS_LABELS } from '@shared/schemas/agentRunner';
 import type { DesktopJob, DesktopState } from '@shared/desktopBridge';
+import { desktopVersionText } from '@shared/desktopVersion';
 import { EmptyState } from '@web/components/common/EmptyState';
 import { PageContainer } from '@web/components/common/PageContainer';
 import { PageHeader } from '@web/components/common/PageHeader';
@@ -120,7 +121,6 @@ function Agents() {
 
 const UPDATE_TEXT: Record<string, string> = {
   checking: 'Checking for updates…',
-  latest: 'Up to date',
   available: 'A new version is available',
   downloading: 'Downloading an update…',
   ready: 'An update is ready: restart to install',
@@ -131,15 +131,20 @@ function AppVersion({ state }: { state: DesktopState }) {
   const bridge = desktopBridge();
   const update = state.update;
   const canCheck = bridge !== null && 'checkForUpdates' in bridge;
+  const { installed, latest } = desktopVersionText(state);
+  const statusText =
+    update?.status === 'error'
+      ? `Couldn’t check for updates: ${update.error ?? ''}`
+      : update && update.status !== 'latest'
+        ? (UPDATE_TEXT[update.status] ?? '')
+        : '';
   return (
     <p className="mb-3 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-      <span>Desktop app {state.version}</span>
+      <span>{installed}</span>
       {update ? (
         <span aria-live="polite">
-          ·{' '}
-          {update.status === 'error'
-            ? `Couldn’t check for updates: ${update.error ?? ''}`
-            : (UPDATE_TEXT[update.status] ?? '')}
+          {latest ? `· ${latest}` : null}
+          {statusText ? ` · ${statusText}` : null}
         </span>
       ) : null}
       {canCheck ? (

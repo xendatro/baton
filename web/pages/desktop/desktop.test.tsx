@@ -9,6 +9,7 @@ import { TooltipProvider } from '@web/components/ui/tooltip';
 import { createQueryClient } from '@web/lib/queryClient';
 import { jsonResponse, mockApi, testMe } from '@web/test/mockApi';
 import { DesktopUpdateNotice } from '@web/components/layout/DesktopUpdateNotice';
+import { DesktopVersionLine } from '@web/components/layout/DesktopVersionLine';
 import DesktopAgentsPage from './DesktopAgentsPage';
 import DesktopFoldersPage from './DesktopFoldersPage';
 import DesktopHarnessesPage from './DesktopHarnessesPage';
@@ -216,5 +217,42 @@ describe('desktop pages', () => {
     );
     await user.click(screen.getByRole('button', { name: 'Download' }));
     expect(installUpdate).toHaveBeenCalledTimes(2);
+  });
+
+  const config = {
+    version: '0.1.0',
+    signupsEnabled: true,
+    providers: { google: false, github: false },
+    maxUploadMb: 25,
+  };
+  const update = { progress: null, error: null, manual: false };
+
+  it('shows the desktop version and commit, the latest release and the web build', async () => {
+    mockApi({ '/api/me': testMe(), '/api/config': config });
+    renderPage(
+      <DesktopVersionLine
+        state={{
+          ...baseState,
+          version: '0.3.0',
+          commit: 'abc1234',
+          update: { ...update, status: 'available', version: '0.3.1', latest: '0.3.1' },
+        }}
+      />,
+    );
+    const versions = screen.getByTestId('desktop-versions');
+    expect(versions).toHaveTextContent('Baton desktop 0.3.0 (abc1234) · Latest: 0.3.1');
+    await waitFor(() => expect(versions).toHaveTextContent('Web 0.1.0 (dev)'));
+  });
+
+  it('shows the version on Running agents, also for older apps without a commit', async () => {
+    mockApi({ '/api/me': testMe(), '/api/config': config });
+    mockBridge({
+      ...baseState,
+      version: '0.3.0',
+      update: { ...update, status: 'latest', version: null },
+    });
+    renderPage(<DesktopAgentsPage />);
+    expect(await screen.findByText('Baton desktop 0.3.0')).toBeInTheDocument();
+    expect(screen.getByText('· Up to date')).toBeInTheDocument();
   });
 });

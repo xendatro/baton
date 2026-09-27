@@ -40,7 +40,7 @@ import { getTeamPresence } from './presence';
 import { createReply } from './replies';
 import { decideApproval } from './pipelines';
 import { updateStatus } from './statuses';
-import { getTask, moveTask, updateTask } from './tasks';
+import { deleteTask, getTask, moveTask, restoreTask, updateTask } from './tasks';
 
 /**
  * The desktop app's runners (BAT-24): registering, claiming jobs, whose jobs run without asking,
@@ -152,6 +152,45 @@ describe('runners', () => {
     expect(waiting?.target.title).toBe('Another');
     dismissWaitingJob(ctx.deps, runnerKey, waiting?.jobId ?? '');
     expect(listWaitingJobs(ctx.deps, ethanWeb).jobs).toEqual([]);
+  });
+
+  it('cancels the jobs of a deleted task; the heartbeat tells the runner to kill them (BAT-33)', async () => {
+    const runner = register();
+    mention(ethanWeb, 'Build it @ethan-ai');
+    const [running] = (await nextRunnerJobs(ctx.deps, runnerKey, runner.id, 0)).jobs;
+    const runningId = running?.jobId ?? '';
+    // Another job waits in the queue (a reply in the task's thread).
+    mention(ethanWeb, 'And the tests @ethan-ai');
+    const jobStatus = (id: string) =>
+      ctx.db.orm.select().from(s.agentJob).where(eq(s.agentJob.id, id)).get()?.status;
+    const queued = ctx.db.orm
+      .select()
+      .from(s.agentJob)
+      .where(eq(s.agentJob.status, 'pending'))
+      .all();
+    expect(queued).toHaveLength(1);
+    expect(
+      runnerHeartbeat(ctx.deps, runnerKey, runner.id, { running: 1, jobIds: [runningId] })
+        .cancelledJobIds,
+    ).toEqual([]);
+
+    deleteTask(ctx.deps, cadenWeb, task.id);
+    expect(jobStatus(runningId)).toBe('cancelled');
+    expect(jobStatus(queued[0]?.id ?? '')).toBe('cancelled');
+    expect(
+      runnerHeartbeat(ctx.deps, runnerKey, runner.id, { running: 1, jobIds: [runningId] })
+        .cancelledJobIds,
+    ).toEqual([runningId]);
+    expect((await nextRunnerJobs(ctx.deps, runnerKey, runner.id, 0)).jobs).toEqual([]);
+    // The killed run's report records its usage but neither holds nor reopens the job.
+    finishJob(ctx.deps, runnerKey, runningId, 'release', { hold: true });
+    expect(jobStatus(runningId)).toBe('cancelled');
+    expect(listWaitingJobs(ctx.deps, ethanWeb).jobs).toEqual([]);
+
+    // Restoring the task doesn't bring the cancelled jobs back.
+    restoreTask(ctx.deps, cadenWeb, task.id);
+    expect(jobStatus(runningId)).toBe('cancelled');
+    expect((await nextRunnerJobs(ctx.deps, runnerKey, runner.id, 0)).jobs).toEqual([]);
   });
 
   it('puts the claimed jobs of a vanished runner back', async () => {

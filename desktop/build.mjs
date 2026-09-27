@@ -2,6 +2,7 @@
 // the offline page and the icon. The window shows the Baton web app itself (BAT-26). `@shared/*`
 // resolves to the repository's shared code, so the app and the server agree on contracts.
 import { build } from 'esbuild';
+import { execFileSync } from 'node:child_process';
 import { copyFileSync, mkdirSync, rmSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -12,6 +13,26 @@ const alias = { '@shared': path.resolve(root, '..', 'shared') };
 // Shared code's own imports (zod) resolve from the app's node_modules too, so a release build
 // doesn't need the repository root installed.
 const nodePaths = [path.join(root, 'node_modules')];
+
+/**
+ * The git commit this build comes from, 7 characters (BAT-31: the app shows it next to its
+ * version): BATON_COMMIT, else GITHUB_SHA (the release workflow), else the checkout's HEAD, else
+ * "dev".
+ */
+function buildCommit() {
+  const given = (process.env.BATON_COMMIT || process.env.GITHUB_SHA || '').trim();
+  if (given) return given.slice(0, 7);
+  try {
+    return execFileSync('git', ['rev-parse', '--short=7', 'HEAD'], {
+      cwd: root,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
+  } catch {
+    return 'dev';
+  }
+}
+
 rmSync(out, { recursive: true, force: true });
 mkdirSync(out, { recursive: true });
 
@@ -29,6 +50,7 @@ await build({
   external: ['electron'],
   alias,
   nodePaths,
+  define: { BATON_DESKTOP_COMMIT: JSON.stringify(buildCommit()) },
   sourcemap: true,
 });
 

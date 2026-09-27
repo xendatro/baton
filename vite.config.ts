@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import tailwindcss from '@tailwindcss/vite';
@@ -14,6 +15,33 @@ export const aliases = {
 };
 
 const API_TARGET = 'http://127.0.0.1:3000';
+
+/**
+ * The git commit of this web build, 7 characters (BAT-31: the desktop app's sidebar shows which
+ * web build is loaded): BATON_COMMIT, else the release's REVISION file (install-mini.sh builds a
+ * `git archive` export and writes it), else GITHUB_SHA, else the checkout's HEAD, else "dev".
+ */
+function buildCommit(): string {
+  const fromEnv = (process.env.BATON_COMMIT ?? '').trim();
+  if (fromEnv) return fromEnv.slice(0, 7);
+  try {
+    const revision = fs.readFileSync(path.join(root, 'REVISION'), 'utf8').trim();
+    if (revision) return revision.slice(0, 7);
+  } catch {
+    // Not a deployed release.
+  }
+  const sha = (process.env.GITHUB_SHA ?? '').trim();
+  if (sha) return sha.slice(0, 7);
+  try {
+    return execFileSync('git', ['rev-parse', '--short=7', 'HEAD'], {
+      cwd: root,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
+  } catch {
+    return 'dev';
+  }
+}
 
 /** Where the web build's source maps go: next to dist/web, never inside the served folder. */
 export const WEB_SOURCEMAP_DIR = path.join(root, 'dist', 'sourcemaps', 'web');
@@ -59,6 +87,7 @@ export default defineConfig({
   root: path.join(root, 'web'),
   plugins: [react(), tailwindcss(), privateSourceMaps()],
   resolve: { alias: aliases },
+  define: { __BATON_COMMIT__: JSON.stringify(buildCommit()) },
   build: {
     outDir: path.join(root, 'dist', 'web'),
     emptyOutDir: true,

@@ -34,6 +34,7 @@ import {
   roleMemberIds,
   type Membership,
 } from './access';
+import { cancelItemJobs } from './agentJobs';
 import { resolveDifficulty } from './difficulties';
 import { recordActivity } from './activity';
 import { attachmentsByParent, attachToParent, referencedPendingUploads } from './attachments';
@@ -1265,7 +1266,10 @@ export function moveTask(deps: AppDeps, actor: Actor, taskId: string, input: Mov
 
 /**
  * Moves a task to Trash (author, or `DELETE_ANY_CONTENT`). It disappears from boards, lists,
- * search and MCP results; its claim is dropped. Restorable for 30 days.
+ * search and MCP results; its claim is dropped, and every open agent job about it (or its
+ * replies) is cancelled, so no agent picks it up and runners kill the ones running (BAT-33). It
+ * stops blocking the tasks it blocked (deleted blockers don't count). Restorable for 30 days;
+ * assignees, stage and links come back with it, cancelled jobs don't.
  */
 export function deleteTask(deps: AppDeps, actor: Actor, taskId: string): { ok: true } {
   const { orm } = deps.db;
@@ -1289,6 +1293,7 @@ export function deleteTask(deps: AppDeps, actor: Actor, taskId: string): { ok: t
       })
       .where(eq(s.task.id, taskId))
       .run();
+    cancelItemJobs(tx, { type: 'task', id: taskId });
     recordActivity(tx, actor, {
       teamId: task.teamId,
       projectId: task.projectId,

@@ -273,6 +273,44 @@ export function cancelJobs(
   return rows.length;
 }
 
+/**
+ * Cancels every open job about a task or issue, whether it targets the item itself or one of its
+ * replies (BAT-33: deleting a task stops the agents working on it). Pending jobs are never handed
+ * out; claimed ones fail `complete_job`, and a desktop runner kills their harness when its next
+ * heartbeat reports them cancelled. Restoring the item doesn't bring them back.
+ */
+export function cancelItemJobs(tx: Tx, item: { type: 'task' | 'issue'; id: string }): number {
+  let count = cancelJobs(tx, { targetType: item.type, targetId: item.id });
+  const replies = tx
+    .select({ id: s.reply.id })
+    .from(s.reply)
+    .where(and(eq(s.reply.parentType, item.type), eq(s.reply.parentId, item.id)))
+    .all();
+  for (const reply of replies) count += cancelJobs(tx, { targetType: 'reply', targetId: reply.id });
+  return count;
+}
+
+/** Of `jobIds`, those of the agent that were cancelled (a runner kills their harness, BAT-33). */
+export function cancelledJobIds(
+  db: DbExecutor,
+  agentId: string,
+  jobIds: readonly string[],
+): string[] {
+  if (jobIds.length === 0) return [];
+  return db
+    .select({ id: s.agentJob.id })
+    .from(s.agentJob)
+    .where(
+      and(
+        eq(s.agentJob.agentUserId, agentId),
+        inArray(s.agentJob.id, [...jobIds]),
+        eq(s.agentJob.status, 'cancelled'),
+      ),
+    )
+    .all()
+    .map((row) => row.id);
+}
+
 // ---------------------------------------------------------------------------------------------
 // Sources: mentions, assignments, thread replies
 // ---------------------------------------------------------------------------------------------

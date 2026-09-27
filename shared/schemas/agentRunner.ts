@@ -131,6 +131,8 @@ export const runnerHeartbeatInputSchema = z.object({
   projectIds: z.array(idSchema).max(AGENT_RUNNER_LIMITS.projects).optional(),
   /** Jobs running now. */
   running: z.number().int().nonnegative().max(10_000).default(0),
+  /** Ids of the jobs running now: the answer names those cancelled meanwhile (BAT-33). */
+  jobIds: z.array(idSchema).max(1_000).optional(),
 });
 export type RunnerHeartbeatInput = z.infer<typeof runnerHeartbeatInputSchema>;
 
@@ -153,6 +155,11 @@ export const runnerStateSchema = z.object({
   pausedReason: z.string().nullable(),
   /** Jobs from people outside my job sources, waiting for my OK. */
   waitingCount: z.number().int().nonnegative(),
+  /**
+   * Of the heartbeat's `jobIds`, those cancelled meanwhile (e.g. their task was deleted): the app
+   * kills their harness and doesn't hold them for the owner (BAT-33). Absent from older servers.
+   */
+  cancelledJobIds: z.array(z.string()).optional(),
 });
 export type RunnerState = z.infer<typeof runnerStateSchema>;
 

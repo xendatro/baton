@@ -70,6 +70,8 @@ function fakeAdapter(
 
 function setup(chain: Chain, adapters: HarnessAdapter[], folder: string | null = '/work/baton') {
   const calls: Array<{ call: string; args: unknown[] }> = [];
+  /** What the next heartbeat answers as cancelled. */
+  const server = { cancelledJobIds: [] as string[] };
   const api = {
     mcpUrl: 'https://baton/mcp',
     key: 'bat_key',
@@ -89,6 +91,20 @@ function setup(chain: Chain, adapters: HarnessAdapter[], folder: string | null =
         pausedReason: null,
         waitingCount: 0,
       }),
+    heartbeat: (...args: unknown[]) => {
+      calls.push({ call: 'heartbeat', args });
+      return Promise.resolve({
+        runner: { id: 'r1' },
+        paused: false,
+        pausedReason: null,
+        waitingCount: 0,
+        cancelledJobIds: server.cancelledJobIds,
+      });
+    },
+    nextJobs: (_runnerId: string, _wait: number, signal: AbortSignal) =>
+      new Promise((resolve) =>
+        signal.addEventListener('abort', () => resolve({ jobs: [] }), { once: true }),
+      ),
     brief: () => Promise.resolve(brief(chain)),
     setSession: (...args: unknown[]) => {
       calls.push({ call: 'setSession', args });
@@ -118,7 +134,7 @@ function setup(chain: Chain, adapters: HarnessAdapter[], folder: string | null =
     store,
     null,
   );
-  return { runner, calls, exhausted };
+  return { runner, calls, exhausted, server };
 }
 
 async function ready(runner: Runner) {
@@ -215,6 +231,33 @@ describe('runner', () => {
     expect(finish?.args.slice(1)).toEqual([
       'release',
       { usage: [expect.objectContaining({ outcome: 'killed' })], hold: true },
+    ]);
+    expect(runner.snapshot().jobs).toEqual([]);
+  });
+
+  it('kills a job cancelled on Baton (its task was deleted) and releases it without holding', async () => {
+    const seen: RunOptions[] = [];
+    const { runner, calls, server } = setup(
+      [{ harness: 'claude', model: '', effort: '' }],
+      [fakeAdapter('claude', [{ outcome: 'killed' }], seen)],
+    );
+    await ready(runner);
+    const running = runner.runJob(job);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(seen).toHaveLength(1);
+    server.cancelledJobIds = ['job-1'];
+    // The heartbeat names the running jobs; its answer names the cancelled ones.
+    await runner.start();
+    await running;
+    runner.stop();
+    expect(calls.find((call) => call.call === 'heartbeat')?.args[1]).toMatchObject({
+      running: 1,
+      jobIds: ['job-1'],
+    });
+    const finish = calls.find((call) => call.call === 'finish');
+    expect(finish?.args.slice(1)).toEqual([
+      'release',
+      { usage: [expect.objectContaining({ outcome: 'killed' })] },
     ]);
     expect(runner.snapshot().jobs).toEqual([]);
   });

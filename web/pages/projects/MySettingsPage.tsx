@@ -15,6 +15,7 @@ import {
   type ProjectNotifications,
   type ProjectNotifyLevel,
 } from '@shared/schemas/projectSettings';
+import { AgentConnectionStatus } from '@web/components/common/AgentConnectionNotice';
 import { ErrorState } from '@web/components/common/ErrorState';
 import { PageContainer } from '@web/components/common/PageContainer';
 import { Spinner } from '@web/components/common/Spinner';
@@ -79,6 +80,12 @@ function MySettings({ team, project }: { team: MeTeam; project: MeProject }) {
           />
         ) : (
           <>
+            <SettingsCard
+              title="Agent connection"
+              description="Whether your agent takes this project’s jobs: the desktop app with a folder for it, or an MCP listener."
+            >
+              <AgentConnectionStatus projectId={project.id} />
+            </SettingsCard>
             <NotificationsCard projectId={project.id} settings={settings.data} />
             <ModelsCard projectId={project.id} settings={settings.data} />
             {isDesktopApp() ? <FolderCard projectId={project.id} /> : null}

@@ -59,6 +59,8 @@ export interface MentionMatch extends MentionToken {
 /** Every mention in plain text (not preceded by a word character, so emails don't match). */
 export function findMentions(text: string): MentionMatch[] {
   const matches: MentionMatch[] = [];
+  // `matchAll` starts at the shared regex's `lastIndex`, which `nextMentionStart` leaves moved.
+  IN_TEXT.lastIndex = 0;
   for (const match of text.matchAll(IN_TEXT)) {
     matches.push({ ...toToken(match[0], match[1], match[2]), index: match.index });
   }

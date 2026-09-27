@@ -268,3 +268,54 @@ export const agentStatsSchema = z.object({
   byOutcome: z.array(z.object({ outcome: z.string(), jobs: z.number().int().nonnegative() })),
 });
 export type AgentStats = z.infer<typeof agentStatsSchema>;
+
+/**
+ * `GET /api/projects/:projectId/agent-connection?taskId=`: can the viewer's own agent run jobs in
+ * this project right now? `covered`: an online desktop runner maps the project to a folder, or an
+ * MCP listener (`start_listener`) is listening to it. Without that, the agent's jobs here wait
+ * (pending) with nothing to take them, which the web app says loudly ("Connect now").
+ */
+export const agentConnectionQuerySchema = z.object({ taskId: idSchema.optional() });
+
+export const AGENT_PAUSED_BY = ['owner', 'team', 'project'] as const;
+
+export const agentConnectionRunnerSchema = z.object({
+  id: z.string(),
+  machineName: z.string(),
+  online: z.boolean(),
+  /** The project is mapped to a folder on that machine. */
+  coversProject: z.boolean(),
+});
+export type AgentConnectionRunner = z.infer<typeof agentConnectionRunnerSchema>;
+
+export const agentConnectionSchema = z.object({
+  /** The viewer's agent member (a key's own agent); null when there is none yet. */
+  agent: z.object({ id: z.string(), username: z.string().nullable(), name: z.string() }).nullable(),
+  project: z.object({
+    id: z.string(),
+    /** `team-slug/KEY`. */
+    ref: z.string(),
+    name: z.string(),
+    repoUrl: z.string().nullable(),
+  }),
+  paused: z.boolean(),
+  pausedReason: z.string().nullable(),
+  /** Who paused it: the owner (resumable in Settings → Agent), the team or the project. */
+  pausedBy: z.enum(AGENT_PAUSED_BY).nullable(),
+  /** The agent can see the project (without that, no jobs are queued for it here at all). */
+  agentCanView: z.boolean(),
+  covered: z.boolean(),
+  runners: z.array(agentConnectionRunnerSchema),
+  /** An MCP `start_listener` session is listening to this project now. */
+  listening: z.boolean(),
+  /** The agent's pending jobs in this project (including those waiting for the owner's OK). */
+  pendingJobs: z.number().int().nonnegative(),
+  /** With `taskId`: the agent's pending jobs about that task (its thread included). */
+  pendingJobsForTask: z.number().int().nonnegative().optional(),
+  /**
+   * With `taskId`: the task involves the agent (assigned to it in the current stage, claimable by
+   * it from the pool, the stage hands off to it or asks its approval, or it has jobs there).
+   */
+  taskInvolvesAgent: z.boolean().optional(),
+});
+export type AgentConnection = z.infer<typeof agentConnectionSchema>;

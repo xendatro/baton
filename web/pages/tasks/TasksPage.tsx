@@ -14,6 +14,7 @@ import { Link, useNavigate, useSearchParams } from 'react-router';
 import { toast } from 'sonner';
 import type { MeProject, MeTeam } from '@shared/schemas/core';
 import type { Pipeline } from '@shared/schemas/projects';
+import { AgentConnectionNotice } from '@web/components/common/AgentConnectionNotice';
 import { EmptyState } from '@web/components/common/EmptyState';
 import { ErrorState } from '@web/components/common/ErrorState';
 import { Kbd } from '@web/components/common/Kbd';
@@ -422,6 +423,12 @@ function Tasks({ team, project }: { team: MeTeam; project: MeProject }) {
   return (
     <div className="flex min-w-0 flex-1 flex-col">
       <div className="px-4 pt-4 pb-3 sm:px-6">
+        <AgentConnectionNotice
+          projectId={project.id}
+          when={(connection) => connection.pendingJobs > 0}
+          dismissKey="tasks"
+          className="mb-3"
+        />
         {pipelines.isPending ? (
           <PipelineTabsSkeleton />
         ) : pipelineList.length > 0 ? (

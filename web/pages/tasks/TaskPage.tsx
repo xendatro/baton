@@ -26,6 +26,7 @@ import { AttachmentList } from '@web/components/attachments/AttachmentList';
 import { AttachmentUploader } from '@web/components/attachments/AttachmentUploader';
 import { DifficultyBadge } from '@web/components/common/DifficultyBadge';
 import { AgentBadge } from '@web/components/common/AgentBadge';
+import { AgentConnectionNotice } from '@web/components/common/AgentConnectionNotice';
 import { BackLink } from '@web/components/common/BackLink';
 import { ConfirmDialog } from '@web/components/common/ConfirmDialog';
 import { DueDate } from '@web/components/common/DueDate';
@@ -767,6 +768,18 @@ function TaskView({ task, team, project }: { task: Task; team: MeTeam; project: 
         </aside>
 
         <div className="min-w-0 lg:col-start-1 lg:row-start-2">
+          <AgentConnectionNotice
+            projectId={task.projectId}
+            taskId={task.id}
+            when={(connection) => connection.taskInvolvesAgent === true}
+            waitingNote={(connection) =>
+              connection.pendingJobsForTask
+                ? `${connection.pendingJobsForTask} job${connection.pendingJobsForTask === 1 ? '' : 's'} for your agent on this task.`
+                : null
+            }
+            dismissKey="task"
+            className="mb-4 lg:mt-6 lg:mb-0"
+          />
           {task.stage ? (
             <div className="lg:mt-6">
               <StagePanel

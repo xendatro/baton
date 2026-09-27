@@ -245,6 +245,19 @@ lastSeenAt, online }, paused, pausedReason, waitingCount }`. One runner per (age
   `{ harness, model, effort, tokensIn, tokensOut, costUsd, durationMs, outcome: done | released |
 killed | out_of_usage | failed | permission_denied }`. MCP `complete_job` / `release_job` take
   the same optional `usage`.
+- Is your agent connected here? `GET /api/projects/:projectId/agent-connection?taskId=` (anyone
+  who can see the project; the web session asks about the person's agent, a key about its own) →
+  `{ agent: { id, username, name } | null, project: { id, ref, name, repoUrl }, paused,
+pausedReason, pausedBy: owner | team | project | null, agentCanView, covered, runners: [{ id,
+machineName, online, coversProject }], listening, pendingJobs, pendingJobsForTask?,
+taskInvolvesAgent? }`. `covered`: an online runner has the project in its `projectIds` (a folder
+  on that machine) or a live `start_listener` session listens to it; otherwise the agent's jobs
+  there stay pending. `pendingJobs` counts the agent's pending jobs in the project (those waiting
+  for the owner's OK included). With `taskId` (a task of the project, else 404):
+  `pendingJobsForTask` (jobs about the task or a reply in its thread) and `taskInvolvesAgent` (the
+  agent is assigned in the current stage, may claim it from the pool, matches the stage's hand-off
+  or approvals rule, or has jobs there). The web shows "Your agent isn't connected … Connect now"
+  from it; `agent_job.changed` (runners registering, listeners starting, jobs) refreshes it.
 - Whose jobs run: `GET/PUT /api/me/agent/job-sources { mode: me | anyone | custom, rule }` (default
   `me`: jobs the owner or their agent caused; system jobs always run). Jobs caused by others get
   `needsOk: true`: runners skip them until `POST /api/me/agent/jobs/:jobId/approve` (Run);

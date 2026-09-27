@@ -1,15 +1,18 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import type { ReplyParentType } from '@shared/constants';
+import { agentUsername } from '@shared/principals';
 import type { Attachment, Reply } from '@shared/schemas/core';
 import { AttachmentList } from '@web/components/attachments/AttachmentList';
 import { AttachmentUploader } from '@web/components/attachments/AttachmentUploader';
+import { AgentConnectionNotice } from '@web/components/common/AgentConnectionNotice';
 import { Kbd } from '@web/components/common/Kbd';
 import { Spinner } from '@web/components/common/Spinner';
 import { RichTextEditor, type RichTextEditorHandle } from '@web/components/editor/RichTextEditor';
 import { Button } from '@web/components/ui/button';
 import { errorMessage } from '@web/lib/api';
-import { useSession } from '@web/lib/auth';
+import { useMe, useSession } from '@web/lib/auth';
+import { findMentions } from '@web/lib/mentions';
 import { useProjectAccess } from '@web/lib/permissions';
 import { readReplyDraft, writeReplyDraft, type ReplyDraft } from '@web/lib/replyDrafts';
 import { useCreateReply, useReplies } from './queries';
@@ -71,6 +74,15 @@ function Composer({
   const [body, setBody] = useState(saved?.body ?? '');
   const [attachments, setAttachments] = useState<Attachment[]>(saved?.attachments ?? []);
   const create = useCreateReply(parentType, parentId);
+  // Mentioning your own agent where it isn't connected: say so before sending.
+  const ownUsername = useMe().data?.user.username ?? null;
+  const ownAgent = ownUsername ? agentUsername(ownUsername).toLowerCase() : null;
+  const mentionsOwnAgent = useMemo(
+    () =>
+      ownAgent !== null &&
+      findMentions(body).some((mention) => mention.kind === 'user' && mention.id === ownAgent),
+    [body, ownAgent],
+  );
   // BAT-12: the thread's agents lead the @ suggestions (the timeline already loads the replies).
   const replies = useReplies(parentType, parentId).data;
   const agents = useMemo(
@@ -141,6 +153,9 @@ function Composer({
           setAttachments((current) => current.filter((item) => item.id !== attachment.id))
         }
       />
+      {projectId && mentionsOwnAgent ? (
+        <AgentConnectionNotice projectId={projectId} variant="inline" />
+      ) : null}
       {create.error ? (
         <p role="alert" className="text-sm text-destructive">
           {errorMessage(create.error)}

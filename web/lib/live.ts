@@ -175,6 +175,7 @@ export const LIVE_INVALIDATIONS: Readonly<Record<LiveEventType, Invalidation>> =
     queryKeys.account.agentActivity(),
     queryKeys.account.agentRunners(),
     queryKeys.account.agentWaiting(),
+    queryKeys.account.agentConnection(),
   ],
   // Personal: your agent asked for sign-off, or a request was decided or expired (design §6).
   'agent_action.changed': () => [queryKeys.account.agentActions(), queryKeys.notifications.all()],

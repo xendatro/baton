@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
 import {
+  agentConnectionQuerySchema,
   agentStatsQuerySchema,
   finishJobInputSchema,
   harnessSessionInputSchema,
@@ -15,6 +16,7 @@ import { idSchema } from '@shared/schemas/common';
 import type { AppEnv } from '../context';
 import { validateJson, validateParams, validateQuery } from '../lib/validate';
 import { requireActor } from '../middleware/actor';
+import { getAgentConnection } from '../services/agentConnection';
 import {
   agentStats,
   approveWaitingJob,
@@ -165,4 +167,20 @@ agentRunnerRoutes.post('/me/agent/pause', (c) =>
 
 agentRunnerRoutes.get('/me/agent/stats', validateQuery(agentStatsQuerySchema), (c) =>
   c.json(agentStats(c.var.deps, requireActor(c), c.req.valid('query').days)),
+);
+
+/** Is the viewer's agent connected to the project (a runner's folder or a listener)? */
+agentRunnerRoutes.get(
+  '/projects/:projectId/agent-connection',
+  validateParams(z.object({ projectId: idSchema })),
+  validateQuery(agentConnectionQuerySchema),
+  (c) =>
+    c.json(
+      getAgentConnection(
+        c.var.deps,
+        requireActor(c),
+        c.req.valid('param').projectId,
+        c.req.valid('query'),
+      ),
+    ),
 );

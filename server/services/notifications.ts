@@ -27,6 +27,11 @@ import {
 } from './access';
 import { queueAssignedJobs, queueMentionJobs } from './agentJobs';
 import { emitAfterCommit } from './events';
+import {
+  agentNotificationLevel,
+  projectNotificationPrefs,
+  wantsNotification,
+} from './projectSettings';
 import { subscriberIds } from './subscriptions';
 import { getUserSummaries } from './users';
 
@@ -78,16 +83,17 @@ export interface NotifyOptions {
   always?: boolean;
 }
 
-/** The `agent_notifications` level of an agent actor's owner, or null for people. */
-function ownerLevel(tx: Tx, actor: Actor | null): AgentNotificationLevel | null {
+/**
+ * The `agent_notifications` level of an agent actor's owner in the project (their override there,
+ * else their account's, BAT-29), or null for people.
+ */
+function ownerLevel(
+  tx: Tx,
+  actor: Actor | null,
+  projectId: string | null,
+): AgentNotificationLevel | null {
   if (!actor?.ownerId) return null;
-  return (
-    tx
-      .select({ level: s.user.agentNotifications })
-      .from(s.user)
-      .where(eq(s.user.id, actor.ownerId))
-      .get()?.level ?? 'needs_me'
-  );
+  return agentNotificationLevel(tx, actor.ownerId, projectId);
 }
 
 /**
@@ -107,7 +113,8 @@ export function notifyUsers(
   notified: NotifiedSet = new Set(),
   options: NotifyOptions = {},
 ): string[] {
-  const level = ownerLevel(tx, actor);
+  const item = itemOfTarget(tx, target);
+  const level = ownerLevel(tx, actor, item.projectId);
   const ownerId = actor?.ownerId;
   const ownerWanted =
     options.always === true ||
@@ -146,9 +153,18 @@ export function notifyUsers(
   ) {
     recipients.push(ownerId);
   }
-  // Nobody hears about a project they can't see (VIEW_PROJECT, design §3).
-  const item = itemOfTarget(tx, target);
-  if (item.projectId) recipients = projectViewerIds(tx, item.projectId, recipients);
+  if (item.projectId) {
+    // Nobody hears about a project they can't see (VIEW_PROJECT, design §3).
+    recipients = projectViewerIds(tx, item.projectId, recipients);
+    // Each person's notifications for the project: their override, else the account's (BAT-29).
+    // What their own agent did is up to its level (above), unless the project is set to Nothing.
+    const prefs = projectNotificationPrefs(tx, item.projectId, recipients);
+    recipients = recipients.filter((id) => {
+      const own = prefs.get(id)?.notifications ?? null;
+      if (id === ownerId && own?.level !== 'none') return true;
+      return wantsNotification(own, type, options.always === true);
+    });
+  }
   if (recipients.length === 0) return [];
 
   const snippet = target.snippet ? excerpt(target.snippet, SNIPPET_LENGTH) : '';

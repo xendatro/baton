@@ -1,8 +1,8 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "c26e384f-43c8-4fac-92b2-d20278921180",
-  "prevId": "2754133d-ebbd-49f4-8a57-c67e2ec2025e",
+  "id": "2754133d-ebbd-49f4-8a57-c67e2ec2025e",
+  "prevId": "4666cf07-dfc9-4a2e-8523-7d52ccf9efb1",
   "tables": {
     "account": {
       "name": "account",
@@ -4492,14 +4492,6 @@
           "autoincrement": false,
           "default": true
         },
-        "send_back_to": {
-          "name": "send_back_to",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": "'[]'"
-        },
         "created_at": {
           "name": "created_at",
           "type": "integer",
@@ -5721,34 +5713,6 @@
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false
-        },
-        "return_reason": {
-          "name": "return_reason",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "returned_by_id": {
-          "name": "returned_by_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "returned_via_key_id": {
-          "name": "returned_via_key_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "returned_from_status_id": {
-          "name": "returned_from_status_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
         }
       },
       "indexes": {
@@ -5780,27 +5744,6 @@
           "name": "task_stage_entry_via_key_idx",
           "columns": [
             "entered_via_key_id"
-          ],
-          "isUnique": false
-        },
-        "task_stage_entry_returned_by_idx": {
-          "name": "task_stage_entry_returned_by_idx",
-          "columns": [
-            "returned_by_id"
-          ],
-          "isUnique": false
-        },
-        "task_stage_entry_returned_via_key_idx": {
-          "name": "task_stage_entry_returned_via_key_idx",
-          "columns": [
-            "returned_via_key_id"
-          ],
-          "isUnique": false
-        },
-        "task_stage_entry_returned_from_idx": {
-          "name": "task_stage_entry_returned_from_idx",
-          "columns": [
-            "returned_from_status_id"
           ],
           "isUnique": false
         }
@@ -5851,45 +5794,6 @@
           "tableTo": "api_key",
           "columnsFrom": [
             "entered_via_key_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "set null",
-          "onUpdate": "no action"
-        },
-        "task_stage_entry_returned_by_id_user_id_fk": {
-          "name": "task_stage_entry_returned_by_id_user_id_fk",
-          "tableFrom": "task_stage_entry",
-          "tableTo": "user",
-          "columnsFrom": [
-            "returned_by_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "set null",
-          "onUpdate": "no action"
-        },
-        "task_stage_entry_returned_via_key_id_api_key_id_fk": {
-          "name": "task_stage_entry_returned_via_key_id_api_key_id_fk",
-          "tableFrom": "task_stage_entry",
-          "tableTo": "api_key",
-          "columnsFrom": [
-            "returned_via_key_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "set null",
-          "onUpdate": "no action"
-        },
-        "task_stage_entry_returned_from_status_id_status_id_fk": {
-          "name": "task_stage_entry_returned_from_status_id_status_id_fk",
-          "tableFrom": "task_stage_entry",
-          "tableTo": "status",
-          "columnsFrom": [
-            "returned_from_status_id"
           ],
           "columnsTo": [
             "id"
@@ -5967,25 +5871,17 @@
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false
-        },
-        "archived_at": {
-          "name": "archived_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
         }
       },
       "indexes": {
-        "task_stage_evidence_current_unique": {
-          "name": "task_stage_evidence_current_unique",
+        "task_stage_evidence_unique": {
+          "name": "task_stage_evidence_unique",
           "columns": [
             "task_id",
             "status_id",
             "criterion_id"
           ],
-          "isUnique": true,
-          "where": "\"task_stage_evidence\".\"archived_at\" is null"
+          "isUnique": true
         },
         "task_stage_evidence_status_idx": {
           "name": "task_stage_evidence_status_idx",

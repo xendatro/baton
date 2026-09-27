@@ -160,5 +160,7 @@ export const queryKeys = {
       params === undefined
         ? (['account', 'agent-actions'] as const)
         : (['account', 'agent-actions', params] as const),
+    /** Your settings for one project (BAT-29); `me.updated` refreshes them. */
+    projectSettings: (projectId: string) => ['account', 'project-settings', projectId] as const,
   },
 };

@@ -43,7 +43,8 @@ beforeEach(() => {
   admin = createUser(ctx.db, { username: 'admin_ada', name: 'Ada' });
   moderator = createUser(ctx.db, { username: 'mod', name: 'Mo' });
   member = createUser(ctx.db, { username: 'mia', name: 'Mia' });
-  team = createTeam(ctx.db, { ownerId: owner.id, slug: 'acme' });
+  // These tests are about the actions themselves; sign-off has its own (agentActions.test.ts).
+  team = createTeam(ctx.db, { ownerId: owner.id, slug: 'acme', agentSignoff: false });
   modRole = createRole(ctx.db, {
     teamId: team.team.id,
     name: 'Moderator',

@@ -1,5 +1,5 @@
 import { useQueryClient } from '@tanstack/react-query';
-import { CrownIcon, LogOutIcon, Trash2Icon } from 'lucide-react';
+import { CrownIcon, LogOutIcon, ShieldCheckIcon, Trash2Icon } from 'lucide-react';
 import { useId, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { toast } from 'sonner';
@@ -30,12 +30,14 @@ import {
   SelectValue,
 } from '@web/components/ui/select';
 import { Skeleton } from '@web/components/ui/skeleton';
+import { Switch } from '@web/components/ui/switch';
 import { isAgentUser } from '@web/lib/agentMembers';
 import { errorMessage, isApiError } from '@web/lib/api';
 import { fieldErrors } from '@web/lib/forms';
 import { useTeamAccess } from '@web/lib/permissions';
 import { queryKeys } from '@web/lib/queryKeys';
 import { useDocumentTitle } from '@web/lib/title';
+import { cn } from '@web/lib/utils';
 import {
   patchMeTeam,
   refreshTeam,
@@ -237,8 +239,85 @@ function AgentsSection({ team, detail }: { team: MeTeam; detail: TeamDetail }) {
             )
           }
         />
+        <AgentSignoffSetting
+          className="mt-4 border-t pt-4"
+          enabled={detail.agentSignoff ?? true}
+          canManage={access.has('MANAGE_TEAM')}
+          pending={updateTeam.isPending}
+          onChange={(agentSignoff) =>
+            updateTeam.mutate(
+              { agentSignoff },
+              {
+                onSuccess: (saved) => {
+                  queryClient.setQueryData(queryKeys.teams.detail(team.id), saved);
+                  toast.success(
+                    agentSignoff
+                      ? `Agents in ${team.name} now need sign-off for destructive actions`
+                      : `Agents in ${team.name} no longer need sign-off`,
+                  );
+                },
+                onError: (error) => toast.error(errorMessage(error)),
+              },
+            )
+          }
+        />
       </SettingsCard>
     </section>
+  );
+}
+
+/**
+ * "Agents need human sign-off for destructive actions" (design §6, default on): an agent's
+ * delete, removal or revocation waits for its owner's Approve in their inbox.
+ */
+function AgentSignoffSetting({
+  enabled,
+  canManage,
+  pending,
+  onChange,
+  className,
+}: {
+  enabled: boolean;
+  canManage: boolean;
+  pending: boolean;
+  onChange: (enabled: boolean) => void;
+  className?: string;
+}) {
+  const id = useId();
+  const hintId = useId();
+  return (
+    <div
+      className={cn(
+        'flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between',
+        className,
+      )}
+    >
+      <div className="flex min-w-0 items-start gap-3">
+        <ShieldCheckIcon
+          className="mt-0.5 size-4 shrink-0 text-muted-foreground"
+          aria-hidden="true"
+        />
+        <div className="min-w-0 space-y-0.5">
+          <label htmlFor={id} className="text-sm font-medium">
+            Agents need human sign-off for destructive actions
+          </label>
+          <p id={hintId} className="text-sm text-muted-foreground">
+            When an agent tries to delete something, remove a member or revoke someone’s invite
+            link, the person it works for approves or denies it first. Deleting, restoring or
+            handing over the team always needs the owner’s sign-off.
+            {canManage ? null : ' Changing it needs the Manage team permission.'}
+          </p>
+        </div>
+      </div>
+      <Switch
+        id={id}
+        aria-describedby={hintId}
+        checked={enabled}
+        disabled={!canManage || pending}
+        onCheckedChange={onChange}
+        className="shrink-0"
+      />
+    </div>
   );
 }
 

@@ -10,6 +10,7 @@ import {
   createProject,
   createTestContext,
   createUser,
+  setAgentSignoff,
   type TestContext,
   type UserRow,
 } from '../../test/helpers';
@@ -223,23 +224,26 @@ describe('teams MCP tools', () => {
     expect(await callError(miaAgent, 'delete_team', { team: 'acme', confirm: 'acme' })).toMatch(
       /forbidden/,
     );
-    // Agents never own teams (agents A): even the owner's agent can't do owner-only things.
+    // Agents never own teams (agents A): the owner's agent can only ask the owner to do
+    // owner-only things (design §6), and nothing changes until they approve.
     expect(
-      await callError(agent, 'transfer_team_ownership', {
-        team: 'acme',
-        user: 'mia',
-        confirm: 'acme',
-      }),
-    ).toMatch(/forbidden: Only the team owner/);
-    expect(await callError(agent, 'delete_team', { team: team.id, confirm: 'ACME' })).toMatch(
-      /forbidden/,
-    );
+      await call(agent, 'transfer_team_ownership', { team: 'acme', user: 'mia', confirm: 'acme' }),
+    ).toMatchObject({ pendingApproval: true });
+    expect(await call(agent, 'delete_team', { team: team.id, confirm: 'ACME' })).toMatchObject({
+      pendingApproval: true,
+    });
+    expect(await call(agent, 'get_team', { team: 'acme' })).toMatchObject({
+      team: { ownerId: ethan.id },
+    });
 
-    // The owner deletes it in the web app; their agent can't see or restore it in Trash.
+    // The owner deletes it in the web app; their agent sees it in Trash and may ask to restore it.
     deleteTeam(ctx.deps, { userId: ethan.id, source: 'web', key: null }, team.id);
     const { items } = await call<{ items: Array<{ slug: string }> }>(agent, 'list_deleted_teams');
-    expect(items).toEqual([]);
-    expect(await callError(agent, 'restore_team', { team: 'acme' })).toMatch(/not_found/);
+    expect(items.map((item) => item.slug)).toEqual(['acme']);
+    expect(await call(agent, 'restore_team', { team: 'acme' })).toMatchObject({
+      pendingApproval: true,
+    });
+    expect(await callError(miaAgent, 'restore_team', { team: 'acme' })).toMatch(/not_found/);
   });
 
   it('removes members within the rules', async () => {
@@ -251,6 +255,13 @@ describe('teams MCP tools', () => {
     expect(await callError(miaAgent, 'remove_member', { team: 'acme', user: 'ethan' })).toMatch(
       /forbidden/,
     );
+    // Removing someone waits for Ethan's sign-off (design §6) unless the team turned it off.
+    expect(await call(agent, 'remove_member', { team: 'acme', user: 'mia' })).toMatchObject({
+      pendingApproval: true,
+    });
+    await call(miaAgent, 'list_members', { team: 'acme' });
+    const { team } = await call<{ team: { id: string } }>(agent, 'get_team', { team: 'acme' });
+    setAgentSignoff(ctx.db, team.id, false);
     await call(agent, 'remove_member', { team: 'acme', user: 'mia' });
     expect(await callError(miaAgent, 'list_members', { team: 'acme' })).toMatch(/not_found/);
   });

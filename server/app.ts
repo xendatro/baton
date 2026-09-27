@@ -9,7 +9,7 @@ import { ZodError } from 'zod';
 import type { ConfigResponse } from '@shared/schemas/core';
 import type { AppDeps, AppEnv } from './context';
 import { clientIp } from './lib/clientIp';
-import { AppError, errors, type ErrorCode } from './lib/errors';
+import { AppError, errors, PendingApproval, type ErrorCode } from './lib/errors';
 import { loggedPath, runWithRequestLogger } from './lib/requestContext';
 import { toValidationIssues } from './lib/validate';
 import { mcpRoutes } from './mcp/server';
@@ -128,6 +128,8 @@ export function createApp(options: CreateAppOptions): Hono<AppEnv> {
   // --- Errors ------------------------------------------------------------------------------
   app.onError((error, c) => {
     if (error instanceof AppError) return errorResponse(c, error);
+    // An agent's destructive action now waits for its owner's sign-off (design §6).
+    if (error instanceof PendingApproval) return c.json(error.body, 202);
     if (error instanceof ZodError) {
       return errorResponse(
         c,

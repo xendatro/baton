@@ -35,7 +35,12 @@ beforeEach(async () => {
   ctx = createTestContext();
   ethan = createUser(ctx.db, { username: 'ethan', name: 'Ethan' });
   maya = createUser(ctx.db, { username: 'maya', name: 'Maya' });
-  const { team } = createTeam(ctx.db, { ownerId: ethan.id, slug: 'northwind', name: 'Northwind' });
+  const { team } = createTeam(ctx.db, {
+    ownerId: ethan.id,
+    slug: 'northwind',
+    name: 'Northwind',
+    agentSignoff: false,
+  });
   addMember(ctx.db, { teamId: team.id, userId: maya.id });
   const { project } = createProject(ctx.db, {
     teamId: team.id,

@@ -47,6 +47,8 @@ export const LIVE_EVENT_TYPES = [
   'presence.changed',
   /** Personal, to an agent's owner: its jobs or listener sessions changed (design §4). */
   'agent_job.changed',
+  /** Personal: an agent sign-off request was made, approved, denied or expired (design §6). */
+  'agent_action.changed',
 ] as const;
 
 export type LiveEventType = (typeof LIVE_EVENT_TYPES)[number];
@@ -57,6 +59,7 @@ export const PERSONAL_EVENT_TYPES = [
   'notification.read',
   'me.updated',
   'agent_job.changed',
+  'agent_action.changed',
 ] as const satisfies readonly LiveEventType[];
 
 export type PersonalEventType = (typeof PERSONAL_EVENT_TYPES)[number];
@@ -77,6 +80,7 @@ export const LIVE_ENTITY_TYPES = [
   'activity',
   'notification',
   'agent_job',
+  'agent_action',
 ] as const;
 
 export type LiveEntityType = (typeof LIVE_ENTITY_TYPES)[number];

@@ -161,6 +161,8 @@ export const LIVE_INVALIDATIONS: Readonly<Record<LiveEventType, Invalidation>> =
   'presence.changed': (e) => teamKeys(e, queryKeys.teams.presence),
   // Personal: your agent's jobs or listener sessions changed.
   'agent_job.changed': () => [queryKeys.account.agentActivity()],
+  // Personal: your agent asked for sign-off, or a request was decided or expired (design §6).
+  'agent_action.changed': () => [queryKeys.account.agentActions(), queryKeys.notifications.all()],
 };
 
 /**

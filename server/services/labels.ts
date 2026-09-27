@@ -14,10 +14,12 @@ import * as s from '../db/schema';
 import { diffFields, hasChanges } from '../lib/diff';
 import { errors } from '../lib/errors';
 import { newId } from '../lib/ids';
+import { appPaths } from '../lib/urls';
 import { requirePermission, requireProjectAccess } from './access';
 import { recordActivity } from './activity';
 import { emitAfterCommit } from './events';
 import { requireProject, type ProjectRow } from './projects';
+import { requireSignoff } from './signoff';
 
 /**
  * Labels (SPEC §1.6): per project, shared by its issues and tasks. Names are unique within a
@@ -99,7 +101,7 @@ export function listLabels(deps: AppDeps, actor: Actor, projectId: string): Labe
 function requireManageableLabel(deps: AppDeps, actor: Actor, labelId: string) {
   const { orm } = deps.db;
   const row = orm
-    .select({ label: s.label, project: s.project })
+    .select({ label: s.label, project: s.project, teamSlug: s.team.slug })
     .from(s.label)
     .innerJoin(s.project, eq(s.project.id, s.label.projectId))
     .innerJoin(s.team, eq(s.team.id, s.project.teamId))
@@ -224,7 +226,15 @@ export function updateLabel(
  * Audited with the number of items it was removed from.
  */
 export function deleteLabel(deps: AppDeps, actor: Actor, labelId: string): DeleteLabelResponse {
-  const { label, project } = requireManageableLabel(deps, actor, labelId);
+  const { label, project, teamSlug } = requireManageableLabel(deps, actor, labelId);
+  requireSignoff(deps, actor, {
+    action: 'delete_label',
+    teamId: project.teamId,
+    projectId: project.id,
+    input: { labelId },
+    summary: `delete the label “${label.name}” in ${project.key}, removing it from every issue and task`,
+    url: appPaths.projectSettings(teamSlug, project.key, 'labels'),
+  });
   const removedFrom = deps.db.write((tx) => {
     const usage = labelUsage(tx, project.id).get(labelId);
     const removed = { issues: usage?.issueCount ?? 0, tasks: usage?.taskCount ?? 0 };

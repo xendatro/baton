@@ -300,10 +300,17 @@ function findTrashableById(
 ): TrashItemRef | null {
   const wanted = (candidate: TrashableType) => type === undefined || type === candidate;
   if (wanted('team')) {
+    // An agent finds its owner's deleted teams (it may ask them to restore one, design §6).
     const team = db
       .select({ id: s.team.id })
       .from(s.team)
-      .where(and(eq(s.team.id, id), eq(s.team.ownerId, actor.userId), isNotNull(s.team.deletedAt)))
+      .where(
+        and(
+          eq(s.team.id, id),
+          eq(s.team.ownerId, actor.ownerId ?? actor.userId),
+          isNotNull(s.team.deletedAt),
+        ),
+      )
       .get();
     if (team) return { type: 'team', id };
   }

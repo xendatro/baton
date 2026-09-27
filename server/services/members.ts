@@ -6,12 +6,14 @@ import type { DbExecutor, Tx } from '../db';
 import * as s from '../db/schema';
 import { change } from '../lib/diff';
 import { errors } from '../lib/errors';
+import { appPaths } from '../lib/urls';
 import { canModerateMember, getMembership, hasPermission, type Membership } from './access';
 import { recordActivity } from './activity';
 import { emitAfterCommit } from './events';
 import { revokeInvitesOf } from './invites';
 import { clearProjectAccess } from './projectAccess';
 import { requireRole, teamRoles, type RoleRow } from './roles';
+import { requireSignoff } from './signoff';
 import { unassignFromTasks } from './taskAssignees';
 import { requireTeam } from './teams';
 import { findAgentId } from './agents';
@@ -204,7 +206,7 @@ export function removeMember(
   userId: string,
 ): { ok: true } {
   const { orm } = deps.db;
-  const { membership } = requireTeam(orm, actor, teamId);
+  const { team, membership } = requireTeam(orm, actor, teamId);
   if (userId === actor.userId) {
     throw errors.validation('To remove yourself, leave the team instead');
   }
@@ -215,6 +217,13 @@ export function removeMember(
   const refusal = moderationRefusal(membership, target);
   if (refusal) throw errors.forbidden(refusal);
   const member = loadMember(orm, teamId, userId);
+  requireSignoff(deps, actor, {
+    action: 'remove_member',
+    teamId,
+    input: { teamId, userId },
+    summary: `remove ${member.user.name} (@${member.user.username ?? 'unknown'}) from ${team.name}`,
+    url: appPaths.teamSettings(team.slug, 'members'),
+  });
 
   deps.db.write((tx) => {
     const cleared = clearMembership(tx, actor, teamId, userId, 'member_removed');

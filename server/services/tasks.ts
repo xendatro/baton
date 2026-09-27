@@ -50,6 +50,7 @@ import { canTriageIssue } from './issues';
 import { queueLinkedIssueEvents } from './linkEvents';
 import { requireProject } from './projects';
 import { indexSearch } from './search';
+import { requireSignoff } from './signoff';
 import { autoSubscribe } from './subscriptions';
 import {
   applyBlockersChange,
@@ -1127,8 +1128,16 @@ export function moveTask(deps: AppDeps, actor: Actor, taskId: string, input: Mov
  */
 export function deleteTask(deps: AppDeps, actor: Actor, taskId: string): { ok: true } {
   const { orm } = deps.db;
-  const { task, project, membership } = requireTask(orm, actor, taskId);
+  const { task, project, team, membership } = requireTask(orm, actor, taskId);
   requireCanDeleteContent(membership, task.authorId);
+  requireSignoff(deps, actor, {
+    action: 'delete_task',
+    teamId: task.teamId,
+    projectId: task.projectId,
+    input: { taskId },
+    summary: `delete ${project.key}-${task.number} “${task.title}”`,
+    url: appPaths.task(team.slug, project.key, task.number),
+  });
   deps.db.write((tx) => {
     tx.update(s.task)
       .set({

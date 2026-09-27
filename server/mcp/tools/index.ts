@@ -1,6 +1,7 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { accountTools } from './account';
 import { adminTools } from './admin';
+import { agentActionTools } from './agentActions';
 import { coreTools } from './core';
 import type { McpTool, ToolContext } from './define';
 import { issuesTools } from './issues';
@@ -25,6 +26,7 @@ export const allTools: readonly McpTool[] = [
   ...listenerTools,
   ...adminTools,
   ...accountTools,
+  ...agentActionTools,
 ];
 
 /** Registers every tool on a (per-request) MCP server bound to the caller's context. */

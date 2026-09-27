@@ -71,6 +71,13 @@
       "when": 1790477362192,
       "tag": "0009_agent_jobs_presence",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1790479628774,
+      "tag": "0010_agent_signoff",
+      "breakpoints": true
     }
   ]
 }

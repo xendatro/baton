@@ -38,6 +38,7 @@ import {
   trashedReply,
   type TrashEntry,
 } from './items';
+import { requireSignoff } from './signoff';
 import { getUserSummaries, getViaKeys } from './users';
 
 /**
@@ -935,6 +936,20 @@ export function deleteAttachment(deps: AppDeps, actor: Actor, id: string): { ok:
   );
   requireCanDeleteContent(membership, row.uploaderId);
   const teamId = row.teamId;
+  // An agent deleting its own (or its owner's) upload needs no sign-off; someone else's does.
+  if (!isOwnContent(membership, row.uploaderId)) {
+    const uploader = row.uploaderId
+      ? getUserSummaries(deps.db.orm, [row.uploaderId]).get(row.uploaderId)
+      : undefined;
+    requireSignoff(deps, actor, {
+      action: 'delete_attachment',
+      teamId,
+      projectId: attachmentProjectId(deps.db.orm, row),
+      input: { attachmentId: id },
+      summary: `delete the file “${row.filename}”${uploader ? ` uploaded by ${uploader.name}` : ''}`,
+      url: null,
+    });
+  }
   deps.db.write((tx) => {
     tx.update(s.attachment)
       .set({

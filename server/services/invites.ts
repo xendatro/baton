@@ -15,11 +15,13 @@ import * as s from '../db/schema';
 import { AppError, errors } from '../lib/errors';
 import { newId } from '../lib/ids';
 import { generateInviteCode, inviteCodeHint } from '../lib/security';
+import { appPaths } from '../lib/urls';
 import { getMembership, hasPermission, isOwnContent, requirePermission } from './access';
 import { recordActivity } from './activity';
 import { emitAfterCommit } from './events';
 import { memberCounts, requireTeam } from './teams';
 import { addAgentMembership, selfIdsOf } from './agents';
+import { requireSignoff } from './signoff';
 import { getUserSummaries } from './users';
 
 /**
@@ -239,13 +241,26 @@ export function revokeInvite(
   inviteRef: string,
 ): { ok: true } {
   const { orm } = deps.db;
-  const { membership } = requireTeam(orm, actor, teamId);
+  const { team, membership } = requireTeam(orm, actor, teamId);
   const invite = findTeamInvite(orm, teamId, inviteRef);
   const own = isOwnContent(membership, invite.createdById);
   if (!hasPermission(membership, 'MANAGE_INVITES')) {
     // Others' invites are invisible without MANAGE_INVITES.
     if (!own) throw errors.notFound('Invite');
     requirePermission(membership, 'CREATE_INVITES', "You don't have permission to manage invites");
+  }
+  // An agent revoking its own (or its owner's) link needs no sign-off; someone else's does.
+  if (!own) {
+    const creator = invite.createdById
+      ? getUserSummaries(orm, [invite.createdById]).get(invite.createdById)
+      : undefined;
+    requireSignoff(deps, actor, {
+      action: 'revoke_invite',
+      teamId,
+      input: { teamId, inviteId: invite.id },
+      summary: `revoke the invite link ${inviteCodeHint(invite.code)} to ${team.name}${creator ? ` created by ${creator.name}` : ''}`,
+      url: appPaths.teamSettings(team.slug, 'invites'),
+    });
   }
   deps.db.write((tx) => {
     tx.update(s.invite).set({ revokedAt: new Date() }).where(eq(s.invite.id, invite.id)).run();

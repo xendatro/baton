@@ -47,7 +47,8 @@ beforeEach(() => {
   ctx = createTestContext();
   owner = createUser(ctx.db, { username: 'owner' });
   member = createUser(ctx.db, { username: 'mia' });
-  team = createTeam(ctx.db, { ownerId: owner.id, slug: 'acme' });
+  // These tests are about the actions themselves; sign-off has its own (agentActions.test.ts).
+  team = createTeam(ctx.db, { ownerId: owner.id, slug: 'acme', agentSignoff: false });
   addMember(ctx.db, { teamId: team.team.id, userId: member.id });
   project = createProject(ctx.db, { teamId: team.team.id, key: 'API' });
   [open, done] = project.statuses as [StatusRow, StatusRow];

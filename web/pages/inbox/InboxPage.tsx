@@ -2,7 +2,9 @@ import { BellOffIcon, BellRingIcon, CheckCheckIcon, CheckIcon, InboxIcon } from 
 import { Fragment, useEffect, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router';
 import { toast } from 'sonner';
+import type { AgentActionRequest } from '@shared/schemas/agentActions';
 import type { MeTeam, Notification } from '@shared/schemas/core';
+import { AgentActionControls } from '@web/components/common/AgentActionControls';
 import { ActorAvatar } from '@web/components/common/AgentAvatar';
 import { AgentBadge } from '@web/components/common/AgentBadge';
 import { EmptyState } from '@web/components/common/EmptyState';
@@ -17,6 +19,7 @@ import { useUnreadCount } from '@web/components/layout/useUnreadCount';
 import { Button } from '@web/components/ui/button';
 import { Skeleton } from '@web/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@web/components/ui/tabs';
+import { useAgentActionRequests } from '@web/lib/agentActions';
 import { agentTitle, isAgentUser } from '@web/lib/agentMembers';
 import { useMe } from '@web/lib/auth';
 import {
@@ -112,6 +115,12 @@ function NotificationList({
     enabled: inbox.hasNextPage,
   });
   const { hasNextPage, isFetchingNextPage, fetchNextPage } = inbox;
+  // Sign-off requests (design §6) show Approve / Deny, or what became of them.
+  const hasActionRequests =
+    inbox.data?.pages.some((page) =>
+      page.items.some((item) => item.type === 'agent_action_request'),
+    ) ?? false;
+  const actionRequests = useAgentActionRequests('all', { enabled: hasActionRequests });
   useEffect(() => {
     if (nearEnd && hasNextPage && !isFetchingNextPage) void fetchNextPage();
   }, [nearEnd, hasNextPage, isFetchingNextPage, fetchNextPage]);
@@ -154,6 +163,9 @@ function NotificationList({
   }
 
   const days = items.map((notification) => dayLabel(notification.createdAt, now));
+  const requests = new Map(
+    (actionRequests.data?.items ?? []).map((request) => [request.id, request]),
+  );
   return (
     <div className="space-y-2">
       <ul className="overflow-hidden rounded-lg border bg-card" aria-label="Notifications">
@@ -172,6 +184,11 @@ function NotificationList({
               ) : null}
               <NotificationRow
                 notification={notification}
+                actionRequest={
+                  notification.type === 'agent_action_request'
+                    ? requests.get(notification.entityId)
+                    : undefined
+                }
                 teams={teams}
                 onRead={() => markRead.mutate({ ids: [notification.id] })}
               />
@@ -204,11 +221,13 @@ function NotificationList({
 
 interface NotificationRowProps {
   notification: Notification;
+  /** The sign-off request of an `agent_action_request` notification, once loaded. */
+  actionRequest?: AgentActionRequest;
   teams: readonly MeTeam[];
   onRead: () => void;
 }
 
-function NotificationRow({ notification, teams, onRead }: NotificationRowProps) {
+function NotificationRow({ notification, actionRequest, teams, onRead }: NotificationRowProps) {
   const kind = NOTIFICATION_KINDS[notification.type];
   const Icon = kind.icon;
   const unread = notification.readAt === null;
@@ -298,6 +317,10 @@ function NotificationRow({ notification, teams, onRead }: NotificationRowProps) 
             </span>
           ) : null}
         </Link>
+        {actionRequest ? (
+          // Above the row's link overlay, so the buttons get the clicks.
+          <AgentActionControls request={actionRequest} className="relative z-10 mt-2" />
+        ) : null}
         <span className="mt-1.5 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
           {team ? (
             <>

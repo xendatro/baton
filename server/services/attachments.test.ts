@@ -61,7 +61,8 @@ beforeEach(() => {
   ctx = createTestContext({ env: { MAX_UPLOAD_MB: '1', TEAM_STORAGE_QUOTA_MB: '2' } });
   owner = createUser(ctx.db);
   member = createUser(ctx.db);
-  team = createTeam(ctx.db, { ownerId: owner.id, slug: 'acme' });
+  // These tests are about the actions themselves; sign-off has its own (agentActions.test.ts).
+  team = createTeam(ctx.db, { ownerId: owner.id, slug: 'acme', agentSignoff: false });
   addMember(ctx.db, { teamId: team.team.id, userId: member.id });
   project = createProject(ctx.db, { teamId: team.team.id, key: 'API' });
   memberKey = createApiKey(ctx.db, { userId: member.id }).key;
@@ -283,7 +284,7 @@ describe('upload', () => {
     ctx = createTestContext({ env: { MAX_UPLOAD_MB: '1', TEAM_STORAGE_QUOTA_MB: '20' } });
     owner = createUser(ctx.db);
     member = createUser(ctx.db);
-    team = createTeam(ctx.db, { ownerId: owner.id, slug: 'acme' });
+    team = createTeam(ctx.db, { ownerId: owner.id, slug: 'acme', agentSignoff: false });
     addMember(ctx.db, { teamId: team.team.id, userId: member.id });
     project = createProject(ctx.db, { teamId: team.team.id, key: 'API' });
     memberKey = createApiKey(ctx.db, { userId: member.id }).key;

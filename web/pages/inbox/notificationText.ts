@@ -4,6 +4,7 @@ import {
   CircleCheckBigIcon,
   CircleDotIcon,
   MessageSquareIcon,
+  ShieldAlertIcon,
   SquareCheckBigIcon,
   UserPlusIcon,
   UsersIcon,
@@ -67,6 +68,12 @@ export const NOTIFICATION_KINDS: Record<NotificationType, NotificationKind> = {
     verb: 'completed a task',
     label: 'Task done',
     tone: 'text-emerald-600 dark:text-emerald-400',
+  },
+  agent_action_request: {
+    icon: ShieldAlertIcon,
+    verb: 'needs your sign-off',
+    label: 'Sign-off request',
+    tone: 'text-amber-600 dark:text-amber-400',
   },
 };
 

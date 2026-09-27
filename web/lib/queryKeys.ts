@@ -134,5 +134,10 @@ export const queryKeys = {
     agent: () => ['account', 'agent'] as const,
     /** Your agent's listener sessions and latest jobs (`GET /api/me/agent/activity`). */
     agentActivity: () => ['account', 'agent', 'activity'] as const,
+    /** Without `params`: every list of your agent's sign-off requests (design §6). */
+    agentActions: (params?: KeyParams) =>
+      params === undefined
+        ? (['account', 'agent-actions'] as const)
+        : (['account', 'agent-actions', params] as const),
   },
 };

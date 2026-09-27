@@ -12,6 +12,7 @@ import {
   createTestContext,
   createUser,
   json,
+  setAgentSignoff,
   signIn,
   web,
   type TestContext,
@@ -99,6 +100,8 @@ async function setup() {
     name: 'Northwind',
   });
   expect(team.status).toBe(201);
+  // These flows are about the modules working together, not the sign-off (agentActions.test.ts).
+  setAgentSignoff(ctx.db, team.body.id, false);
   const invite = await call<{ code: string }>(
     ownerKey,
     'POST',
@@ -120,8 +123,9 @@ async function setup() {
 describe('teams ↔ account: deleted teams', () => {
   it('lists a deleted team for its owner, blocks account deletion, and restores through restore_item', async () => {
     const { team } = await setup();
-    // Agents never own teams: only the owner (on the web) can delete it.
-    expect((await call(ownerKey, 'DELETE', `/teams/${team.id}`)).status).toBe(403);
+    // Agents never own teams: only the owner (on the web) can delete it. Their agent can only
+    // ask for it, whatever the team's sign-off setting (design §6).
+    expect((await call(ownerKey, 'DELETE', `/teams/${team.id}`)).status).toBe(202);
     expect((await call(ownerWeb, 'DELETE', `/teams/${team.id}`)).status).toBe(200);
 
     const deleted = await call<{ items: Array<{ id: string; slug: string }> }>(
@@ -148,13 +152,14 @@ describe('teams ↔ account: deleted teams', () => {
     expect(conflict.error.details.teams.map((item) => item.id)).toEqual([team.id]);
 
     // The admin module's restore_item goes through the teams module's Trash handler, which only
-    // lets the owner restore: their agent can't.
+    // lets the owner restore: their agent can only ask them to (design §6).
     await mcpAs(owner);
-    const refused = await clients.at(-1)?.callTool({
+    const asked = await clients.at(-1)?.callTool({
       name: 'restore_item',
       arguments: { item: team.id },
     });
-    expect(refused?.isError).toBe(true);
+    expect(asked?.isError, JSON.stringify(asked?.content)).toBeFalsy();
+    expect(asked?.structuredContent).toMatchObject({ pendingApproval: true });
     const restored = await call<{ id: string }>(ownerWeb, 'POST', '/trash/restore', {
       type: 'team',
       id: team.id,

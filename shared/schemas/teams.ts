@@ -62,6 +62,11 @@ export const teamSchema = z.object({
   ownerId: z.string(),
   /** "Pause all agents" (agents A): agent members' writes in the team are refused since then. */
   agentsPausedAt: timestampSchema.nullable().optional(),
+  /**
+   * "Agents need human sign-off for destructive actions" (design §6, default on): an agent
+   * member's destructive operation waits for its owner's approval.
+   */
+  agentSignoff: z.boolean().optional(),
   createdAt: timestampSchema,
   updatedAt: timestampSchema,
 });
@@ -95,6 +100,8 @@ export const updateTeamInputSchema = z.object({
   color: hexColorSchema.optional(),
   /** Pause (true) or resume (false) every agent member's writes in the team (`MANAGE_TEAM`). */
   agentsPaused: z.boolean().optional(),
+  /** Agents need their owner's sign-off for destructive actions (`MANAGE_TEAM`, people only). */
+  agentSignoff: z.boolean().optional(),
 });
 export type UpdateTeamInput = z.infer<typeof updateTeamInputSchema>;
 

@@ -69,6 +69,8 @@ const DOCUMENTED_ADDITIONS = [
   'get_project_permissions',
   'set_project_permission_override',
   'remove_project_permission_override',
+  // agents (DECISIONS 2026-09-27 sign-off E)
+  'get_action_request',
 ].sort();
 
 let ctx: TestContext;

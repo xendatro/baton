@@ -42,7 +42,8 @@ beforeEach(() => {
   owner = createUser(ctx.db, { username: 'owner' });
   member = createUser(ctx.db, { username: 'mia' });
   outsider = createUser(ctx.db, { username: 'olga' });
-  team = createTeam(ctx.db, { ownerId: owner.id, slug: 'acme' });
+  // These tests are about the actions themselves; sign-off has its own (agentActions.test.ts).
+  team = createTeam(ctx.db, { ownerId: owner.id, slug: 'acme', agentSignoff: false });
   addMember(ctx.db, { teamId: team.team.id, userId: member.id });
   project = createProject(ctx.db, { teamId: team.team.id, key: 'API' });
   memberKey = createApiKey(ctx.db, { userId: member.id }).key;

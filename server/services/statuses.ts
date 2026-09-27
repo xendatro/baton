@@ -16,11 +16,13 @@ import * as s from '../db/schema';
 import { change, diffFields } from '../lib/diff';
 import { errors } from '../lib/errors';
 import { newId } from '../lib/ids';
+import { appPaths } from '../lib/urls';
 import { requirePermission, requireProjectAccess, type Membership } from './access';
 import { recordActivity } from './activity';
 import { emitAfterCommit } from './events';
 import { queueLinkedIssueEvents } from './linkEvents';
 import { requireProject, type ProjectRow } from './projects';
+import { requireSignoff } from './signoff';
 import { applyStatusTransition, taskMeta, type TaskRow } from './tasks';
 
 /**
@@ -348,6 +350,23 @@ export function deleteStatus(
   const { status, project, teamSlug } = requireManageableStatus(deps, actor, statusId);
   if (query.moveTo === statusId) {
     throw errors.validation('Choose another status to move its tasks to');
+  }
+  if (actor.ownerId) {
+    // An agent's request is only worth its owner's time when it could run (design §6).
+    const moveTo = deps.db.orm
+      .select({ name: s.status.name })
+      .from(s.status)
+      .where(and(eq(s.status.id, query.moveTo), eq(s.status.projectId, project.id)))
+      .get();
+    if (!moveTo) throw errors.notFound('Status to move the tasks to');
+    requireSignoff(deps, actor, {
+      action: 'delete_status',
+      teamId: project.teamId,
+      projectId: project.id,
+      input: { statusId, moveTo: query.moveTo },
+      summary: `delete the status “${status.name}” in ${project.key}, moving its tasks to “${moveTo.name}”`,
+      url: appPaths.projectSettings(teamSlug, project.key, 'statuses'),
+    });
   }
 
   const movedTasks = deps.db.write((tx) => {

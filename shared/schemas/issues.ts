@@ -71,6 +71,11 @@ export const issueSummarySchema = z.object({
   editedAt: timestampSchema.nullable(),
   /** Relative web-app path of the issue page. */
   path: z.string(),
+  /**
+   * The viewer's unread notifications about the issue and its replies (BAT-16). Sent with the
+   * issue list.
+   */
+  unreadCount: z.number().int().nonnegative().optional(),
 });
 export type IssueSummary = z.infer<typeof issueSummarySchema>;
 

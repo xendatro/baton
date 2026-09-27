@@ -1,11 +1,12 @@
 import { and, count, desc, eq, inArray, isNull, lt, or, sql } from 'drizzle-orm';
-import type { NotificationType } from '@shared/constants';
+import type { NotificationType, ReplyParentType } from '@shared/constants';
 import type { Paginated } from '@shared/schemas/common';
 import type {
   ListNotificationsQuery,
   MarkNotificationsReadInput,
   MarkNotificationsReadResponse,
   Notification,
+  NotificationItem,
 } from '@shared/schemas/core';
 import type { Actor, AppDeps } from '../context';
 import type { DbExecutor, Tx } from '../db';
@@ -98,18 +99,71 @@ export function notifyUsers(
     createdAt: now,
   }));
   tx.insert(s.notification).values(rows).run();
+  const item = itemOfTarget(tx, target);
   for (const row of rows) {
     notified.add(row.userId);
     emitAfterCommit(tx, {
       type: 'notification.created',
       teamId: row.teamId,
+      projectId: item.projectId,
       entityType: 'notification',
       entityId: row.id,
+      parentType: item.type,
+      parentId: item.id,
       actorId: row.actorId,
       userId: row.userId,
     });
   }
   return recipients;
+}
+
+interface NotificationItemRef {
+  /** The task or issue the notification is about (a reply's item), or null. */
+  type: ReplyParentType | null;
+  id: string | null;
+  projectId: string | null;
+}
+
+/**
+ * The project and item (task or issue) of a notification target, carried by its live events so
+ * clients can refresh the item's unread badge and tell whether it is on screen (BAT-15, BAT-16).
+ */
+function itemOfTarget(tx: Tx, target: NotificationTarget): NotificationItemRef {
+  const none: NotificationItemRef = { type: null, id: null, projectId: null };
+  switch (target.entityType) {
+    case 'task': {
+      const row = tx
+        .select({ projectId: s.task.projectId })
+        .from(s.task)
+        .where(eq(s.task.id, target.entityId))
+        .get();
+      return row ? { type: 'task', id: target.entityId, projectId: row.projectId } : none;
+    }
+    case 'issue': {
+      const row = tx
+        .select({ projectId: s.issue.projectId })
+        .from(s.issue)
+        .where(eq(s.issue.id, target.entityId))
+        .get();
+      return row ? { type: 'issue', id: target.entityId, projectId: row.projectId } : none;
+    }
+    case 'reply': {
+      const row = tx
+        .select({
+          projectId: s.reply.projectId,
+          parentType: s.reply.parentType,
+          parentId: s.reply.parentId,
+        })
+        .from(s.reply)
+        .where(eq(s.reply.id, target.entityId))
+        .get();
+      return row ? { type: row.parentType, id: row.parentId, projectId: row.projectId } : none;
+    }
+    case 'project':
+      return { ...none, projectId: target.entityId };
+    default:
+      return none;
+  }
 }
 
 export interface MentionOptions {
@@ -327,27 +381,109 @@ export function unreadNotificationCount(deps: AppDeps, actor: Actor): number {
   return row?.value ?? 0;
 }
 
+/** The project a notification's subject belongs to, or null (team-level subjects). */
+const notificationProjectId = sql<string | null>`(case ${s.notification.entityType}
+  when 'task' then (select t.project_id from ${s.task} t where t.id = ${s.notification.entityId})
+  when 'issue' then (select i.project_id from ${s.issue} i where i.id = ${s.notification.entityId})
+  when 'reply' then (select r.project_id from ${s.reply} r where r.id = ${s.notification.entityId})
+  when 'project' then ${s.notification.entityId}
+  else null end)`;
+
+/** Notifications about a task or issue itself, or about one of its replies. */
+function aboutItem(db: DbExecutor, item: NotificationItem) {
+  return or(
+    and(eq(s.notification.entityType, item.type), eq(s.notification.entityId, item.id)),
+    and(
+      eq(s.notification.entityType, 'reply'),
+      inArray(
+        s.notification.entityId,
+        db
+          .select({ id: s.reply.id })
+          .from(s.reply)
+          .where(and(eq(s.reply.parentType, item.type), eq(s.reply.parentId, item.id))),
+      ),
+    ),
+  );
+}
+
 /**
- * Marks the given notifications (or all) as read. Only the actor's own unread notifications are
- * touched; read state is personal, so it is not written to the team audit log.
+ * Marks the given notifications, those about an item (a task or issue and its replies, BAT-15),
+ * or all of them as read. Only the actor's own unread notifications are touched; read state is
+ * personal, so it is not written to the team audit log. A personal `notification.read` event per
+ * affected project lets the actor's other tabs refresh their badges.
  */
 export function markNotificationsRead(
   deps: AppDeps,
   actor: Actor,
   input: MarkNotificationsReadInput,
 ): MarkNotificationsReadResponse {
-  const result = deps.db.write((tx) =>
-    tx
-      .update(s.notification)
-      .set({ readAt: new Date() })
-      .where(
-        and(
-          eq(s.notification.userId, actor.userId),
-          isNull(s.notification.readAt),
-          input.ids ? inArray(s.notification.id, input.ids) : undefined,
-        ),
-      )
-      .run(),
-  );
+  const result = deps.db.write((tx) => {
+    const unread = and(
+      eq(s.notification.userId, actor.userId),
+      isNull(s.notification.readAt),
+      input.ids ? inArray(s.notification.id, input.ids) : undefined,
+      input.item ? aboutItem(tx, input.item) : undefined,
+    );
+    const groups = tx
+      .selectDistinct({ teamId: s.notification.teamId, projectId: notificationProjectId })
+      .from(s.notification)
+      .where(unread)
+      .all();
+    const changed = tx.update(s.notification).set({ readAt: new Date() }).where(unread).run();
+    for (const group of groups) {
+      emitAfterCommit(tx, {
+        type: 'notification.read',
+        teamId: group.teamId,
+        projectId: group.projectId,
+        entityType: 'notification',
+        entityId: group.projectId ?? group.teamId,
+        parentType: input.item?.type ?? null,
+        parentId: input.item?.id ?? null,
+        actorId: actor.userId,
+        userId: actor.userId,
+      });
+    }
+    return changed;
+  });
   return { updated: result.changes };
+}
+
+/**
+ * The viewer's unread notifications per task or issue among `itemIds`, counting those about the
+ * item and about its (not deleted) replies (BAT-16). One grouped query; items without unread
+ * notifications are absent.
+ */
+export function unreadCountsByItem(
+  db: DbExecutor,
+  userId: string,
+  itemType: ReplyParentType,
+  itemIds: readonly string[],
+): Map<string, number> {
+  if (itemIds.length === 0) return new Map();
+  const ids = [...new Set(itemIds)];
+  const itemId = sql<string>`coalesce(${s.reply.parentId}, ${s.notification.entityId})`;
+  const rows = db
+    .select({ itemId, unread: count() })
+    .from(s.notification)
+    .leftJoin(
+      s.reply,
+      and(eq(s.notification.entityType, 'reply'), eq(s.reply.id, s.notification.entityId)),
+    )
+    .where(
+      and(
+        eq(s.notification.userId, userId),
+        isNull(s.notification.readAt),
+        or(
+          and(eq(s.notification.entityType, itemType), inArray(s.notification.entityId, ids)),
+          and(
+            eq(s.reply.parentType, itemType),
+            inArray(s.reply.parentId, ids),
+            isNull(s.reply.deletedAt),
+          ),
+        ),
+      ),
+    )
+    .groupBy(itemId)
+    .all();
+  return new Map(rows.map((row) => [row.itemId, row.unread]));
 }

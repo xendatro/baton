@@ -50,6 +50,37 @@ describe('LIVE_INVALIDATIONS', () => {
     expect(keys).toEqual([queryKeys.replies.list('issue', 'iss1'), queryKeys.issues.all('proj1')]);
   });
 
+  it('refreshes the unread badges of the item a notification is about (BAT-16)', () => {
+    const created = LIVE_INVALIDATIONS['notification.created'](
+      event({
+        type: 'notification.created',
+        entityType: 'notification',
+        parentType: 'task',
+        parentId: 't1',
+      }),
+    );
+    expect(created).toEqual([queryKeys.notifications.all(), queryKeys.tasks.all('proj1')]);
+    const readItem = LIVE_INVALIDATIONS['notification.read'](
+      event({
+        type: 'notification.read',
+        entityType: 'notification',
+        parentType: 'issue',
+        parentId: 'i1',
+      }),
+    );
+    expect(readItem).toContainEqual(queryKeys.issues.all('proj1'));
+    expect(readItem).not.toContainEqual(queryKeys.tasks.all('proj1'));
+    const readAll = LIVE_INVALIDATIONS['notification.read'](
+      event({ type: 'notification.read', entityType: 'notification' }),
+    );
+    expect(readAll).toEqual([
+      queryKeys.notifications.all(),
+      queryKeys.me(),
+      queryKeys.tasks.all('proj1'),
+      queryKeys.issues.all('proj1'),
+    ]);
+  });
+
   it('skips team and project keys the event does not carry', () => {
     const keys = LIVE_INVALIDATIONS['invite.changed'](
       event({ type: 'invite.changed', entityType: 'invite', teamId: null }),

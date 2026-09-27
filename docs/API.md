@@ -63,7 +63,7 @@ search and the audit log use core services, but their routes belong to admin.
 | `DELETE /api/me/api-keys/:id`         | –                                                                                                                                                      | `{ ok: true }` (revokes)                                                                                                                                                                                                              | core                          |
 | `GET /api/notifications`              | `?cursor&limit&unread=1`                                                                                                                               | `{ items: Notification[], nextCursor }`                                                                                                                                                                                               | core                          |
 | `GET /api/notifications/unread-count` | –                                                                                                                                                      | `{ count }`                                                                                                                                                                                                                           | core                          |
-| `POST /api/notifications/read`        | `{ ids } \| { all: true }`                                                                                                                             | `{ updated }`                                                                                                                                                                                                                         | core                          |
+| `POST /api/notifications/read`        | `{ ids } \| { all: true } \| { item: { type, id } }`                                                                                                   | `{ updated }`                                                                                                                                                                                                                         | core                          |
 | `POST /api/attachments`               | multipart: `file` + `UploadAttachmentFields` `{ teamId, parentType = 'pending', parentId? }`                                                           | `Attachment`                                                                                                                                                                                                                          | core                          |
 | `GET /api/attachments`                | `?parentType=issue\|task\|reply\|project&parentId`                                                                                                     | `{ items: Attachment[] }` oldest first (`AttachmentListResponse`)                                                                                                                                                                     | core                          |
 | `GET /api/attachments/:id/:filename`  | –                                                                                                                                                      | file bytes; images inline, everything else (and always SVG) `Content-Disposition: attachment`                                                                                                                                         | core                          |
@@ -88,6 +88,16 @@ those about an issue, task, reply or project README that is in Trash, directly o
 task or project; they come back if it is restored. Editing an item's title or text updates the
 `title` of its notifications and the `snippet` of those quoting the text (mentions, assignments,
 replies).
+
+`POST /api/notifications/read` takes exactly one of `ids`, `all: true` or `item` (BAT-15):
+`item: { type: 'task'|'issue', id }` marks the caller's unread notifications about that task or
+issue and about its replies (the web app sends it when the item's page shows its thread, and again
+for notifications arriving while it is on screen in a visible tab; MCP `get_task`/`get_issue` never
+mark anything read). Every mark-read sends the caller a personal `notification.read` live event per
+affected project (`projectId`; with `item`, also `parentType`/`parentId` = the item), so their
+other tabs refresh the inbox, the unread count and the item badges. `notification.created` events
+carry the notification's `projectId` and, as `parentType`/`parentId`, the task or issue it is about
+(a reply's item).
 
 ### Uploads and downloads
 
@@ -115,7 +125,7 @@ max-age=31536000, immutable`, an `ETag` (`If-None-Match` → 304) and `X-Content
 - Each message is a default (`message`) event whose `data` is one JSON `LiveEvent` (`shared/events.ts`):
   `{ type, teamId, projectId?, entityType, entityId, parentType?, parentId?, actorId, userId?, at }`.
 - The stream carries events for every team the user belongs to, plus their personal events
-  (`notification.created`, `me.updated`, delivered only to `userId`).
+  (`notification.created`, `notification.read`, `me.updated`, delivered only to `userId`).
 - The server sends a `: ping` comment every 25 s and a `retry: 3000` hint.
 - Events only say what changed. They carry no data: clients refetch (`web/lib/live.ts` maps each
   type to the TanStack Query keys it invalidates).
@@ -290,6 +300,8 @@ by name or id within a project ref).
 ### Issues (issues module)
 
 Schemas: `shared/schemas/issues.ts`. `IssueSummary` = `{ id, teamId, projectId, number, ref, title, resolved, resolvedAt, labels: [{ id, name, color, description }], author, via, replyCount, lastActivityAt, createdAt, updatedAt, editedAt, path }`;
+The issue list adds `unreadCount` to each `IssueSummary`: the viewer's unread notifications about
+the issue and its replies (BAT-16).
 `Issue` = `IssueSummary` + `{ body, attachments: Attachment[], resolvedBy, linkedTasks: [{ id, number, ref, title, kind: 'fixes'|'relates', status: { id, name, color, category }, path }], subscribed }`.
 Reads need team membership (404 otherwise, also for deleted issues and issues of deleted projects).
 
@@ -324,7 +336,8 @@ sort, limit, cursor), `get_issue` (with the latest 20 replies, each with its `ur
 ### Tasks (tasks module)
 
 Schemas: `shared/schemas/tasks.ts`. `TaskSummary` = `{ id, ref, number, title, projectId, teamId, status: { id, name, color, category }, priority (0 none … 4 urgent), dueDate, labels: [{ id, name, color }], assignees: { users: UserSummary[], roles: RoleSummary[] }, claim: { user, via, claimedAt, expiresAt } | null, blocked, replyCount, updatedAt }` (the shape other modules show);
-`TaskCard` = `TaskSummary` + `{ position, blockers (refs of open blockers), createdAt, completedAt, path }`;
+`TaskCard` = `TaskSummary` + `{ position, blockers (refs of open blockers), createdAt, completedAt, path, unreadCount? }`
+(`unreadCount`, sent by the board and the list: the viewer's unread notifications about the task and its replies, BAT-16);
 `Task` = `TaskCard` + `{ description, teamSlug, projectKey, author, via, editedAt, lastActivityAt, blockedBy: RelatedTask[], blocking: RelatedTask[], issues: LinkedIssue[], attachments, subscribed }`,
 where `RelatedTask` = `{ id, ref, number, title, status, path }` and `LinkedIssue` = `{ id, ref, number, title, resolved, kind: 'fixes'|'relates', projectId, path }`.
 `claim` is null unless a lease is running. Reads need team membership (404 otherwise).

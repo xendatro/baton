@@ -42,6 +42,7 @@ import {
   notifyMentions,
   notifyUsers,
   refreshNotificationText,
+  unreadCountsByItem,
   type NotificationTarget,
 } from './notifications';
 import { requireProject } from './projects';
@@ -426,8 +427,17 @@ export function listIssues(
   const hasMore = rows.length > query.limit;
   const page = hasMore ? rows.slice(0, query.limit) : rows;
   const last = page.at(-1);
+  const unread = unreadCountsByItem(
+    orm,
+    actor.userId,
+    'issue',
+    page.map((row) => row.id),
+  );
   return {
-    items: toSummaries(orm, page, contextOf(access)),
+    items: toSummaries(orm, page, contextOf(access)).map((item) => ({
+      ...item,
+      unreadCount: unread.get(item.id) ?? 0,
+    })),
     nextCursor: hasMore && last ? encodeCursor([spec.value(last), last.number]) : null,
     counts: countsOf(orm, filters),
   };

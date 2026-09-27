@@ -13,6 +13,7 @@ import { useLiveEventListener } from '@web/lib/live';
 import { queryKeys } from '@web/lib/queryKeys';
 import { notificationSentence } from './notificationText';
 import { useMarkNotificationsRead } from './queries';
+import { isAboutItemOnScreen } from './useMarkItemRead';
 
 /** Unread notifications fetched to find the one a live event announced. */
 const LOOKUP_LIMIT = 10;
@@ -37,6 +38,8 @@ export default function InboxShellExtension() {
   useLiveEventListener((event) => {
     if (event.type !== 'notification.created' || !userId) return;
     if (event.userId && event.userId !== userId) return;
+    // BAT-15: about the task or issue on screen, so it is marked read already.
+    if (isAboutItemOnScreen(event)) return;
     const onInbox = location.pathname === '/inbox';
     const params = { view: 'toast', limit: LOOKUP_LIMIT, unread: '1' } as const;
     void queryClient

@@ -24,6 +24,7 @@ import { appPaths } from '../lib/urls';
 import type { Membership } from './access';
 import { attachmentsByParent } from './attachments';
 import { isClaimValid } from './claimLease';
+import { unreadCountsByItem } from './notifications';
 import { statusesOf } from './statuses';
 import { blockersOf, blockingOf, linkedIssuesOf, openBlockerRefs } from './taskLinks';
 import { getUserSummaries, getViaKeys, toUserSummary } from './users';
@@ -382,6 +383,17 @@ function projectTasks(projectId: string, filters: TaskFilters, viewer: Membershi
 /** Board order within a column: fractional position, then number for ties. */
 const boardOrder = [asc(sql`${s.task.position} collate binary`), asc(s.task.number)];
 
+/** Adds the viewer's unread notification count to each card (BAT-16), in one query. */
+function withUnreadCounts(db: DbExecutor, userId: string, cards: TaskCard[]): TaskCard[] {
+  const unread = unreadCountsByItem(
+    db,
+    userId,
+    'task',
+    cards.map((card) => card.id),
+  );
+  return cards.map((card) => ({ ...card, unreadCount: unread.get(card.id) ?? 0 }));
+}
+
 /** The board: every status of the project as a column, with its matching tasks in order. */
 export function boardOf(
   db: DbExecutor,
@@ -403,7 +415,9 @@ export function boardOf(
     (row) => row,
   );
   const shown = statuses.flatMap((status) => (byStatus.get(status.id) ?? []).slice(0, query.limit));
-  const cards = new Map(toTaskCards(db, shown, now).map((card) => [card.id, card]));
+  const cards = new Map(
+    withUnreadCounts(db, viewer.userId, toTaskCards(db, shown, now)).map((card) => [card.id, card]),
+  );
   return {
     columns: statuses.map((status) => {
       const matching = byStatus.get(status.id) ?? [];
@@ -466,7 +480,7 @@ export function listOf(
     .all();
   const next = offset + rows.length;
   return {
-    items: toTaskCards(db, rows, now),
+    items: withUnreadCounts(db, viewer.userId, toTaskCards(db, rows, now)),
     total,
     nextCursor: next < total && rows.length > 0 ? encodeCursor([next]) : null,
   };

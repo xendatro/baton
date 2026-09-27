@@ -4,6 +4,7 @@ import { Link } from 'react-router';
 import type { IssueSummary } from '@shared/schemas/issues';
 import { LabelChip } from '@web/components/common/LabelChip';
 import { RelativeTime } from '@web/components/common/RelativeTime';
+import { UnreadBadge } from '@web/components/common/UnreadBadge';
 import { UserName } from '@web/components/common/UserName';
 import { Skeleton } from '@web/components/ui/skeleton';
 import { pluralize } from '@web/lib/format';
@@ -12,7 +13,8 @@ import { IssueStateIcon } from './IssueState';
 
 /**
  * One row of the issue list, GitHub style: state, title (the link, stretched over the row),
- * labels, then `#n`, author (+ via key) and times; the reply count on the right.
+ * the viewer's unread badge (BAT-16), labels, then `#n`, author (+ via key) and times; the reply
+ * count on the right.
  */
 export function IssueRow({
   issue,
@@ -43,6 +45,7 @@ export function IssueRow({
           >
             {issue.title}
           </Link>
+          <UnreadBadge count={issue.unreadCount} className="relative" />
           {issue.labels.map((label) => (
             <LabelChip key={label.id} label={label} className="relative" />
           ))}

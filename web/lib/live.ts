@@ -133,7 +133,16 @@ export const LIVE_INVALIDATIONS: Readonly<Record<LiveEventType, Invalidation>> =
       ? [queryKeys.account.securityLog(), queryKeys.account.sessions(), queryKeys.apiKeys()]
       : []),
   ],
-  'notification.created': () => [queryKeys.notifications.all()],
+  // Task cards and issue rows show the viewer's unread count (BAT-16); the event names the item.
+  'notification.created': (e) => [queryKeys.notifications.all(), ...parentItemKeys(e)],
+  // Personal: marked read in another tab (or by item, BAT-15). Refreshes the project's badges.
+  'notification.read': (e) => [
+    queryKeys.notifications.all(),
+    queryKeys.me(),
+    ...(e.parentType
+      ? parentItemKeys(e)
+      : projectKeys(e, queryKeys.tasks.all, queryKeys.issues.all)),
+  ],
   'me.updated': () => [queryKeys.me(), queryKeys.account.all()],
 };
 

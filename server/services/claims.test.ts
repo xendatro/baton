@@ -26,7 +26,7 @@ import {
 } from '../test/helpers';
 import { claimNextTask, claimTask, expireClaims, releaseTask, renewClaim } from './claims';
 import { updateStatus } from './statuses';
-import { createTask, getTask, updateTask } from './tasks';
+import { createTask, getTask, moveTask, updateTask } from './tasks';
 
 let ctx: TestContext;
 let owner: UserRow;
@@ -162,6 +162,12 @@ describe('claim_next_task', () => {
       })
       .returning()
       .get();
+    // Open moves on to it (BAT-27: claims move to the next stage only).
+    ctx.db.orm
+      .update(s.status)
+      .set({ nextStatusId: inProgress.id })
+      .where(eq(s.status.id, statusId(openStatus)))
+      .run();
     newTask('Work');
     // `leaseMinutes` is still accepted from older agents, and ignored.
     const task = next(miaAgent, { leaseMinutes: 90, moveToStatusId: inProgress.id });
@@ -279,9 +285,15 @@ describe('claim_task', () => {
     expect(() => claimTask(ctx.deps, miaAgent, task.id, {})).toThrow(
       /Tasks in Done can’t be claimed/,
     );
-    const reopened = claimTask(ctx.deps, miaAgent, task.id, {
-      moveToStatusId: statusId(openStatus),
+    // Moving back needs a reason (BAT-27), which a claim doesn't carry.
+    expect(() =>
+      claimTask(ctx.deps, miaAgent, task.id, { moveToStatusId: statusId(openStatus) }),
+    ).toThrow(/Give a reason/);
+    moveTask(ctx.deps, web(owner), task.id, {
+      statusId: statusId(openStatus),
+      reason: 'Not finished after all',
     });
+    const reopened = claimTask(ctx.deps, miaAgent, task.id, {});
     expect(reopened).toMatchObject({ status: { name: 'Open' }, completedAt: null });
   });
 

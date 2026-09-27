@@ -54,9 +54,13 @@ import {
   dismissStageApprovals,
   enterStage,
   guardStageMove,
+  mayApproveStage,
+  moveMeta,
   recordForced,
+  returnOf,
   rulesOf,
   saveEvidence,
+  setStageDifficulty,
   type GuardResult,
 } from './pipelines';
 import { canSeeStatus, defaultPipeline, pipelineRow, requireCreateIn } from './projectPipelines';
@@ -591,7 +595,8 @@ export function createTask(
         description,
         statusId: status.id,
         priority: input.priority ?? 0,
-        difficultyId: level?.id ?? null,
+        // BAT-28: set by entering the first stage (the creator's choice, else its default).
+        difficultyId: null,
         dueDate: input.dueDate ?? null,
         position: appendPosition(tx, status.id),
         authorId: actor.userId,
@@ -658,7 +663,10 @@ export function createTask(
       status,
       now,
       notified,
-      { keepAssignees: users.length > 0 || roles.length > 0 },
+      {
+        keepAssignees: users.length > 0 || roles.length > 0,
+        ...(level ? { difficultyId: level.id } : {}),
+      },
     );
     indexSearch(tx, {
       entityType: 'task',
@@ -884,7 +892,20 @@ export function updateTask(
       changes.priority = change(priorityLabel(current.priority), priorityLabel(input.priority));
       patch.priority = input.priority;
     }
-    if (input.difficultyId !== undefined && input.difficultyId !== current.difficultyId) {
+    // BAT-28: moving, the difficulty is the new stage's (set on entering it); otherwise the
+    // current stage's.
+    const moving = input.statusId !== undefined && input.statusId !== current.statusId;
+    const difficultyForMove =
+      moving && input.difficultyId !== undefined
+        ? input.difficultyId
+          ? resolveDifficulty(tx, current.projectId, input.difficultyId).id
+          : null
+        : undefined;
+    if (
+      !moving &&
+      input.difficultyId !== undefined &&
+      input.difficultyId !== current.difficultyId
+    ) {
       const next = input.difficultyId
         ? resolveDifficulty(tx, current.projectId, input.difficultyId)
         : null;
@@ -1009,6 +1030,9 @@ export function updateTask(
       .where(eq(s.task.id, taskId))
       .returning()
       .get();
+    if (patch.difficultyId !== undefined) {
+      setStageDifficulty(tx, taskId, current.statusId, patch.difficultyId, now);
+    }
     recordActivity(tx, actor, {
       teamId: team.id,
       projectId: project.id,
@@ -1016,7 +1040,7 @@ export function updateTask(
       entityId: taskId,
       action: 'task.updated',
       changes,
-      meta: taskMeta(updated, project.key),
+      meta: { ...taskMeta(updated, project.key), ...moveMeta(move?.guard ?? null) },
     });
     transition?.recordRelease();
     if (move) {
@@ -1039,7 +1063,11 @@ export function updateTask(
         move.to,
         now,
         notified,
-        assigneesChanged ? { assignees: { users: users.after, roles: roles.after } } : {},
+        {
+          ...(assigneesChanged ? { assignees: { users: users.after, roles: roles.after } } : {}),
+          ...returnOf(move.guard),
+          ...(difficultyForMove !== undefined ? { difficultyId: difficultyForMove } : {}),
+        },
       );
     }
     if (changes.title || changes.description) {
@@ -1126,7 +1154,15 @@ export function moveTask(deps: AppDeps, actor: Actor, taskId: string, input: Mov
     });
     if (!input.statusId && !input.afterId && !input.beforeId) return getTask(deps, actor, taskId);
   }
-  requireCanUpdateTask(membership, task, "You don't have permission to move tasks");
+  // Approvers of the task's stage may send it back without UPDATE_TASKS (BAT-27); the guard
+  // below checks that the move is one.
+  const approverSendBack =
+    !canUpdateTask(membership, task) &&
+    input.statusId !== undefined &&
+    mayApproveStage(orm, actor, task);
+  if (!approverSendBack) {
+    requireCanUpdateTask(membership, task, "You don't have permission to move tasks");
+  }
 
   deps.db.write((tx) => {
     const now = new Date();
@@ -1149,8 +1185,24 @@ export function moveTask(deps: AppDeps, actor: Actor, taskId: string, input: Mov
     const notified = new Set<string>();
     let transition: StatusTransition | null = null;
     let guard: GuardResult | null = null;
+    // BAT-28: a difficulty goes with a move to another stage, for that stage.
+    if (input.difficultyId !== undefined && to.id === from.id) {
+      throw errors.validation(
+        'A difficulty goes with a move to another stage (for that stage); use update_task to change the current one',
+        { field: 'difficultyId' },
+      );
+    }
+    const difficultyForMove =
+      input.difficultyId === undefined
+        ? undefined
+        : input.difficultyId
+          ? resolveDifficulty(tx, project.id, input.difficultyId).id
+          : null;
     if (to.id !== from.id) {
       guard = guardStageMove(tx, actor, { task: current, project, membership }, from, to, input);
+      if (approverSendBack && guard.direction !== 'backward') {
+        throw errors.forbidden("You don't have permission to move tasks");
+      }
       changes.status = change(from.name, to.name);
       patch.statusId = to.id;
       transition = applyStatusTransition(
@@ -1164,6 +1216,7 @@ export function moveTask(deps: AppDeps, actor: Actor, taskId: string, input: Mov
       );
       Object.assign(patch, transition.patch);
     } else {
+      if (approverSendBack) throw errors.forbidden("You don't have permission to move tasks");
       const before = columnOf(tx, to.id).findIndex((row) => row.id === taskId);
       if (before === index) return;
       changes.position = change(before + 1, index + 1);
@@ -1183,7 +1236,7 @@ export function moveTask(deps: AppDeps, actor: Actor, taskId: string, input: Mov
       entityId: taskId,
       action: 'task.moved',
       changes,
-      meta: { ...taskMeta(updated, project.key), status: to.name },
+      meta: { ...taskMeta(updated, project.key), status: to.name, ...moveMeta(guard) },
     });
     transition?.recordRelease();
     if (guard) {
@@ -1196,6 +1249,10 @@ export function moveTask(deps: AppDeps, actor: Actor, taskId: string, input: Mov
         to,
         now,
         notified,
+        {
+          ...returnOf(guard),
+          ...(difficultyForMove !== undefined ? { difficultyId: difficultyForMove } : {}),
+        },
       );
     }
     emitTaskChange(tx, 'task.updated', updated, actor);

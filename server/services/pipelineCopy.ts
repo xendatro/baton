@@ -18,7 +18,7 @@ import { newId } from '../lib/ids';
 import { requirePermission } from './access';
 import { recordActivity } from './activity';
 import { emitAfterCommit } from './events';
-import { mergeRules, ruleColumns, rulesOf, type StatusRow } from './pipelines';
+import { backStages, mergeRules, ruleColumns, rulesOf, type StatusRow } from './pipelines';
 import { defaultPipeline, pipelineStatuses, resolvePipeline } from './projectPipelines';
 import { requireProject } from './projects';
 import { statusesOf, syncCompletion } from './statuses';
@@ -360,6 +360,23 @@ export function copyPipeline(
       });
     }
 
+    // BAT-28: default difficulties go to the target's level of the same name (none without one).
+    const levelsOf = (projectId: string) =>
+      tx
+        .select({ id: s.difficulty.id, name: s.difficulty.name })
+        .from(s.difficulty)
+        .where(eq(s.difficulty.projectId, projectId))
+        .all();
+    const sourceLevels = new Map(
+      levelsOf(source.project.id).map((level) => [level.id, level.name]),
+    );
+    const targetLevels = new Map(
+      levelsOf(target.project.id).map((level) => [level.name.toLowerCase(), level.id]),
+    );
+    const levelIn = (id: string | null) => {
+      const name = id ? sourceLevels.get(id) : undefined;
+      return name ? (targetLevels.get(name.toLowerCase()) ?? null) : null;
+    };
     for (const row of sourceStatuses) {
       const targetId = idMap.get(row.id);
       if (!targetId) continue;
@@ -380,15 +397,26 @@ export function copyPipeline(
           ? { ...rules.approvals, rule: mapRule(rules.approvals.rule, where('approvers')) }
           : null,
         nextStatusId: rules.nextStatusId ? (idMap.get(rules.nextStatusId) ?? null) : null,
+        // Earlier source stages come first in the target too (copied order), so they stay earlier.
+        sendBackTo: backStages(sourceStatuses, row).flatMap((earlier) => {
+          const id = idMap.get(earlier.id);
+          return id ? [id] : [];
+        }),
       };
-      const valid = mergeRules(tx, targetScope, targetId, DEFAULT_STAGE_RULES, mapped);
+      const valid = mergeRules(tx, targetScope, targetId, DEFAULT_STAGE_RULES, mapped, {
+        anyOrder: true,
+      });
       const before = tx
         .select({ blocksDependents: s.status.blocksDependents })
         .from(s.status)
         .where(eq(s.status.id, targetId))
         .get();
       tx.update(s.status)
-        .set({ ...ruleColumns(valid), updatedAt: now })
+        .set({
+          ...ruleColumns(valid),
+          defaultDifficultyId: levelIn(row.defaultDifficultyId),
+          updatedAt: now,
+        })
         .where(eq(s.status.id, targetId))
         .run();
       // Its tasks' completion follows whether the stage blocks its dependents.

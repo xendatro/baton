@@ -615,7 +615,24 @@ export const status = sqliteTable(
     nextStatusId: text('next_status_id').references((): AnySQLiteColumn => status.id, {
       onDelete: 'set null',
     }),
+    /** Legacy (before BAT-27, migration 0018 turned it into `send_back_to`): unused. */
     allowSendBack: bool('allow_send_back').notNull().default(true),
+    /**
+     * The earlier stages of the same pipeline a task may be sent back to (BAT-27; empty: none).
+     * Ids of stages deleted or reordered after since are ignored.
+     */
+    sendBackTo: text('send_back_to', { mode: 'json' })
+      .$type<string[]>()
+      .notNull()
+      .default(sql`'[]'`),
+    /**
+     * BAT-28: the difficulty a task gets on its first visit to this stage (a level of the same
+     * project; null: none, it keeps the difficulty it had in the stage it came from).
+     */
+    defaultDifficultyId: text('default_difficulty_id').references(
+      (): AnySQLiteColumn => difficulty.id,
+      { onDelete: 'set null' },
+    ),
     createdAt: createdAtColumn(),
     updatedAt: updatedAtColumn(),
   },
@@ -927,16 +944,59 @@ export const taskStageEntry = sqliteTable(
     leftAt: timestamp('left_at'),
     /** The task's user assignees when it left the stage. */
     holderUserIds: text('holder_user_ids', { mode: 'json' }).$type<string[]>(),
+    /** BAT-27: set when the task was sent back into this stage: why, by whom, from where. */
+    returnReason: text('return_reason'),
+    returnedById: text('returned_by_id').references(() => user.id, { onDelete: 'set null' }),
+    returnedViaKeyId: text('returned_via_key_id').references(() => apiKey.id, {
+      onDelete: 'set null',
+    }),
+    returnedFromStatusId: text('returned_from_status_id').references(() => status.id, {
+      onDelete: 'set null',
+    }),
+    /** BAT-28: the task's difficulty in this stage during the visit (stage history). */
+    difficultyId: text('difficulty_id').references(() => difficulty.id, { onDelete: 'set null' }),
   },
   (t) => [
     index('task_stage_entry_task_idx').on(t.taskId, t.statusId, t.enteredAt),
     index('task_stage_entry_status_idx').on(t.statusId, t.enteredAt),
     index('task_stage_entry_entered_by_idx').on(t.enteredById),
     index('task_stage_entry_via_key_idx').on(t.enteredViaKeyId),
+    index('task_stage_entry_returned_by_idx').on(t.returnedById),
+    index('task_stage_entry_returned_via_key_idx').on(t.returnedViaKeyId),
+    index('task_stage_entry_returned_from_idx').on(t.returnedFromStatusId),
+    index('task_stage_entry_difficulty_idx').on(t.difficultyId),
   ],
 );
 
-/** Evidence for an exit criterion of a stage; editable only while the task is in that stage. */
+/**
+ * BAT-28: a task's difficulty in a stage, like its assignments there. The row exists once the
+ * task has been in the stage (null: no difficulty there); returning to the stage restores it.
+ * `task.difficulty_id` mirrors the value of the task's current stage.
+ */
+export const taskStageDifficulty = sqliteTable(
+  'task_stage_difficulty',
+  {
+    taskId: text('task_id')
+      .notNull()
+      .references(() => task.id, { onDelete: 'cascade' }),
+    statusId: text('status_id')
+      .notNull()
+      .references(() => status.id, { onDelete: 'cascade' }),
+    difficultyId: text('difficulty_id').references(() => difficulty.id, { onDelete: 'set null' }),
+    updatedAt: updatedAtColumn(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.taskId, t.statusId] }),
+    index('task_stage_difficulty_status_idx').on(t.statusId),
+    index('task_stage_difficulty_difficulty_idx').on(t.difficultyId),
+  ],
+);
+
+/**
+ * Evidence for an exit criterion of a stage; editable only while the task is in that stage. Each
+ * visit needs its own (BAT-27): coming back to the stage archives the earlier visit's evidence
+ * (`archived_at`), which stays as history.
+ */
 export const taskStageEvidence = sqliteTable(
   'task_stage_evidence',
   {
@@ -953,9 +1013,13 @@ export const taskStageEvidence = sqliteTable(
     viaKeyId: text('via_key_id').references(() => apiKey.id, { onDelete: 'set null' }),
     createdAt: createdAtColumn(),
     updatedAt: updatedAtColumn(),
+    /** Evidence of an earlier visit (the task came back to the stage since). */
+    archivedAt: timestamp('archived_at'),
   },
   (t) => [
-    uniqueIndex('task_stage_evidence_unique').on(t.taskId, t.statusId, t.criterionId),
+    uniqueIndex('task_stage_evidence_current_unique')
+      .on(t.taskId, t.statusId, t.criterionId)
+      .where(sql`${t.archivedAt} is null`),
     index('task_stage_evidence_status_idx').on(t.statusId),
     index('task_stage_evidence_user_idx').on(t.userId),
     index('task_stage_evidence_via_key_idx').on(t.viaKeyId),

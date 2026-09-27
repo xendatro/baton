@@ -51,6 +51,7 @@ import {
   type ListGroup,
   type TaskView,
 } from './filters';
+import { useDifficulties } from '../projects/difficultyQueries';
 import { useAssignables, useBoard, useMoveTask, useTaskList } from './queries';
 import { projectSettingsPath } from './settingsPaths';
 import { TaskList, TaskListSkeleton } from './TaskList';
@@ -147,6 +148,7 @@ function Tasks({ team, project }: { team: MeTeam; project: MeProject }) {
       ? (id: string | undefined) => pipelineList.find((candidate) => candidate.id === id)?.name
       : undefined;
   const labels = useLabels(project.id);
+  const difficulties = useDifficulties(project.id);
   const people = useAssignables(team.id);
   const board = useBoard(project.id, query, view === 'board');
   const list = useTaskList(
@@ -360,6 +362,7 @@ function Tasks({ team, project }: { team: MeTeam; project: MeProject }) {
         }
         onQuickAdd={(statusId) => newTask(statusId)}
         pipelineNameOf={pipelineNameOf}
+        difficulties={difficulties.data}
         onMove={(variables) =>
           move.mutate(variables, {
             onError: (error) => toast.error(errorMessage(error, 'Couldn’t move the task.')),

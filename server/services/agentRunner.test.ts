@@ -18,7 +18,7 @@ import {
   type TestContext,
   type UserRow,
 } from '../test/helpers';
-import { releaseJob, sweepListenerSessions } from './agentJobs';
+import { queueJobs, releaseJob, sweepListenerSessions } from './agentJobs';
 import {
   agentStats,
   approveWaitingJob,
@@ -40,7 +40,7 @@ import { getTeamPresence } from './presence';
 import { createReply } from './replies';
 import { decideApproval } from './pipelines';
 import { updateStatus } from './statuses';
-import { deleteTask, getTask, restoreTask, updateTask } from './tasks';
+import { deleteTask, getTask, moveTask, restoreTask, updateTask } from './tasks';
 
 /**
  * The desktop app's runners (BAT-24): registering, claiming jobs, whose jobs run without asking,
@@ -285,6 +285,92 @@ describe('job briefs, sessions and usage', () => {
     expect(getTask(ctx.deps, ethanWeb, task.id).stage?.previousApprovals).toMatchObject([
       { status: { name: 'Open' }, decisions: [{ comment: 'Add a download link on the web too' }] },
     ]);
+  });
+
+  it('picks the chain from the difficulty of the stage the job is for (BAT-28)', async () => {
+    const runner = register();
+    const levels = listDifficulties(ctx.deps, ethanWeb, projectId).items;
+    const byName = (name: string) => levels.find((level) => level.name === name)?.id ?? '';
+    const [open, done] = ctx.db.orm
+      .select()
+      .from(s.status)
+      .where(eq(s.status.projectId, projectId))
+      .orderBy(s.status.position)
+      .all();
+    if (!open || !done) throw new Error('statuses');
+    setModelMappings(ctx.deps, ethanWeb, {
+      default: { chain: [{ harness: 'claude', model: 'sonnet', effort: '' }], levels: {} },
+      projects: {
+        [projectId]: {
+          levels: {
+            [byName('Hard')]: [{ harness: 'claude', model: 'opus', effort: 'high' }],
+            [byName('Easy')]: [{ harness: 'claude', model: 'haiku', effort: '' }],
+          },
+        },
+      },
+    });
+    // Hard in Open, Easy once in Done.
+    updateTask(ctx.deps, ethanWeb, task.id, { difficultyId: byName('Hard') });
+    updateTask(ctx.deps, ethanWeb, task.id, { statusId: done.id, difficultyId: byName('Easy') });
+    // A job for the Open stage (e.g. an approval asked there) and one for the task as it is now.
+    ctx.db.write((tx) =>
+      queueJobs(tx, [
+        {
+          agentUserId: runnerKey.userId,
+          teamId,
+          projectId,
+          kind: 'approval',
+          targetType: 'task',
+          targetId: task.id,
+          payload: { stage: 'Open', statusId: open.id },
+          triggeredById: ethan.id,
+        },
+      ]),
+    );
+    mention(ethanWeb, 'Have a look @ethan-ai');
+    const jobs = (await nextRunnerJobs(ctx.deps, runnerKey, runner.id, 0)).jobs;
+    const forOpen = jobBrief(
+      ctx.deps,
+      runnerKey,
+      jobs.find((job) => job.kind === 'approval')?.jobId ?? '',
+      runner.id,
+    );
+    expect(forOpen).toMatchObject({
+      difficulty: { name: 'Hard' },
+      chain: [{ model: 'opus' }],
+    });
+    expect(forOpen.prompt).toContain('- Difficulty: Hard (the task’s difficulty in Open');
+    const current = jobBrief(
+      ctx.deps,
+      runnerKey,
+      jobs.find((job) => job.kind === 'mention')?.jobId ?? '',
+      runner.id,
+    );
+    expect(current).toMatchObject({ difficulty: { name: 'Easy' }, chain: [{ model: 'haiku' }] });
+  });
+
+  it('puts the send-back reason at the top of the brief (BAT-27)', async () => {
+    const runner = register();
+    const [open, done] = ctx.db.orm
+      .select()
+      .from(s.status)
+      .where(eq(s.status.projectId, projectId))
+      .orderBy(s.status.position)
+      .all();
+    if (!open || !done) throw new Error('statuses');
+    updateTask(ctx.deps, ethanWeb, task.id, { assigneeUsers: { set: [runnerKey.userId] } });
+    updateTask(ctx.deps, ethanWeb, task.id, { statusId: done.id });
+    moveTask(ctx.deps, ethanWeb, task.id, {
+      statusId: open.id,
+      reason: 'The download link is broken',
+    });
+    const jobs = (await nextRunnerJobs(ctx.deps, runnerKey, runner.id, 0)).jobs;
+    const job = jobs.find((item) => item.kind === 'assigned');
+    expect(job?.payload).toMatchObject({ returnReason: 'The download link is broken' });
+    expect(job?.instructions).toContain('was sent back to Open from Done because');
+    const { prompt } = jobBrief(ctx.deps, runnerKey, job?.jobId ?? '', runner.id);
+    expect(prompt).toContain('## Sent back because\n\n> The download link is broken');
+    expect(prompt.indexOf('## Sent back because')).toBeLessThan(prompt.indexOf('## The job'));
   });
 
   it('records usage when a job completes or is released, and sums it in stats', async () => {

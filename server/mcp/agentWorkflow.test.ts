@@ -1,3 +1,4 @@
+import { eq } from 'drizzle-orm';
 import type { AddressInfo } from 'node:net';
 import { serve, type ServerType } from '@hono/node-server';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -42,7 +43,7 @@ beforeEach(async () => {
     agentSignoff: false,
   });
   addMember(ctx.db, { teamId: team.id, userId: maya.id });
-  const { project, pipeline } = createProject(ctx.db, {
+  const { project, pipeline, statuses } = createProject(ctx.db, {
     teamId: team.id,
     key: 'WEB',
     name: 'Web App',
@@ -57,6 +58,12 @@ beforeEach(async () => {
       color: '#f59e0b',
       position: 1,
     })
+    .run();
+  // Open → In Progress → Done (BAT-27: tasks move on to the next stage only).
+  ctx.db.orm
+    .update(s.status)
+    .set({ position: 2 })
+    .where(eq(s.status.id, statuses[1]?.id ?? ''))
     .run();
   clients = [];
   events = [];

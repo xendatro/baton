@@ -17,6 +17,8 @@ export const PIPELINE_LIMITS = {
   maxApprovals: 10,
   comment: 2_000,
   reason: 500,
+  /** Stages a stage can send tasks back to (at most every stage of a project). */
+  sendBackTo: 50,
 } as const;
 
 // ---------------------------------------------------------------------------------------------
@@ -152,10 +154,16 @@ export const stageRulesSchema = z.object({
   approvals: approvalsRuleSchema.nullable(),
   /** Move on by itself once the criteria and approvals are satisfied. */
   autoAdvance: z.boolean(),
-  /** The stage after this one (null: the next column). */
+  /** The stage after this one (null: the next column): the only forward move (BAT-27). */
   nextStatusId: z.string().nullable(),
-  /** Request changes / moving back goes to the previous stage (only). */
-  allowSendBack: z.boolean(),
+  /**
+   * The earlier stages of the same pipeline a task may be sent back to, always with a reason
+   * (BAT-27; Request changes picks one of them). Empty: it can't be sent back.
+   */
+  sendBackTo: z
+    .array(z.string())
+    .max(PIPELINE_LIMITS.sendBackTo)
+    .refine((ids) => new Set(ids).size === ids.length, 'Each stage only once'),
 });
 export type StageRules = z.infer<typeof stageRulesSchema>;
 
@@ -178,7 +186,7 @@ export const DEFAULT_STAGE_RULES: StageRules = {
   approvals: null,
   autoAdvance: false,
   nextStatusId: null,
-  allowSendBack: true,
+  sendBackTo: [],
 };
 
 /** A change to a status's rules: only the fields given change. */
@@ -205,6 +213,16 @@ export const stageRulesPatchSchema = z.object({
   approvals: approvalsRuleSchema.nullable().optional(),
   autoAdvance: z.boolean().optional(),
   nextStatusId: idSchema.nullable().optional(),
+  /** Earlier stages of the same pipeline it may be sent back to (BAT-27). */
+  sendBackTo: z
+    .array(idSchema)
+    .max(PIPELINE_LIMITS.sendBackTo)
+    .refine((ids) => new Set(ids).size === ids.length, 'Each stage only once')
+    .optional(),
+  /**
+   * Deprecated (before BAT-27): `true` sets `sendBackTo` to every earlier stage, `false` empties
+   * it. Ignored when `sendBackTo` is given.
+   */
   allowSendBack: z.boolean().optional(),
 });
 export type StageRulesPatch = z.infer<typeof stageRulesPatchSchema>;
@@ -234,8 +252,7 @@ export function hasStageRules(rules: StageRules): boolean {
     !rules.blocksDependents ||
     !rules.claimable ||
     rules.autoAdvance ||
-    rules.nextStatusId !== null ||
-    !rules.allowSendBack
+    rules.nextStatusId !== null
   );
 }
 
@@ -283,6 +300,61 @@ export const stageApprovalSchema = z.object({
 });
 export type StageApproval = z.infer<typeof stageApprovalSchema>;
 
+/** Why the task came back to its stage (BAT-27): the reason of the move that sent it back. */
+export const returnReasonSchema = z.object({
+  reason: z.string(),
+  /** Who sent it back. */
+  by: userSummarySchema.nullable(),
+  via: viaKeySchema.nullable(),
+  /** The stage it was sent back from. */
+  from: stageRefSchema.nullable(),
+  at: timestampSchema,
+});
+export type ReturnReason = z.infer<typeof returnReasonSchema>;
+
+/** Where the task can go from its stage (BAT-27): the next stage, and the stages it may go back to. */
+/**
+ * A stage the task can move to, with the difficulty it would get there by the default rules
+ * (BAT-28: its last value there, else the stage's default, else the current one), which a move's
+ * difficulty override is prefilled with. Optional for older fixtures.
+ */
+const moveTargetSchema = stageRefSchema.extend({
+  difficultyId: z.string().nullable().optional(),
+});
+
+export const canMoveToSchema = z.object({
+  /**
+   * The next stage (null: the last stage), with what the viewer still needs to move it there
+   * (empty: ready).
+   */
+  forward: moveTargetSchema.extend({ missing: z.array(z.string()) }).nullable(),
+  /** Earlier stages the viewer may send it back to (with a reason), nearest first. */
+  back: z.array(moveTargetSchema),
+});
+export type CanMoveTo = z.infer<typeof canMoveToSchema>;
+
+/** One visit of the task to a stage (stage history). */
+export const stageVisitSchema = z.object({
+  id: z.string(),
+  status: stageRefSchema,
+  enteredAt: timestampSchema,
+  /** Null: the current visit. */
+  leftAt: timestampSchema.nullable(),
+  enteredBy: userSummarySchema.nullable(),
+  /** Set when it came back to the stage: why. */
+  returnReason: z.string().nullable(),
+  returnedFrom: stageRefSchema.nullable(),
+  /** BAT-28: the task's difficulty in the stage during the visit. */
+  difficulty: z
+    .object({ id: z.string(), name: z.string(), color: z.string() })
+    .nullable()
+    .optional(),
+});
+export type StageVisit = z.infer<typeof stageVisitSchema>;
+
+/** Which visit of a stage a group of evidence or decisions belongs to. */
+const visitRefSchema = z.object({ enteredAt: timestampSchema, leftAt: timestampSchema.nullable() });
+
 export const taskStageSchema = z.object({
   /** The stage the task is in. */
   status: stageRefSchema,
@@ -307,8 +379,17 @@ export const taskStageSchema = z.object({
   moveRule: z.string().nullable(),
   /** The stage it moves on to (null: the last stage). */
   next: stageRefSchema.nullable(),
-  /** Where "Request changes" / moving back sends it (null: not allowed). */
+  /**
+   * Where "Request changes" sends it by default: the nearest stage it may be sent back to (null:
+   * it can't be sent back).
+   */
   sendBackTo: stageRefSchema.nullable(),
+  /** BAT-27: the moves the viewer can make (optional for older fixtures). */
+  canMoveTo: canMoveToSchema.optional(),
+  /** BAT-27: why it was sent back to this stage, while the current visit is a return. */
+  returnReason: returnReasonSchema.nullable().optional(),
+  /** BAT-27: every visit to a stage, oldest first (stage history). */
+  visits: z.array(stageVisitSchema).optional(),
   autoAdvance: z.boolean(),
   /** Unassigned and claimable by the pool (`rule` in words). */
   pool: z.object({ rule: z.string(), canClaim: z.boolean() }).nullable(),
@@ -321,16 +402,29 @@ export const taskStageSchema = z.object({
   missing: z.array(z.string()),
   /** Why the viewer can't move it to other statuses: status id → reason. */
   blockedMoves: z.record(z.string(), z.string()),
-  /** Evidence given in earlier stages (read-only). */
+  /**
+   * Evidence given in earlier stages and earlier visits of this one (read-only), one group per
+   * visit (`visit`, when known).
+   */
   previousEvidence: z.array(
-    z.object({ status: stageRefSchema, criteria: z.array(stageCriterionSchema) }),
+    z.object({
+      status: stageRefSchema,
+      visit: visitRefSchema.nullable().optional(),
+      criteria: z.array(stageCriterionSchema),
+    }),
   ),
   /**
    * Approvals and change requests given in earlier stages, with their comments (read-only), so
    * what a reviewer asked for isn't lost once the task moves on. Optional for older fixtures.
    */
   previousApprovals: z
-    .array(z.object({ status: stageRefSchema, decisions: z.array(stageApprovalSchema) }))
+    .array(
+      z.object({
+        status: stageRefSchema,
+        visit: visitRefSchema.nullable().optional(),
+        decisions: z.array(stageApprovalSchema),
+      }),
+    )
     .optional(),
 });
 export type TaskStage = z.infer<typeof taskStageSchema>;
@@ -366,7 +460,15 @@ export const forceMoveFields = {
 /** `POST /api/tasks/:taskId/approvals`. */
 export const approvalInputSchema = z.object({
   decision: z.enum(APPROVAL_DECISIONS),
+  /** Required when Request changes sends the task back: it is the reason. */
   comment: z.string().trim().max(PIPELINE_LIMITS.comment).optional(),
+  /**
+   * Request changes: the stage to send it back to, one of the stage's send-back stages (default:
+   * the nearest one).
+   */
+  sendBackTo: idSchema.optional(),
+  /** BAT-28, Request changes: the difficulty for the stage it goes back to (null: none). */
+  difficultyId: idSchema.nullable().optional(),
 });
 export type ApprovalInput = z.infer<typeof approvalInputSchema>;
 

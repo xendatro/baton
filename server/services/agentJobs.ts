@@ -857,6 +857,14 @@ function jobInstructions(
       text = `A person decided on an action you asked for (see payload). Carry on accordingly.`;
       break;
   }
+  // BAT-27: the task was sent back into the stage this job is for.
+  const returnReason = typeof job.payload.returnReason === 'string' ? job.payload.returnReason : '';
+  if (returnReason) {
+    const from =
+      typeof job.payload.returnedFrom === 'string' ? ` from ${job.payload.returnedFrom}` : '';
+    const stage = typeof job.payload.stage === 'string' ? ` to ${job.payload.stage}` : '';
+    text = `${ref} was sent back${stage}${from} because: “${returnReason}”. Deal with that first. ${text}`;
+  }
   const handshake = job.closing
     ? ' The trigger reply is marked closing: the other agent thinks nothing more is needed. If you agree, call complete_job { jobId, agreeDone: true } WITHOUT replying (that closes the thread for agents until a person replies); if you disagree, reply and complete the job.'
     : ` ${CLOSE_HINT}`;

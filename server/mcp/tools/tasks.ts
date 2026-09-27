@@ -136,7 +136,7 @@ const forceField = z
 const reasonField = z
   .string()
   .max(PIPELINE_LIMITS.reason)
-  .describe('Why the move is forced (with force: true)');
+  .describe('Why: required to send the task back to an earlier stage, and to force a move');
 const leaseField = z
   .number()
   .int()
@@ -220,6 +220,12 @@ function pipelineOfTask(ctx: ToolContext, task: { statusId: string }): string | 
 
 function pipelineId(ctx: ToolContext, projectId: string, ref: string | undefined) {
   return ref === undefined ? undefined : resolvePipeline(ctx.deps.db.orm, projectId, ref).id;
+}
+
+/** A difficulty level ref as its id (null: none; undefined: not given). */
+function difficultyIdOf(ctx: ToolContext, projectId: string, ref: string | null | undefined) {
+  if (ref === undefined) return undefined;
+  return ref === null ? null : resolveDifficulty(ctx.deps.db.orm, projectId, ref).id;
 }
 
 function priorityOf(value: z.infer<typeof priorityField> | undefined) {
@@ -431,7 +437,7 @@ const getTaskTool = defineTool({
   name: 'get_task',
   title: 'Get task',
   description:
-    "Full context of a task before you work on it: description (markdown), status, priority, due date, assignees, labels, blockers (blockedBy) and tasks waiting for it (blocking) with their statuses, linked issues (fixes/relates), the claim (holder, key, expiry), attachments, the latest 20 replies, each with parentReplyId (the reply it answers, null for a top-level comment) (replyCount says how many there are; list_replies pages through them all) and the latest 20 history entries (get_activity pages through all of them). When the project has a pipeline, `stage` tells you what to do: the stage's instructions, its exit criteria with the evidence given so far, approvals (given, required, whether you may approve), `missing` (what still blocks moving on), `next` (the stage it moves on to), `blockedMoves` (why other statuses are refused), `pool` (claim it with claim_task) and `previousApprovals` (what reviewers approved or asked for in earlier stages, with their comments: follow them).",
+    "Full context of a task before you work on it: description (markdown), status, priority, due date, assignees, labels, blockers (blockedBy) and tasks waiting for it (blocking) with their statuses, linked issues (fixes/relates), the claim (holder, key, expiry), attachments, the latest 20 replies, each with parentReplyId (the reply it answers, null for a top-level comment) (replyCount says how many there are; list_replies pages through them all) and the latest 20 history entries (get_activity pages through all of them). When the project has a pipeline, `stage` tells you what to do: the stage's instructions, its exit criteria with the evidence given so far, approvals (given, required, whether you may approve), `missing` (what still blocks moving on), `next` (the stage it moves on to), `canMoveTo` ({ forward: { id, name, missing[] } | null, back: [{ id, name }] }: the only moves you can make — forward to the next stage, or back to one of `back` with a reason), `returnReason` (why it was sent back to this stage: deal with it first), `blockedMoves` (why other statuses are refused), `pool` (claim it with claim_task), `visits` (its stage history) and `previousApprovals` (what reviewers approved or asked for in earlier stages and visits, with their comments: follow them).",
   input: toolInput({ task: taskRef }),
   annotations: { readOnlyHint: true },
   handler: (ctx, input) => {
@@ -572,7 +578,9 @@ const updateTaskTool = defineTool({
       .min(1)
       .nullable()
       .optional()
-      .describe('Difficulty level (name), or null to clear it'),
+      .describe(
+        'Difficulty level (name), or null to clear it: of the current stage, or with `status` of the stage it moves to',
+      ),
     blockedBy: listChange(
       z.string().min(1),
       'Blocking tasks of the same project (KEY-12)',
@@ -646,7 +654,7 @@ const moveTaskTool = defineTool({
   name: 'move_task',
   title: 'Move task',
   description:
-    "Moves a task to another status and/or position on the board: right after `after`, right before `before`, or (neither) to the end of the column. Entering a stage applies its rules: the hand-off decides who is assigned there (a finishing stage usually assigns nobody), and onEnter may resolve the issues it fixes, notify the author and release your claim — moving to such a stage (see list_statuses) is the usual last step of your work. In a project with a pipeline, leaving a stage forward needs its exit criteria met (pass `evidence`), its approvals and the right mover; a refused move says exactly what is missing. Stages can't be skipped, and moving back only goes to the previous stage. Passing only `evidence` saves it without moving. A status of another pipeline (Pipeline/Status) moves the task to that pipeline: you need to be allowed to move it on from its stage and to create tasks there; its exit criteria and approvals don't apply.",
+    "Moves a task to another status and/or position on the board: right after `after`, right before `before`, or (neither) to the end of the column. Entering a stage applies its rules: the hand-off decides who is assigned there (a finishing stage usually assigns nobody), and onEnter may resolve the issues it fixes, notify the author and release your claim — moving to such a stage (see list_statuses) is the usual last step of your work. Moves are strict: forward only to the stage's next stage (get_task's canMoveTo.forward), which needs its exit criteria met (pass `evidence`), its approvals and the right mover — a refused move says exactly what is missing; stages can't be skipped. Back only to the earlier stages the stage allows (canMoveTo.back), and a move back needs a `reason` (posted on the task and given to whoever works on it next). Passing only `evidence` saves it without moving. A status of another pipeline (Pipeline/Status) moves the task to that pipeline: you need to be allowed to move it on from its stage and to create tasks there; its exit criteria and approvals don't apply.",
   input: toolInput({
     task: taskRef,
     status: statusRef.optional().describe('Target status (default: the current one)'),
@@ -659,8 +667,20 @@ const moveTaskTool = defineTool({
       .optional()
       .describe('Place right before this task (KEY-12) of the target column'),
     evidence: evidenceField.optional(),
+    difficulty: z
+      .string()
+      .min(1)
+      .nullable()
+      .optional()
+      .describe(
+        'Difficulty (level name or id; null: none) for the stage it moves to, instead of the default (its last difficulty there, else the stage’s default, else the current one)',
+      ),
     force: forceField.optional(),
-    reason: reasonField.optional(),
+    reason: reasonField
+      .optional()
+      .describe(
+        'Required to send the task back to an earlier stage (what has to change), and to force a move',
+      ),
   }),
   annotations: { destructiveHint: false },
   handler: (ctx, input) => {
@@ -672,6 +692,7 @@ const moveTaskTool = defineTool({
         afterId: input.after ? taskOf(ctx, input.after).task.id : undefined,
         beforeId: input.before ? taskOf(ctx, input.before).task.id : undefined,
         evidence: evidenceOf(input.evidence),
+        difficultyId: difficultyIdOf(ctx, project.id, input.difficulty),
         force: input.force,
         reason: input.reason,
       },
@@ -685,26 +706,43 @@ const approveTaskTool = defineTool({
   name: 'approve_task',
   title: 'Approve task',
   description:
-    "Approves the task's current pipeline stage, or requests changes (decision: request_changes), with an optional comment shown in the task's history. Only the people and agents the stage names as approvers may do it (get_task's stage.approvals.canApprove); each counts once, and a new decision replaces your previous one. Requesting changes sends the task back to the previous stage when the stage allows it. When the last needed approval arrives and the stage auto-advances, the task moves on.",
+    "Approves the task's current pipeline stage, or requests changes (decision: request_changes, or changes), with a comment shown in the task's history. Only the people and agents the stage names as approvers may do it (get_task's stage.approvals.canApprove); each counts once, and a new decision replaces your previous one. Requesting changes sends the task back to one of the stage's send-back stages (`sendBackTo`, default the nearest; see get_task's canMoveTo.back) with your comment as the reason, so the comment is required then. When the last needed approval arrives and the stage auto-advances, the task moves on.",
   input: toolInput({
     task: taskRef,
     decision: z
-      .enum(APPROVAL_DECISIONS)
-      .describe('approve, or request_changes (explain what to change in comment)'),
+      .enum([...APPROVAL_DECISIONS, 'changes'])
+      .describe('approve, or request_changes / changes (explain what to change in comment)'),
     comment: z
       .string()
       .max(PIPELINE_LIMITS.comment)
       .optional()
-      .describe('Why: what you checked, or what has to change'),
+      .describe(
+        'Why: what you checked, or what has to change (required when requesting changes sends the task back: it is the reason)',
+      ),
+    sendBackTo: statusRef
+      .optional()
+      .describe(
+        'Request changes: the earlier stage to send it back to (default: the nearest one it may go back to)',
+      ),
+    difficulty: z
+      .string()
+      .min(1)
+      .nullable()
+      .optional()
+      .describe(
+        'Request changes: the difficulty (level name or id; null: none) for the stage it goes back to, e.g. Hard after a failed review',
+      ),
   }),
   annotations: { destructiveHint: false },
   handler: (ctx, input) => {
-    const { task } = taskOf(ctx, input.task);
+    const { task, project } = taskOf(ctx, input.task);
     return taskOut(
       ctx,
       decideApproval(ctx.deps, ctx.actor, task.id, {
-        decision: input.decision,
+        decision: input.decision === 'changes' ? 'request_changes' : input.decision,
         comment: input.comment,
+        sendBackTo: statusId(ctx, project.id, input.sendBackTo, pipelineOfTask(ctx, task)),
+        difficultyId: difficultyIdOf(ctx, project.id, input.difficulty),
       }),
     );
   },

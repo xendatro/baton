@@ -42,8 +42,14 @@ beforeEach(() => {
       pipelineId: project.pipeline.id,
       name: 'In Progress',
       color: '#f59e0b',
-      position: 2,
+      position: 1,
     })
+    .run();
+  // Open → In Progress → Done (BAT-27: tasks move on to the next stage only).
+  ctx.db.orm
+    .update(s.status)
+    .set({ position: 2 })
+    .where(eq(s.status.id, project.statuses[1]?.id ?? ''))
     .run();
   clients = [];
 });
@@ -333,8 +339,10 @@ describe('task MCP tools', () => {
     expect(fromIssue.issues).toEqual([
       expect.objectContaining({ ref: 'acme/API#1', kind: 'relates' }),
     ]);
-    await call(client, 'move_task', { task: task.ref, status: 'Done' });
-    await call(client, 'move_task', { task: fromIssue.ref, status: 'Done' });
+    for (const ref of [task.ref, fromIssue.ref]) {
+      await call(client, 'move_task', { task: ref, status: 'In Progress' });
+      await call(client, 'move_task', { task: ref, status: 'Done' });
+    }
     const row = ctx.db.orm.select().from(s.issue).where(eq(s.issue.id, issue.id)).get();
     expect(row).toMatchObject({ resolved: false, resolvedById: null });
   });

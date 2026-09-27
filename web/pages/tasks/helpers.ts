@@ -1,6 +1,7 @@
 import type { UniqueIdentifier } from '@dnd-kit/core';
 import { PRIORITIES } from '@shared/constants';
 import type { Status } from '@shared/schemas/projects';
+import { backStagesOf, nextStageOf } from '@shared/stageMoves';
 import type { BoardResponse, TaskCard } from '@shared/schemas/tasks';
 import type { ListGroup } from './filters';
 import type { MoveVariables } from './queries';
@@ -25,6 +26,41 @@ export function columnOfItem(layout: Layout, id: UniqueIdentifier): string | und
   const value = String(id);
   if (value.startsWith(COLUMN_PREFIX)) return value.slice(COLUMN_PREFIX.length);
   return Object.keys(layout).find((statusId) => layout[statusId]?.includes(value));
+}
+
+export interface BoardMoves {
+  /** Columns the card may be dropped on: its own, its next stage, its send-back stages, and the
+   * stages of other pipelines (their own checks apply). */
+  allowed: Set<string>;
+  /** Earlier stages it may be sent back to (a drop there asks for the reason), nearest first. */
+  back: Status[];
+}
+
+/** Where a card in `fromId` may be dragged (BAT-27: strict moves), from the board's statuses. */
+export function boardMoves(statuses: readonly Status[], fromId: string): BoardMoves | null {
+  const from = statuses.find((status) => status.id === fromId);
+  if (!from) return null;
+  const samePipeline = (status: Status) =>
+    !from.pipelineId || !status.pipelineId || status.pipelineId === from.pipelineId;
+  const own = statuses.filter(samePipeline).map((status) => ({
+    status,
+    id: status.id,
+    nextStatusId: status.rules?.nextStatusId ?? null,
+    sendBackTo: status.rules?.sendBackTo ?? [],
+  }));
+  const self = own.find((stage) => stage.id === fromId);
+  if (!self) return null;
+  const next = nextStageOf(own, self);
+  const back = backStagesOf(own, self).map((stage) => stage.status);
+  return {
+    allowed: new Set([
+      fromId,
+      ...(next ? [next.id] : []),
+      ...back.map((status) => status.id),
+      ...statuses.filter((status) => !samePipeline(status)).map((status) => status.id),
+    ]),
+    back,
+  };
 }
 
 /**

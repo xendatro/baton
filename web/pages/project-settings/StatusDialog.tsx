@@ -31,6 +31,7 @@ import { Label } from '@web/components/ui/label';
 import { errorMessage } from '@web/lib/api';
 import { FINISHED_STAGE_RULES, LIMITS } from '@shared/constants';
 import { cn } from '@web/lib/utils';
+import { DifficultySelect, type DifficultyLevel } from '../tasks/DifficultySelect';
 import {
   approvalsSentence,
   CUSTOM_HANDOFF_LABELS,
@@ -59,6 +60,8 @@ export interface StatusDialogProps {
   onClose: () => void;
   onCreate: (input: CreateStatusInput) => Promise<Status>;
   onUpdate: (id: string, input: UpdateStatusInput) => Promise<unknown>;
+  /** BAT-28: the project's difficulty levels, easiest first (for the default difficulty). */
+  difficulties?: readonly DifficultyLevel[] | undefined;
 }
 
 const SECTIONS = [
@@ -76,6 +79,8 @@ interface Draft {
   icon: StatusIconShape;
   color: string;
   isDefault: boolean;
+  /** BAT-28: the difficulty of a task's first visit. */
+  defaultDifficultyId: string | null;
   rules: StageRules;
 }
 
@@ -85,7 +90,7 @@ const SECTION_RULES: Record<Exclude<SectionId, 'basics'>, ReadonlyArray<keyof St
   arrival: ['handoff', 'onEnter', 'notify'],
   while: ['blocksDependents', 'claimable'],
   criteria: ['exitCriteria'],
-  moving: ['approvals', 'autoAdvance', 'moveBy', 'moveRule', 'allowSendBack', 'nextStatusId'],
+  moving: ['approvals', 'autoAdvance', 'moveBy', 'moveRule', 'sendBackTo', 'nextStatusId'],
 };
 
 /** The rules as they are saved: what the dialog hides or implies filled in. */
@@ -108,9 +113,8 @@ function cleanRules(rules: StageRules): StageRules {
       ...rules.onEnter,
       releaseClaim: handoff.mode === 'keep' ? rules.onEnter.releaseClaim : false,
     },
-    // Retired from the dialog: the notify checkboxes and the next column replace them.
+    // Retired from the dialog: the notify checkboxes replace it.
     notify: null,
-    nextStatusId: null,
     exitCriteria,
     // Always moved on by someone: the dialog no longer offers auto-advance.
     autoAdvance: false,
@@ -148,7 +152,11 @@ function pickRules(section: Exclude<SectionId, 'basics'>, rules: StageRules): St
 function sameSection(section: SectionId, a: Draft, b: Draft): boolean {
   if (section === 'basics') {
     return (
-      a.name === b.name && a.icon === b.icon && a.color === b.color && a.isDefault === b.isDefault
+      a.name === b.name &&
+      a.icon === b.icon &&
+      a.color === b.color &&
+      a.isDefault === b.isDefault &&
+      a.defaultDifficultyId === b.defaultDifficultyId
     );
   }
   return (
@@ -164,6 +172,7 @@ function withSection(section: SectionId, base: Draft, from: Draft): Draft {
       icon: from.icon,
       color: from.color,
       isDefault: from.isDefault,
+      defaultDifficultyId: from.defaultDifficultyId,
     };
   }
   return { ...base, rules: { ...base.rules, ...pickRules(section, from.rules) } as StageRules };
@@ -216,6 +225,7 @@ function StatusForm({
   onDirtyChange,
   confirmingClose,
   onKeepEditing,
+  difficulties,
 }: Omit<StatusDialogProps, 'state'> & {
   state: NonNullable<StatusDialogState>;
   onDirtyChange: (dirty: boolean) => void;
@@ -224,23 +234,34 @@ function StatusForm({
 }) {
   const creating = state.mode === 'create';
   const status = state.mode === 'edit' ? state.status : null;
-  const [saved, setSaved] = useState<Draft>(() =>
-    status
-      ? {
-          name: status.name,
-          icon: status.icon,
-          color: status.color,
-          isDefault: status.isDefault,
-          rules: status.rules ?? DEFAULT_STAGE_RULES,
-        }
-      : {
-          name: '',
-          icon: 'circle',
-          color: suggestColor(statuses),
-          isDefault: false,
-          rules: { ...DEFAULT_STAGE_RULES, moveBy: { assignees: true, claimer: false } },
+  const [saved, setSaved] = useState<Draft>(() => {
+    if (!status) {
+      return {
+        name: '',
+        icon: 'circle',
+        color: suggestColor(statuses),
+        isDefault: false,
+        defaultDifficultyId: null,
+        // A new stage goes last: by default it can send tasks back to every stage before it.
+        rules: {
+          ...DEFAULT_STAGE_RULES,
+          moveBy: { assignees: true, claimer: false },
+          sendBackTo: statuses.map((other) => other.id),
         },
-  );
+      };
+    }
+    const rules = status.rules ?? DEFAULT_STAGE_RULES;
+    // Stages reordered or deleted since are no longer earlier ones.
+    const earlier = new Set(earlierStages(statuses, status.id).map((other) => other.id));
+    return {
+      name: status.name,
+      icon: status.icon,
+      color: status.color,
+      isDefault: status.isDefault,
+      defaultDifficultyId: status.defaultDifficultyId ?? null,
+      rules: { ...rules, sendBackTo: rules.sendBackTo.filter((id) => earlier.has(id)) },
+    };
+  });
   const [draft, setDraft] = useState<Draft>(saved);
   const [section, setSection] = useState<SectionId>(
     state.mode === 'edit' ? (state.section ?? 'basics') : 'basics',
@@ -296,6 +317,7 @@ function StatusForm({
       icon: draft.icon,
       color: draft.color,
       ...(draft.isDefault ? { isDefault: true } : {}),
+      ...(draft.defaultDifficultyId ? { defaultDifficultyId: draft.defaultDifficultyId } : {}),
       rules: cleanRules(draft.rules),
     }).then(
       (created) => {
@@ -325,6 +347,9 @@ function StatusForm({
         icon: draft.icon,
         color: draft.color,
         ...(draft.isDefault && !saved.isDefault ? { isDefault: true as const } : {}),
+        ...(draft.defaultDifficultyId !== saved.defaultDifficultyId
+          ? { defaultDifficultyId: draft.defaultDifficultyId }
+          : {}),
       };
     } else {
       input = { rules: pickRules(section, cleanRules(draft.rules)) };
@@ -453,6 +478,7 @@ function StatusForm({
               canManage={canManage}
               isFinal={isFinal(draft.rules)}
               onMakeFinal={makeFinal}
+              difficulties={difficulties}
             />
           ) : section === 'instructions' ? (
             <InstructionsSection
@@ -478,6 +504,8 @@ function StatusForm({
             <MovingSection
               rules={draft.rules}
               setRules={setRules}
+              statuses={statuses}
+              statusId={status?.id ?? null}
               options={options}
               disabled={!canManage}
             />
@@ -587,6 +615,7 @@ function BasicsSection({
   canManage,
   isFinal: final,
   onMakeFinal,
+  difficulties,
 }: {
   draft: Draft;
   setDraft: (update: (current: Draft) => Draft) => void;
@@ -595,8 +624,10 @@ function BasicsSection({
   canManage: boolean;
   isFinal: boolean;
   onMakeFinal: () => void;
+  difficulties?: readonly DifficultyLevel[] | undefined;
 }) {
   const nameId = useId();
+  const difficultyId = useId();
   return (
     <div className="grid max-w-md gap-5">
       <div className="grid gap-1.5">
@@ -630,6 +661,27 @@ function BasicsSection({
           </Button>
         </StatusIconPicker>
       </div>
+      {difficulties && difficulties.length > 0 ? (
+        <div className="grid gap-1.5">
+          <div className="flex items-center gap-1.5">
+            <Label htmlFor={difficultyId}>Default difficulty</Label>
+            <HelpTip topic="Default difficulty">
+              The difficulty a task gets the first time it enters this stage (it picks the models
+              agents run). Coming back, it keeps the difficulty it had here last time. No
+              difficulty: it keeps the one it came with.
+            </HelpTip>
+          </div>
+          <DifficultySelect
+            id={difficultyId}
+            levels={difficulties}
+            value={draft.defaultDifficultyId}
+            onChange={(value) =>
+              setDraft((current) => ({ ...current, defaultDifficultyId: value }))
+            }
+            className="max-w-sm"
+          />
+        </div>
+      ) : null}
       <CheckRow
         label="Default for new tasks"
         help={
@@ -946,14 +998,116 @@ function CriteriaSection({ rules, setRules }: { rules: StageRules; setRules: Set
   );
 }
 
+/** The stages before `statusId` in column order (every stage for a new one). */
+function earlierStages(statuses: readonly Status[], statusId: string | null): Status[] {
+  const index = statusId ? statuses.findIndex((other) => other.id === statusId) : -1;
+  return index === -1 ? (statusId ? [] : [...statuses]) : statuses.slice(0, index);
+}
+
+/**
+ * "Can move to" (BAT-27): forward only to the next stage (the next column, or the stage picked
+ * here), back only to the earlier stages checked here, always with a reason.
+ */
+function CanMoveTo({
+  rules,
+  setRules,
+  statuses,
+  statusId,
+}: {
+  rules: StageRules;
+  setRules: SetRules;
+  statuses: readonly Status[];
+  statusId: string | null;
+}) {
+  const nextId = useId();
+  const index = statusId ? statuses.findIndex((other) => other.id === statusId) : -1;
+  // A new stage goes last: no next column.
+  const nextColumn = index === -1 ? undefined : statuses[index + 1];
+  const others = statuses.filter((other) => other.id !== statusId);
+  const earlier = earlierStages(statuses, statusId);
+  const checked = new Set(rules.sendBackTo);
+  return (
+    <section className="grid gap-3" aria-labelledby={`${nextId}-heading`}>
+      <div className="flex items-center gap-1.5">
+        <h4 id={`${nextId}-heading`} className="text-sm font-medium">
+          Can move to
+        </h4>
+        <HelpTip topic="Can move to">
+          Tasks move on only to the next stage, once the rules below are met, and back only to the
+          earlier stages checked here, always with a reason. To skip a stage, pick a later one as
+          the next stage.
+        </HelpTip>
+      </div>
+      <div className="grid gap-1.5">
+        <Label htmlFor={nextId} className="font-normal text-muted-foreground">
+          Forward
+        </Label>
+        <NativeSelect
+          id={nextId}
+          value={rules.nextStatusId ?? ''}
+          onChange={(value) => setRules('nextStatusId', value || null)}
+        >
+          <option value="">
+            {nextColumn ? `Next stage (${nextColumn.name})` : 'None (last stage)'}
+          </option>
+          {others
+            .filter((other) => other.id !== nextColumn?.id)
+            .map((other) => (
+              <option key={other.id} value={other.id}>
+                {other.name}
+              </option>
+            ))}
+        </NativeSelect>
+      </div>
+      <fieldset className="grid gap-1.5">
+        <legend className="mb-1.5 text-sm font-normal text-muted-foreground">
+          Back (with a reason)
+        </legend>
+        {earlier.length === 0 ? (
+          <p className="text-sm text-muted-foreground">
+            No earlier stages: tasks can’t be sent back from here.
+          </p>
+        ) : (
+          earlier.map((other) => (
+            <CheckRow
+              key={other.id}
+              label={other.name}
+              checked={checked.has(other.id)}
+              onChange={(on) =>
+                setRules(
+                  'sendBackTo',
+                  earlier
+                    .filter((candidate) =>
+                      candidate.id === other.id ? on : checked.has(candidate.id),
+                    )
+                    .map((candidate) => candidate.id),
+                )
+              }
+            />
+          ))
+        )}
+        {earlier.length > 0 && checked.size === 0 ? (
+          <p className="text-sm text-muted-foreground">
+            None checked: tasks can’t be sent back from here, and Request changes only blocks it.
+          </p>
+        ) : null}
+      </fieldset>
+    </section>
+  );
+}
+
 function MovingSection({
   rules,
   setRules,
+  statuses,
+  statusId,
   options,
   disabled,
 }: {
   rules: StageRules;
   setRules: SetRules;
+  statuses: readonly Status[];
+  statusId: string | null;
   options: PrincipalOptions;
   disabled: boolean;
 }) {
@@ -977,6 +1131,8 @@ function MovingSection({
 
   return (
     <div className="grid gap-6">
+      <CanMoveTo rules={rules} setRules={setRules} statuses={statuses} statusId={statusId} />
+
       <section className="grid gap-3">
         <div className="flex items-center gap-2">
           <Label htmlFor={countId}>Approvals needed</Label>
@@ -1062,13 +1218,6 @@ function MovingSection({
           <p className="text-sm text-muted-foreground">Anyone who can move tasks can move it on.</p>
         ) : null}
       </section>
-
-      <CheckRow
-        label="Can be sent back"
-        help="Approvers can press Request changes, and people can move it back, which returns it to the previous status."
-        checked={rules.allowSendBack}
-        onChange={(allowSendBack) => setRules('allowSendBack', allowSendBack)}
-      />
     </div>
   );
 }

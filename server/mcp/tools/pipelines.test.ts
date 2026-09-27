@@ -129,11 +129,11 @@ describe('pipelines over MCP', () => {
     expect(blocked).toContain('move_task evidence: [{ criterion, text }]');
 
     const skipped = await callError(benClient, 'move_task', { task: 'API-1', status: 'Done' });
-    expect(skipped).toContain('going through In Review first');
+    expect(skipped).toContain('tasks only move on to In Review');
 
     const got = await call<TaskOut>(benClient, 'get_task', { task: 'API-1' });
     expect(got.stage?.criteria).toEqual([{ id: 'tests', text: 'Tests pass', evidence: null }]);
-    expect(got.stage?.blockedMoves.Done).toContain('going through In Review first');
+    expect(got.stage?.blockedMoves.Done).toContain('tasks only move on to In Review');
     expect(got.stage?.next).toEqual({ id: reviewId, name: 'In Review' });
 
     // Evidence alone is saved without moving.
@@ -170,6 +170,41 @@ describe('pipelines over MCP', () => {
     });
     expect(approved.status.name).toBe('Done');
     expect(task.id).toBeTruthy();
+  });
+
+  it('sends a task back only with a reason, and approve_task changes picks the stage', async () => {
+    createTask(ctx.deps, web(owner), project.project.id, { title: 'Feature', statusId: reviewId });
+    const annClient = await connect(ann);
+    const got = await call<TaskOut>(annClient, 'get_task', { task: 'API-1' });
+    expect(got.stage?.canMoveTo).toEqual({
+      forward: {
+        id: expect.any(String) as string,
+        name: 'Done',
+        missing: ['1 approval from Reviewer'],
+        difficultyId: null,
+      },
+      back: [
+        { id: expect.any(String) as string, name: 'In Progress', difficultyId: null },
+        { id: expect.any(String) as string, name: 'Open', difficultyId: null },
+      ],
+    });
+    expect(
+      await callError(annClient, 'move_task', { task: 'API-1', status: 'In Progress' }),
+    ).toContain('Give a reason for sending API-1 back to In Progress (reason)');
+    expect(
+      await callError(annClient, 'approve_task', { task: 'API-1', decision: 'changes' }),
+    ).toContain('Say what has to change (comment)');
+    const back = await call<TaskOut>(annClient, 'approve_task', {
+      task: 'API-1',
+      decision: 'changes',
+      comment: 'Start again',
+      sendBackTo: 'Open',
+    });
+    expect(back.status.name).toBe('Open');
+    expect(back.stage?.returnReason).toMatchObject({
+      reason: 'Start again',
+      from: { name: 'In Review' },
+    });
   });
 
   it('claims a pool task with claim_task, assigning the claimer', async () => {

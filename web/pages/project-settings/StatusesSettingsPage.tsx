@@ -74,6 +74,8 @@ import {
 } from '../projects/queries';
 import { BoardBackLink, ReadOnlyNotice, SettingsCard, SettingsHeader } from './common';
 import { CopyPipelineDialog } from './CopyPipelineDialog';
+import { useDifficulties } from '../projects/difficultyQueries';
+import { PipelineDiagram } from './PipelineDiagram';
 import { PipelinesBar } from './PipelinesBar';
 import { usePrincipalOptions } from './pipelineQueries';
 import { StatusDialog, type StatusDialogState } from './StatusDialog';
@@ -136,6 +138,7 @@ function Statuses({ teamId, projectId }: { teamId: string; projectId: string }) 
   const create = useCreateStatus(projectId);
   const [copying, setCopying] = useState(false);
   const principals = usePrincipalOptions(teamId, projectId);
+  const difficulties = useDifficulties(projectId);
   const me = useMe();
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
@@ -286,6 +289,7 @@ function Statuses({ teamId, projectId }: { teamId: string; projectId: string }) 
           </DndContext>
         )}
       </SettingsCard>
+      <PipelineDiagram statuses={items} />
       <DeleteStatusDialog
         projectId={projectId}
         status={deleting}
@@ -308,6 +312,7 @@ function Statuses({ teamId, projectId }: { teamId: string; projectId: string }) 
           create.mutateAsync({ ...input, ...(selected ? { pipelineId: selected.id } : {}) })
         }
         onUpdate={(id, input) => update.mutateAsync({ id, input })}
+        difficulties={difficulties.data}
       />
       <CopyPipelineDialog
         open={copying}

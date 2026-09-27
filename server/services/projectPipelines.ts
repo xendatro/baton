@@ -363,12 +363,22 @@ export function insertPipelineWithStages(
         pipelineId: row.id,
         ...seedStatusColumns(seed),
         position,
+        // BAT-27: each seeded stage can send tasks back to the earlier ones (Done → Open).
+        sendBackTo: [],
         createdAt: now,
         updatedAt: now,
       })
       .returning()
       .get(),
   );
+  for (const [index, status] of statuses.entries()) {
+    if (index === 0) continue;
+    status.sendBackTo = statuses.slice(0, index).map((earlier) => earlier.id);
+    tx.update(s.status)
+      .set({ sendBackTo: status.sendBackTo })
+      .where(eq(s.status.id, status.id))
+      .run();
+  }
   return { pipeline: row, statuses };
 }
 

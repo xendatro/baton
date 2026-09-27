@@ -139,6 +139,11 @@ export const statusSchema = z.object({
    * server (optional for older fixtures and clients).
    */
   rules: stageRulesSchema.optional(),
+  /**
+   * BAT-28: the difficulty a task gets on its first visit (a level of the project; null: none).
+   * Optional for older fixtures.
+   */
+  defaultDifficultyId: z.string().nullable().optional(),
 });
 export type Status = z.infer<typeof statusSchema>;
 
@@ -413,6 +418,8 @@ export const createStatusInputSchema = z.object({
   rules: stageRulesPatchSchema.optional(),
   /** The pipeline it joins, at the end (BAT-25; default: the project's default pipeline). */
   pipelineId: idSchema.optional(),
+  /** BAT-28: the difficulty of a task's first visit (a level of the project; null: none). */
+  defaultDifficultyId: idSchema.nullable().optional(),
 });
 export type CreateStatusInput = z.infer<typeof createStatusInputSchema>;
 
@@ -427,6 +434,8 @@ export const updateStatusInputSchema = z
     isDefault: z.literal(true).optional(),
     /** Pipeline rules (design §5): only the rules given change. */
     rules: stageRulesPatchSchema.optional(),
+    /** BAT-28: the difficulty of a task's first visit (a level of the project; null: none). */
+    defaultDifficultyId: idSchema.nullable().optional(),
   })
   .refine((value) => Object.values(value).some((field) => field !== undefined), {
     message: 'Nothing to update',

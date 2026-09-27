@@ -437,7 +437,10 @@ export const updateTaskInputSchema = z
     assigneeUsers: idListChangeSchema(TASK_LIMITS.assignees).optional(),
     assigneeRoles: idListChangeSchema(TASK_LIMITS.assignees).optional(),
     labels: idListChangeSchema(TASK_LIMITS.labels).optional(),
-    /** A difficulty level of the project; null clears it. */
+    /**
+     * A difficulty level of the project; null clears it. BAT-28: the difficulty of the task's
+     * current stage, or, together with `statusId`, of the stage it moves to.
+     */
     difficultyId: idSchema.nullable().optional(),
     blockedBy: idListChangeSchema(TASK_LIMITS.blockers).optional(),
     issueLinks: issueLinksChangeSchema.optional(),
@@ -465,6 +468,11 @@ export const moveTaskInputSchema = z.object({
   beforeId: idSchema.optional(),
   /** Evidence for the current stage's exit criteria (criterion id → text), saved first. */
   evidence: evidenceInputSchema.optional(),
+  /**
+   * BAT-28: the difficulty for the stage it moves to (null: none), over the default rules (its
+   * last value there, else the stage's default, else the current one).
+   */
+  difficultyId: idSchema.nullable().optional(),
   /** Owner/administrator: move past the stage rules (needs `reason`). */
   ...forceMoveFields,
 });

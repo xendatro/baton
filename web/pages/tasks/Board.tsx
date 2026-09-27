@@ -36,15 +36,30 @@ import {
   type RefObject,
 } from 'react';
 import { Link } from 'react-router';
-import type { BoardColumn, BoardResponse, TaskCard } from '@shared/schemas/tasks';
+import {
+  taskSchema,
+  type BoardColumn,
+  type BoardResponse,
+  type TaskCard,
+} from '@shared/schemas/tasks';
 import { FinishedMark } from '@web/components/common/FinishedMark';
 import { StatusIcon } from '@web/components/common/StatusBadge';
 import { Button } from '@web/components/ui/button';
 import { Skeleton } from '@web/components/ui/skeleton';
+import { api } from '@web/lib/api';
 import { cn } from '@web/lib/utils';
 import { ColumnMenu } from './CustomizeMenu';
-import { columnOfItem, COLUMN_PREFIX, dropTarget, layoutOf, type Layout } from './helpers';
+import {
+  boardMoves,
+  columnOfItem,
+  COLUMN_PREFIX,
+  dropTarget,
+  layoutOf,
+  type Layout,
+} from './helpers';
 import type { MoveVariables } from './queries';
+import type { DifficultyLevel } from './DifficultySelect';
+import { SendBackDialog, type SendBackStage } from './SendBackDialog';
 import { TaskCardBody } from './TaskCard';
 
 /**
@@ -54,6 +69,9 @@ import { TaskCardBody } from './TaskCard';
  *
  * Touch drags start with a press-and-hold (TOUCH_DRAG_DELAY_MS), so a swipe still scrolls the board
  * and its columns: a pointer sensor would lose every touch to the browser's pan gesture.
+ *
+ * Moves are strict (BAT-27): while a card is dragged, the columns it can't go to are greyed out
+ * and refuse the drop; a drop on an earlier stage asks for the reason before it moves.
  */
 
 /** Hold time before a touch starts dragging a card, and how far the finger may drift meanwhile. */
@@ -103,6 +121,8 @@ export interface BoardProps {
   editStatusHref?: (statusId: string) => string;
   /** BAT-25, the "All" view of several pipelines: each column's pipeline, above its name. */
   pipelineNameOf?: (pipelineId: string | undefined) => string | undefined;
+  /** BAT-28: the project's difficulty levels, for the difficulty of a move back. */
+  difficulties?: readonly DifficultyLevel[] | undefined;
 }
 
 export function Board({
@@ -115,6 +135,7 @@ export function Board({
   hint,
   editStatusHref,
   pipelineNameOf,
+  difficulties,
 }: BoardProps) {
   const [dragLayout, setDragLayout] = useState<Layout | null>(null);
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -132,6 +153,20 @@ export function Board({
     () => new Map(board.columns.map((column) => [column.status.id, column.status.name])),
     [board],
   );
+  const statuses = useMemo(() => board.columns.map((column) => column.status), [board]);
+  const activeCard = activeId ? cards.get(activeId) : undefined;
+  const moves = useMemo(
+    () => (activeCard ? boardMoves(statuses, activeCard.status.id) : null),
+    [activeCard, statuses],
+  );
+  /** A drop on an earlier stage, waiting for its reason. */
+  const [sendingBack, setSendingBack] = useState<{
+    move: MoveVariables;
+    from: string;
+    back: SendBackStage[];
+  } | null>(null);
+  const forbidden = (statusId: string | undefined) =>
+    Boolean(moves && statusId && !moves.allowed.has(statusId));
   const sensors = useSensors(
     useSensor(MouseSensor, { activationConstraint: { distance: 6 } }),
     useSensor(TouchSensor, {
@@ -193,6 +228,15 @@ export function Board({
     // has painted. Otherwise the shifted cards can put it "over" the old column again, and the two
     // moves repeat on every render until React stops with "Maximum update depth exceeded" (#185).
     if (movedColumn.current && args.active) return [{ id: args.active.id }];
+    // Columns the card can't go to take no drops (BAT-27).
+    if (moves) {
+      args = {
+        ...args,
+        droppableContainers: args.droppableContainers.filter(
+          (container) => !forbidden(columnOfItem(dragLayout ?? layout, container.id)),
+        ),
+      };
+    }
     const pointer = pointerWithin(args);
     const hits = pointer.length > 0 ? pointer : rectIntersection(args);
     const overId = getFirstCollision(hits, 'id');
@@ -226,7 +270,7 @@ export function Board({
       const base = current ?? layoutOf(board);
       const from = columnOfItem(base, active.id);
       const to = columnOfItem(base, over.id);
-      if (!from || !to || from === to) return base;
+      if (!from || !to || from === to || forbidden(to)) return base;
       movedColumn.current = true;
       const source = (base[from] ?? []).filter((id) => id !== String(active.id));
       const target = [...(base[to] ?? [])];
@@ -253,9 +297,50 @@ export function Board({
         after = { ...after, [statusId]: next };
       }
     }
+    const card = cards.get(String(active.id));
+    const targets = card ? boardMoves(statuses, card.status.id) : null;
     setActiveId(null);
     setDragLayout(null);
-    const move = over ? dropTarget(before, after, String(active.id)) : null;
+    let move = over ? dropTarget(before, after, String(active.id)) : null;
+    if (move && targets && !targets.allowed.has(move.statusId)) move = null;
+    const back = move && targets?.back.find((status) => status.id === move.statusId);
+    if (move && back && card && targets) {
+      // Back to an earlier stage: only once a reason is given (the card stays until then).
+      setSettling(null);
+      setSendingBack({
+        move: { taskId: card.id, ...move },
+        from: card.status.name,
+        back: targets.back.map((status) => ({
+          id: status.id,
+          name: status.name,
+          difficultyId: status.defaultDifficultyId ?? card.difficulty?.id ?? null,
+        })),
+      });
+      // BAT-28: the exact difficulty each stage would give it (its last one there) comes with the task.
+      if (difficulties?.length) {
+        void api.get(`/api/tasks/${encodeURIComponent(card.id)}`, { schema: taskSchema }).then(
+          (full) => {
+            const exact = full.stage?.canMoveTo?.back;
+            if (!exact) return;
+            setSendingBack((current) =>
+              current?.move.taskId === card.id
+                ? {
+                    ...current,
+                    back: current.back.map((stage) => ({
+                      ...stage,
+                      difficultyId:
+                        exact.find((item) => item.id === stage.id)?.difficultyId ??
+                        stage.difficultyId,
+                    })),
+                  }
+                : current,
+            );
+          },
+          () => undefined,
+        );
+      }
+      return;
+    }
     setSettling(move ? { layout: after, board } : null);
     if (move) onMove({ taskId: String(active.id), ...move });
   };
@@ -302,9 +387,36 @@ export function Board({
             hint={index === 0 ? hint : undefined}
             editStatusHref={editStatusHref}
             pipelineName={pipelineNameOf?.(column.status.pipelineId)}
+            forbidden={forbidden(column.status.id)}
           />
         ))}
       </div>
+      <SendBackDialog
+        open={sendingBack !== null}
+        onOpenChange={(open) => (open ? undefined : setSendingBack(null))}
+        from={sendingBack?.from ?? ''}
+        stages={sendingBack?.back ?? []}
+        initialStageId={sendingBack?.move.statusId}
+        difficulties={difficulties?.length ? difficulties : undefined}
+        onConfirm={({ statusId, reason, difficultyId }) => {
+          const pending = sendingBack;
+          if (!pending) return Promise.resolve();
+          onMove({
+            ...pending.move,
+            ...(statusId !== pending.move.statusId
+              ? {
+                  statusId,
+                  afterId: undefined,
+                  beforeId: undefined,
+                  index: Number.MAX_SAFE_INTEGER,
+                }
+              : {}),
+            reason,
+            ...(difficultyId !== undefined ? { difficultyId } : {}),
+          });
+          return Promise.resolve();
+        }}
+      />
       {/* No rotation or scaling: keyboard moves compare the overlay's rect with the cards'. */}
       <DragOverlay dropAnimation={{ duration: 150, easing: 'ease-out' }}>
         {active ? (
@@ -356,6 +468,8 @@ interface ColumnProps {
   hint?: ReactNode;
   editStatusHref?: (statusId: string) => string;
   pipelineName?: string | undefined;
+  /** While a card is dragged: it can't go here (greyed out, takes no drop). */
+  forbidden?: boolean;
 }
 
 function Column({
@@ -369,15 +483,24 @@ function Column({
   hint,
   editStatusHref,
   pipelineName,
+  forbidden = false,
 }: ColumnProps) {
   const { status } = column;
-  const { setNodeRef, isOver } = useDroppable({ id: `${COLUMN_PREFIX}${status.id}` });
+  const { setNodeRef, isOver } = useDroppable({
+    id: `${COLUMN_PREFIX}${status.id}`,
+    disabled: forbidden,
+  });
   const hidden = column.count - column.tasks.length;
   const headingId = `column-${status.id}`;
   return (
     <section
       aria-labelledby={headingId}
-      className="group/column flex max-h-full w-[85vw] max-w-[18.5rem] shrink-0 snap-start flex-col rounded-xl bg-muted/50 sm:w-72 dark:bg-muted/30"
+      aria-disabled={forbidden || undefined}
+      data-forbidden={forbidden || undefined}
+      className={cn(
+        'group/column flex max-h-full w-[85vw] max-w-[18.5rem] shrink-0 snap-start flex-col rounded-xl bg-muted/50 transition-opacity sm:w-72 dark:bg-muted/30',
+        forbidden && 'cursor-not-allowed opacity-40 grayscale',
+      )}
     >
       <header className="flex items-center gap-2 px-3 pt-3 pb-2">
         <StatusIcon status={status} />
@@ -405,6 +528,7 @@ function Column({
             <PlusIcon aria-hidden="true" />
           </Button>
         ) : null}
+        {forbidden ? <span className="sr-only">(can’t move here)</span> : null}
         {editStatusHref ? (
           <ColumnMenu
             statusName={status.name}

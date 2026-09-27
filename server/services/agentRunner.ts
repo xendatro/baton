@@ -535,8 +535,67 @@ function stageSection(stage: TaskStage): string {
     );
   }
   if (stage.moveRule) parts.push(`Only ${stage.moveRule} can move it on.`);
-  parts.push(stage.next ? `Next stage: **${stage.next.name}**.` : 'This is the last stage.');
+  parts.push(
+    stage.next
+      ? `Next stage: **${stage.next.name}** (the only stage it moves on to).`
+      : 'This is the last stage.',
+  );
+  const back = stage.canMoveTo?.back ?? [];
+  if (back.length > 0) {
+    parts.push(
+      `It can be sent back to ${back.map((item) => `**${item.name}**`).join(', ')} with move_task { status, reason } (the reason is required).`,
+    );
+  }
   return parts.join('\n\n');
+}
+
+/**
+ * BAT-27: "Sent back because", at the top of the brief of a job for a stage the task was sent
+ * back into (the job's `returnReason`, else the current visit's while the job is for it). A
+ * resumed harness session gets it as the start of its new prompt.
+ */
+function sentBackSection(job: JobRow, stage: TaskStage | null): string[] {
+  const payloadReason =
+    typeof job.payload.returnReason === 'string' ? job.payload.returnReason : '';
+  const forStage =
+    typeof job.payload.statusId !== 'string' || job.payload.statusId === stage?.status.id;
+  const visit = forStage ? stage?.returnReason : null;
+  const reason = payloadReason || visit?.reason || '';
+  if (!reason.trim()) return [];
+  const from =
+    typeof job.payload.returnedFrom === 'string'
+      ? job.payload.returnedFrom
+      : (visit?.from?.name ?? null);
+  const by = !payloadReason && visit?.by ? ` by @${visit.by.username ?? 'someone'}` : '';
+  return [
+    `## Sent back because\n\n${quote(reason)}\n\nThe task was sent back${from ? ` from ${from}` : ''}${by}. Deal with this first: it is why the task is here again.`,
+  ];
+}
+
+/**
+ * BAT-28: the difficulty of the stage a job is for — the task's difficulty in `payload.statusId`
+ * when the job names another stage it has been in, else its current stage's.
+ */
+function jobDifficultyId(
+  db: DbExecutor,
+  job: Pick<JobRow, 'payload'>,
+  task: { id: string; statusId: string; difficultyId: string | null },
+): string | null {
+  const statusId = typeof job.payload.statusId === 'string' ? job.payload.statusId : null;
+  if (statusId && statusId !== task.statusId) {
+    const row = db
+      .select({ difficultyId: s.taskStageDifficulty.difficultyId })
+      .from(s.taskStageDifficulty)
+      .where(
+        and(
+          eq(s.taskStageDifficulty.taskId, task.id),
+          eq(s.taskStageDifficulty.statusId, statusId),
+        ),
+      )
+      .get();
+    if (row) return row.difficultyId;
+  }
+  return task.difficultyId;
 }
 
 function recentReplies(
@@ -600,7 +659,11 @@ export function jobBrief(
     .from(s.difficulty)
     .where(eq(s.difficulty.projectId, job.projectId))
     .all();
-  const level = task?.difficultyId ? levels.find((row) => row.id === task.difficultyId) : undefined;
+  // BAT-28: the difficulty of the stage the job is for.
+  const difficultyId = task ? jobDifficultyId(orm, job, task) : null;
+  const level = difficultyId ? levels.find((row) => row.id === difficultyId) : undefined;
+  const jobStage =
+    typeof job.payload.stage === 'string' ? job.payload.stage : (context.target.status ?? null);
   const mappings = orm
     .select({ defaultMapping: s.agentSettings.defaultMapping })
     .from(s.agentSettings)
@@ -646,8 +709,12 @@ export function jobBrief(
   const me = names.get(agent.id)?.username ?? 'your-agent';
   const owner = names.get(agent.ownerId)?.username ?? 'your owner';
   const ref = context.target.ref ?? 'the item';
+  const stage = task
+    ? stageOf(orm, { userId: agent.id, ownerId: agent.ownerId, source: 'api', key: null }, task)
+    : null;
   const sections: string[] = [
     `# Baton job: ${job.kind.replace('_', ' ')} on ${ref}${context.target.title ? ` — ${context.target.title}` : ''}`,
+    ...sentBackSection(job, stage),
     `You are **@${me}**, the Baton agent of **@${owner}**, running headless on their machine for this one job. Use the Baton MCP tools (get_task, add_reply, move_task, complete_job, …) to read and write in Baton: everything you write is posted as @${me}. Work in the current folder, with your usual tools and settings.`,
     `## The job\n\n${context.instructions}\n\nJob id: \`${job.id}\`.`,
   ];
@@ -659,7 +726,11 @@ export function jobBrief(
       ...(pipeline && !pipeline.isDefault ? [`- Pipeline: ${pipeline.name}`] : []),
       ...(context.target.status ? [`- Status: ${context.target.status}`] : []),
       ...(task ? [`- Priority: ${PRIORITIES[task.priority]?.label ?? 'None'}`] : []),
-      ...(task ? [`- Difficulty: ${level?.name ?? 'none'}`] : []),
+      ...(task
+        ? [
+            `- Difficulty: ${level?.name ?? 'none'}${jobStage ? ` (the task’s difficulty in ${jobStage}; it picked your model)` : ''}`,
+          ]
+        : []),
     ];
     sections.push(
       `## ${item.type === 'task' ? 'Task' : 'Issue'} ${ref}: ${item.title}\n\n${facts.join('\n')}\n\n### ${
@@ -667,14 +738,7 @@ export function jobBrief(
       }\n\n${item.body.trim() || '_(empty)_'}`,
     );
   }
-  if (task) {
-    const stage = stageOf(
-      orm,
-      { userId: agent.id, ownerId: agent.ownerId, source: 'api', key: null },
-      task,
-    );
-    if (stage) sections.push(stageSection(stage));
-  }
+  if (stage) sections.push(stageSection(stage));
   if (context.stageInstructions && !task) {
     sections.push(`## Stage instructions\n\n${context.stageInstructions}`);
   }
@@ -786,16 +850,17 @@ export function recordUsage(
   const task =
     item?.type === 'task'
       ? orm
-          .select({ difficultyId: s.task.difficultyId })
+          .select({ id: s.task.id, statusId: s.task.statusId, difficultyId: s.task.difficultyId })
           .from(s.task)
           .where(eq(s.task.id, item.id))
           .get()
       : undefined;
-  const level = task?.difficultyId
+  const difficultyId = task ? jobDifficultyId(orm, job, task) : null;
+  const level = difficultyId
     ? orm
         .select({ name: s.difficulty.name })
         .from(s.difficulty)
-        .where(eq(s.difficulty.id, task.difficultyId))
+        .where(eq(s.difficulty.id, difficultyId))
         .get()
     : undefined;
   const now = new Date();

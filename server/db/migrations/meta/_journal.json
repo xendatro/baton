@@ -134,6 +134,20 @@
       "when": 1790506721953,
       "tag": "0018_project_member_settings",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "6",
+      "when": 1790506911845,
+      "tag": "0019_strict_moves",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "6",
+      "when": 1790508673288,
+      "tag": "0020_stage_difficulty",
+      "breakpoints": true
     }
   ]
 }

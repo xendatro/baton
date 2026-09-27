@@ -79,8 +79,15 @@ function newTask(extra: Partial<CreateTaskData> = {}, actor: Actor = web(owner))
   return createTask(ctx.deps, actor, project.project.id, { title: 'Ship it', ...extra });
 }
 
+/**
+ * Moves as the team owner, forcing past the strict moves (BAT-27, tested in strictMoves.test.ts):
+ * these tests are about what entering a stage does.
+ */
 function move(taskId: string, status: Status, actor: Actor = web(owner)): Task {
-  return moveTask(ctx.deps, actor, taskId, { statusId: status.id });
+  return moveTask(ctx.deps, actor, taskId, {
+    statusId: status.id,
+    ...(actor.userId === owner.id ? { force: true, reason: 'Testing stage entry' } : {}),
+  });
 }
 
 /** The task's rows of one stage: usernames and role names. */
@@ -189,14 +196,15 @@ describe('assignments per (task, stage)', () => {
   });
 
   it('assignees set together with a move become the new stage’s, whatever its hand-off', () => {
+    setRules(doing, { handoff: { mode: 'nobody' } });
     const task = newTask({ assigneeUserIds: [ann.id] });
     const moved = updateTask(ctx.deps, web(owner), task.id, {
-      statusId: done.id,
+      statusId: doing.id,
       assigneeUsers: { set: [ben.id] },
     });
     expect(moved.assignees.users.map((user) => user.username)).toEqual(['ben']);
     expect(rowsOf(task.id, todo)).toEqual(['@ann']);
-    expect(rowsOf(task.id, done)).toEqual(['@ben']);
+    expect(rowsOf(task.id, doing)).toEqual(['@ben']);
   });
 
   it('stage_holder gives the task to whoever held it in that stage (people and roles)', () => {

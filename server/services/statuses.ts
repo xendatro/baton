@@ -20,6 +20,7 @@ import { newId } from '../lib/ids';
 import { appPaths } from '../lib/urls';
 import { requireProjectAccess, type Membership } from './access';
 import { recordActivity } from './activity';
+import { resolveDifficulty } from './difficulties';
 import { emitAfterCommit } from './events';
 import { queueLinkedIssueEvents } from './linkEvents';
 import { enterStage, mergeRules, ruleChanges, ruleColumns, rulesOf } from './pipelines';
@@ -90,7 +91,13 @@ function toStatus(row: StatusRow, taskCount: number): Status {
     isDefault: row.isDefault,
     taskCount,
     rules: rulesOf(row),
+    defaultDifficultyId: row.defaultDifficultyId,
   };
+}
+
+/** BAT-28: a stage's default difficulty must be a level of its project. */
+function defaultLevel(db: DbExecutor, projectId: string, id: string | null): string | null {
+  return id ? resolveDifficulty(db, projectId, id).id : null;
 }
 
 function statusById(db: DbExecutor, projectId: string, statusId: string): Status {
@@ -218,6 +225,7 @@ export function createStatus(
     throw errors.notFound('Pipeline');
   }
   requireManageStages(orm, membership, pipeline.id);
+  const defaultDifficultyId = defaultLevel(orm, projectId, input.defaultDifficultyId ?? null);
 
   const id = deps.db.write((tx) => {
     const all = tx
@@ -229,10 +237,10 @@ export function createStatus(
       throw errors.validation(`A project can have at most ${PROJECT_LIMITS.statuses} statuses`);
     }
     const existing = tx
-      .select({ position: s.status.position })
+      .select({ id: s.status.id, position: s.status.position })
       .from(s.status)
       .where(eq(s.status.pipelineId, pipeline.id))
-      .orderBy(desc(s.status.position))
+      .orderBy(desc(s.status.position), desc(s.status.createdAt))
       .all();
     requireUniqueName(tx, pipeline.id, input.name);
     const now = new Date();
@@ -247,6 +255,9 @@ export function createStatus(
         icon: input.icon ?? DEFAULT_STATUS_ICON,
         position: (existing[0]?.position ?? -1) + 1,
         isDefault: false,
+        // BAT-27: by default a new (last) stage can send tasks back to every earlier one.
+        sendBackTo: existing.map((row) => row.id).reverse(),
+        defaultDifficultyId,
         createdAt: now,
         updatedAt: now,
       })
@@ -296,8 +307,24 @@ export function updateStatus(
 ): Status {
   const { orm } = deps.db;
   const { status, project } = requireManageableStatus(deps, actor, statusId);
-  const { rules: rulesPatch, category: _legacy, ...fields } = input;
+  const { rules: rulesPatch, category: _legacy, defaultDifficultyId, ...fields } = input;
   const changes = diffFields(status, fields);
+  // BAT-28: the default difficulty, audited by name.
+  const nextDefault =
+    defaultDifficultyId === undefined
+      ? undefined
+      : defaultLevel(orm, project.id, defaultDifficultyId);
+  if (nextDefault !== undefined && nextDefault !== status.defaultDifficultyId) {
+    const name = (id: string | null) =>
+      id
+        ? (orm
+            .select({ name: s.difficulty.name })
+            .from(s.difficulty)
+            .where(eq(s.difficulty.id, id))
+            .get()?.name ?? null)
+        : null;
+    changes.defaultDifficulty = change(name(status.defaultDifficultyId), name(nextDefault));
+  }
   const scope = { teamId: project.teamId, projectId: project.id };
   // Pipeline rules (design §5): validated against the project, audited in words.
   const rules = rulesPatch ? mergeRules(orm, scope, statusId, rulesOf(status), rulesPatch) : null;
@@ -322,6 +349,7 @@ export function updateStatus(
         ...(input.color !== undefined ? { color: input.color } : {}),
         ...(input.icon !== undefined ? { icon: input.icon } : {}),
         ...(rules ? ruleColumns(rules) : {}),
+        ...(changes.defaultDifficulty ? { defaultDifficultyId: nextDefault ?? null } : {}),
         updatedAt: new Date(),
       })
       .where(eq(s.status.id, statusId))

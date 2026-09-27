@@ -221,10 +221,16 @@ export interface MoveVariables extends MoveTaskInput {
 export function useMoveTask(projectId: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ taskId, statusId, afterId, beforeId }: MoveVariables) =>
+    mutationFn: ({ taskId, statusId, afterId, beforeId, reason, difficultyId }: MoveVariables) =>
       api.post(
         `/api/tasks/${enc(taskId)}/move`,
-        { statusId, afterId, beforeId },
+        {
+          statusId,
+          afterId,
+          beforeId,
+          ...(reason ? { reason } : {}),
+          ...(difficultyId !== undefined ? { difficultyId } : {}),
+        },
         { schema: taskSchema },
       ),
     onMutate: async ({ taskId, statusId, index }) => {
@@ -341,6 +347,21 @@ export function useSaveEvidence(task: Pick<Task, 'id' | 'projectId'>) {
   return useMutation({
     mutationFn: (evidence: EvidenceInput) =>
       api.put(`/api/tasks/${enc(task.id)}/evidence`, { evidence }, { schema: taskSchema }),
+    onSuccess: (updated) => storeTask(queryClient, updated),
+    onSettled: () => refreshTasks(queryClient, task.projectId),
+    meta: { suppressErrorToast: true },
+  });
+}
+
+/**
+ * The task page's stage moves (BAT-27): on to the next stage, or back to an earlier one with a
+ * reason (`POST /move`, audited as `task.moved`).
+ */
+export function useStageMove(task: Pick<Task, 'id' | 'projectId'>) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: MoveTaskInput & { statusId: string }) =>
+      api.post(`/api/tasks/${enc(task.id)}/move`, input, { schema: taskSchema }),
     onSuccess: (updated) => storeTask(queryClient, updated),
     onSettled: () => refreshTasks(queryClient, task.projectId),
     meta: { suppressErrorToast: true },

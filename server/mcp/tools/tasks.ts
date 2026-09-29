@@ -24,6 +24,7 @@ import { errors, isAppError } from '../../lib/errors';
 import { appPaths } from '../../lib/urls';
 import { listEntityActivity } from '../../services/activity';
 import { resolveTrashRef } from '../../services/admin';
+import { pendingRequestsOn } from '../../services/agentRequests';
 import { claimNextTask, claimTask, releaseTask, renewClaim } from '../../services/claims';
 import {
   resolveIssue,
@@ -455,6 +456,8 @@ const getTaskTool = defineTool({
     }).items;
     return {
       ...taskOut(ctx, full),
+      // Agent access: agents waiting for their owner's OK to work on this task.
+      pendingAgentRequests: pendingRequestsOn(ctx.deps.db.orm, { type: 'task', id: task.id }),
       replyCount: replies.total,
       recentReplies: replies.items.reverse().map((reply) => replyOut(ctx, full.path, reply)),
       recentHistory: history.slice(-HISTORY_SHOWN).map((entry) => ({

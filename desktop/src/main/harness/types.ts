@@ -1,4 +1,5 @@
 import type { HarnessId } from '@shared/schemas/agentRunner';
+import type { HarnessCapabilities } from './capabilities';
 
 /**
  * A harness adapter (BAT-24): how the desktop app finds a headless coding agent (Claude Code,
@@ -109,6 +110,12 @@ export interface HarnessAdapter {
   detect(): Promise<DetectResult>;
   /** Aliases and whatever the harness reports about itself; free text is always accepted too. */
   listModels(): Promise<string[]>;
+  /**
+   * The models and efforts the harness reports on this machine (read from the harness itself,
+   * cached per adapter), sent to Baton with the runner's harnesses so the owner's model pickers
+   * offer only what can run. Optional: adapters without it report nothing.
+   */
+  capabilities?(): Promise<HarnessCapabilities>;
   permissionModes: PermissionMode[];
   run(options: RunOptions): Promise<RunResult>;
 }

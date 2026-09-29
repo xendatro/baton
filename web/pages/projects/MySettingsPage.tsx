@@ -15,7 +15,14 @@ import {
   type ProjectNotifications,
   type ProjectNotifyLevel,
 } from '@shared/schemas/projectSettings';
+import type { AgentAccessRules } from '@shared/schemas/agentAccess';
+import { AgentAccessEditor } from '@web/components/agentRequests/AgentAccessEditor';
+import {
+  useProjectAgentAccess,
+  useSetProjectAgentAccess,
+} from '@web/components/agentRequests/queries';
 import { AgentConnectionStatus } from '@web/components/common/AgentConnectionNotice';
+import { describeRule, type PrincipalOptions } from '@web/components/pickers/principals';
 import { ErrorState } from '@web/components/common/ErrorState';
 import { PageContainer } from '@web/components/common/PageContainer';
 import { Spinner } from '@web/components/common/Spinner';
@@ -32,6 +39,8 @@ import { useDocumentTitle } from '@web/lib/title';
 import { ChainEditor } from '../settings/ChainEditor';
 import { chainSummary } from '../settings/chainSummary';
 import { SettingsCard, SettingsCardSkeleton } from '../settings/SettingsCard';
+import { useProjectRoles } from '../project-settings/accessQueries';
+import { useMembers, useRoles } from '../teams/api';
 import { useDifficulties } from './difficultyQueries';
 import { useMyProjectSettings, useUpdateMyProjectSettings } from './mySettingsQueries';
 
@@ -87,6 +96,7 @@ function MySettings({ team, project }: { team: MeTeam; project: MeProject }) {
               <AgentConnectionStatus projectId={project.id} />
             </SettingsCard>
             <NotificationsCard projectId={project.id} settings={settings.data} />
+            <AgentAccessCard teamId={team.id} projectId={project.id} />
             <ModelsCard projectId={project.id} settings={settings.data} />
             {isDesktopApp() ? <FolderCard projectId={project.id} /> : null}
           </>
@@ -104,6 +114,112 @@ function MySettings({ team, project }: { team: MeTeam; project: MeProject }) {
       </div>
     </PageContainer>
   );
+}
+
+// ---------------------------------------------------------------------------------------------
+// Who can start your agent here (agent access)
+// ---------------------------------------------------------------------------------------------
+
+function AgentAccessCard({ teamId, projectId }: { teamId: string; projectId: string }) {
+  const access = useProjectAgentAccess(projectId);
+  const save = useSetProjectAgentAccess(projectId);
+  const members = useMembers(teamId);
+  const roles = useRoles(teamId);
+  const projectRoles = useProjectRoles(projectId);
+  const [draft, setDraft] = useState<AgentAccessRules | null | undefined>(undefined);
+  const switchId = useId();
+  if (access.isPending) return <SettingsCardSkeleton rows={3} />;
+  if (access.isError) {
+    return (
+      <ErrorState
+        title="Couldn’t load who can start your agent here"
+        error={access.error}
+        onRetry={() => void access.refetch()}
+      />
+    );
+  }
+  const saved = access.data.override;
+  const value = draft === undefined ? saved : draft;
+  const dirty = draft !== undefined && JSON.stringify(draft) !== JSON.stringify(saved);
+  const options: PrincipalOptions = {
+    users: members.data?.items.map((member) => member.user) ?? [],
+    roles:
+      roles.data?.items.map(({ id, name, color, isEveryone }) => ({
+        id,
+        name,
+        color,
+        isEveryone,
+      })) ?? [],
+    projectRoles: projectRoles.data?.map(({ id, name, color }) => ({ id, name, color })) ?? [],
+  };
+  const submit = () =>
+    save.mutate(
+      { override: value },
+      {
+        onSuccess: () => {
+          setDraft(undefined);
+          toast.success(
+            value ? 'Saved who can start your agent here' : 'This project uses your team default',
+          );
+        },
+        onError: (cause) => toast.error(errorMessage(cause)),
+      },
+    );
+  return (
+    <SettingsCard
+      title="Who can start your agent here"
+      description="Who starts your agent in this project without asking, and who can ask you first. Anyone else can’t start it."
+      footer={
+        <div className="flex justify-end">
+          <Button size="sm" onClick={submit} disabled={!dirty || save.isPending}>
+            {save.isPending ? <Spinner /> : null}
+            Save
+          </Button>
+        </div>
+      }
+    >
+      <div className="grid gap-4">
+        <div className="flex items-center justify-between gap-4">
+          <Label htmlFor={switchId}>Use team default</Label>
+          <Switch
+            id={switchId}
+            checked={value === null}
+            onCheckedChange={(useDefault) =>
+              setDraft(useDefault ? null : (saved ?? access.data.teamDefault))
+            }
+          />
+        </div>
+        {value === null ? (
+          <p className="text-sm text-muted-foreground">
+            Your team default applies ({accessSummary(access.data.teamDefault, options)}). Change it
+            in{' '}
+            <Link
+              to="/settings/automatic-agents#who-can-start"
+              className="underline underline-offset-2"
+            >
+              Automatic agents
+            </Link>
+            .
+          </p>
+        ) : (
+          <AgentAccessEditor
+            label="Who can start your agent here"
+            value={value}
+            onChange={setDraft}
+            options={options}
+            disabled={save.isPending}
+          />
+        )}
+      </div>
+    </SettingsCard>
+  );
+}
+
+/** "starts it: @caden · can ask: everyone". */
+function accessSummary(rules: AgentAccessRules, options: PrincipalOptions): string {
+  const auto = rules.auto.allow.length > 0 ? describeRule(rules.auto, options) : 'only you';
+  const ask = rules.ask.allow.length > 0 ? describeRule(rules.ask, options) : 'nobody';
+  return `starts it: ${auto} · can ask: ${ask}`;
 }
 
 // ---------------------------------------------------------------------------------------------

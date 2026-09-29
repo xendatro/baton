@@ -44,8 +44,9 @@ test('your settings for a project: a model override and notifications', async ({
   await hard.getByRole('switch', { name: 'Hard: use my defaults' }).click();
   const chain = page.getByRole('group', { name: 'Hard chain' });
   await chain.getByRole('combobox', { name: 'Hard chain: harness 1' }).selectOption('codex');
-  await chain.getByLabel('Hard chain: model 1').fill('');
-  await chain.getByLabel('Hard chain: effort 1').fill('high');
+  // No desktop app reports anything here: its default model, and a generic effort.
+  await chain.getByLabel('Hard chain: model 1').selectOption('');
+  await chain.getByLabel('Hard chain: effort 1').selectOption('high');
   const normal = levels.getByRole('listitem').filter({ hasText: 'Normal' });
   await expect(normal.getByText('From Hard, the closest level you mapped: Codex')).toBeVisible();
   await page.getByRole('button', { name: 'Save models' }).click();

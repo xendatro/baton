@@ -1,8 +1,10 @@
-import { screen, within } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AgentStats, AgentUsageTotals, OwnerJob } from '@shared/schemas/agentRunner';
 import { TooltipProvider } from '@web/components/ui/tooltip';
-import { mockApi, testMe } from '@web/test/mockApi';
+import { DEFAULT_AGENT_ACCESS } from '@shared/schemas/agentAccess';
+import { jsonResponse, mockApi, testMe } from '@web/test/mockApi';
 import AutomaticAgentsSettingsPage from './AutomaticAgentsSettingsPage';
 import { renderSettingsPage } from './testing';
 
@@ -136,9 +138,10 @@ describe('Automatic agents settings', () => {
       },
     });
     renderPage();
-    const needsOk = await screen.findByRole('region', { name: 'Needs your OK' }, LAZY);
-    expect(within(needsOk).getByRole('button', { name: 'Approve acme/WEB-1' })).toBeInTheDocument();
-    expect(within(needsOk).getByRole('button', { name: 'Decline acme/WEB-1' })).toBeInTheDocument();
+    // An older server's request (needs_ok) points to the Requests page instead.
+    expect(
+      await screen.findByRole('link', { name: '1 request waits for you' }, LAZY),
+    ).toHaveAttribute('href', '/agent/requests');
     const stopped = screen.getByRole('region', { name: 'Stopped runs' });
     expect(within(stopped).getByText(/Killed by you/)).toBeInTheDocument();
     expect(within(stopped).getByRole('button', { name: 'Retry acme/WEB-2' })).toBeInTheDocument();
@@ -170,5 +173,57 @@ describe('Automatic agents settings', () => {
     expect(
       await screen.findByText(/Last run failed: The 'luna' model is not supported/, {}, LAZY),
     ).toBeInTheDocument();
+  });
+
+  it('edits who can start your agent per team, and saves it', async () => {
+    const saved: unknown[] = [];
+    mockApi({
+      '/api/me': testMe(),
+      '/api/me/agent/access': {
+        teams: [
+          {
+            teamId: 't1',
+            teamName: 'Acme',
+            teamSlug: 'acme',
+            rules: DEFAULT_AGENT_ACCESS,
+            isDefault: true,
+          },
+        ],
+      },
+      'PUT /api/me/agent/access/teams/t1': ({ init }: { init?: RequestInit }) => {
+        const body = JSON.parse(typeof init?.body === 'string' ? init.body : '{}') as {
+          rules: unknown;
+        };
+        saved.push(body);
+        return jsonResponse({
+          teamId: 't1',
+          teamName: 'Acme',
+          teamSlug: 'acme',
+          rules: body.rules,
+          isDefault: false,
+        });
+      },
+    });
+    renderPage();
+    const card = await screen.findByRole('region', { name: 'Who can start your agent' }, LAZY);
+    expect(
+      await within(card).findByText(/only you start it; everyone can ask/),
+    ).toBeInTheDocument();
+    const ask = within(card).getByRole('list', {
+      name: 'Who can start your agent: can ask you: include',
+    });
+    // Every agent may ask by default: take them out, then save.
+    await userEvent.click(within(ask).getByRole('button', { name: 'Remove @everyone-ai' }));
+    await userEvent.click(within(card).getByRole('button', { name: 'Save' }));
+    await waitFor(() =>
+      expect(saved).toEqual([
+        {
+          rules: {
+            auto: { allow: [], deny: [] },
+            ask: { allow: [{ type: 'everyone', scope: 'people' }], deny: [] },
+          },
+        },
+      ]),
+    );
   });
 });

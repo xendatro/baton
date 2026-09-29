@@ -1,31 +1,18 @@
 import { ArrowDownIcon, ArrowUpIcon, CircleAlertIcon, PlusIcon, Trash2Icon } from 'lucide-react';
-import { useId } from 'react';
 import { canonicalModel } from '@shared/modelPrices';
-import {
-  AGENT_RUNNER_LIMITS,
-  HARNESS_IDS,
-  HARNESS_LABELS,
-  type Chain,
-  type ChainEntry,
-  type HarnessId,
-} from '@shared/schemas/agentRunner';
+import { AGENT_RUNNER_LIMITS, type Chain, type ChainEntry } from '@shared/schemas/agentRunner';
+import { useModelOptions } from '@web/components/agentRequests/queries';
+import { ModelStepPicker } from '@web/components/pickers/ModelStepPicker';
 import { Button } from '@web/components/ui/button';
-import { Input } from '@web/components/ui/input';
 import { useModelFailures } from './automaticAgentsQueries';
 
 /**
  * A model fallback chain editor (BAT-24): harness, model and effort per step, tried in order.
  * Used by Settings → Automatic agents (the default chain) and a project's Your settings (BAT-29).
  * When the latest run of an entry's harness and model failed, its error shows under the entry
- * ("Last run failed: …", BAT#23): that is how a model the harness rejects shows up, since model
- * lists are never hardcoded.
+ * ("Last run failed: …", BAT#23). Each step picks from what the owner's computers report
+ * (`ModelStepPicker`); a step none of them can run shows in red.
  */
-
-/** Suggestions only: model lists are never hardcoded (free text always works). */
-const MODEL_ALIASES: Partial<Record<HarnessId, string[]>> = {
-  claude: ['opus', 'sonnet', 'haiku'],
-};
-const EFFORTS = ['low', 'medium', 'high', 'max'];
 
 export function ChainEditor({
   label,
@@ -39,8 +26,9 @@ export function ChainEditor({
   /** Shown when empty (e.g. "Uses Normal (closest mapped level)"). */
   emptyText?: string;
 }) {
-  const listId = useId();
   const failures = useModelFailures();
+  // Harness, model and effort come from what your computers report (never hardcoded).
+  const options = useModelOptions();
   const failureOf = (entry: ChainEntry) =>
     failures.data?.find(
       (failure) =>
@@ -64,44 +52,16 @@ export function ChainEditor({
           const failure = failureOf(entry);
           return (
             <li key={index} className="grid gap-0.5">
-              <div className="flex flex-wrap items-center gap-1.5">
-                <span className="w-14 text-xs text-muted-foreground">
+              <div className="flex flex-wrap items-start gap-1.5">
+                <span className="mt-2 w-14 text-xs text-muted-foreground">
                   {index === 0 ? 'Run with' : 'then'}
                 </span>
-                <select
-                  aria-label={`${label}: harness ${index + 1}`}
-                  value={entry.harness}
-                  onChange={(event) => set(index, { harness: event.target.value as HarnessId })}
-                  className="h-8 rounded-md border border-input bg-transparent px-2 text-sm dark:bg-input/30"
-                >
-                  {HARNESS_IDS.map((harness) => (
-                    <option key={harness} value={harness}>
-                      {HARNESS_LABELS[harness]}
-                    </option>
-                  ))}
-                </select>
-                <Input
-                  aria-label={`${label}: model ${index + 1}`}
-                  value={entry.model}
-                  onChange={(event) => set(index, { model: event.target.value })}
-                  list={`${listId}-models-${entry.harness}`}
-                  placeholder="default model"
-                  maxLength={AGENT_RUNNER_LIMITS.model}
-                  className="h-8 w-36"
-                />
-                <datalist id={`${listId}-models-${entry.harness}`}>
-                  {(MODEL_ALIASES[entry.harness] ?? []).map((model) => (
-                    <option key={model} value={model} />
-                  ))}
-                </datalist>
-                <Input
-                  aria-label={`${label}: effort ${index + 1}`}
-                  value={entry.effort}
-                  onChange={(event) => set(index, { effort: event.target.value })}
-                  list={`${listId}-efforts`}
-                  placeholder="effort"
-                  maxLength={AGENT_RUNNER_LIMITS.effort}
-                  className="h-8 w-24"
+                <ModelStepPicker
+                  label={label}
+                  index={index}
+                  value={entry}
+                  onChange={(step) => set(index, step)}
+                  options={options.data}
                 />
                 <Button
                   variant="ghost"
@@ -140,11 +100,6 @@ export function ChainEditor({
           );
         })}
       </ol>
-      <datalist id={`${listId}-efforts`}>
-        {EFFORTS.map((effort) => (
-          <option key={effort} value={effort} />
-        ))}
-      </datalist>
       <Button
         variant="outline"
         size="sm"

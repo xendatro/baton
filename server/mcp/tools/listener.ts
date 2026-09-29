@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { AGENT_JOB_STATUSES, AGENT_LISTENER } from '@shared/constants';
 import { HARNESS_IDS, JOB_OUTCOMES } from '@shared/schemas/agentRunner';
 import { completeJob, listJobs, releaseJob, startListener } from '../../services/agentJobs';
+import { listAgentRequests } from '../../services/agentRequests';
 import { recordJobUsage } from '../../services/agentRunner';
 import { defineTool, toolInput, type McpTool } from './define';
 
@@ -142,9 +143,20 @@ const listJobsTool = defineTool({
   handler: (ctx, input) => listJobs(ctx.deps, ctx.actor, input),
 });
 
+const listRequestsTool = defineTool({
+  name: 'list_requests',
+  title: 'List requests',
+  description:
+    "Requests to start your owner's agent (you): jobs from people who may only ask (your owner's agent access), waiting for your owner to approve (choosing the model) or decline on the Requests page, plus those decided in the last day. Read only: only your owner decides, in Baton.",
+  input: toolInput({}),
+  annotations: { readOnlyHint: true },
+  handler: (ctx) => listAgentRequests(ctx.deps, ctx.actor),
+});
+
 export const listenerTools: McpTool[] = [
   startListenerTool,
   completeJobTool,
   releaseJobTool,
   listJobsTool,
+  listRequestsTool,
 ];

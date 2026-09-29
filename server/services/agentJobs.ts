@@ -32,7 +32,8 @@ import { beginListening, isSessionListening, refreshPresence } from './presence'
 import { resolveProject } from './refs';
 import { getReply, type ReplyWithContext } from './replies';
 import { currentUserRow } from './taskAssignees';
-import { matchesRule } from './principals';
+import { agentAccessLevel } from './agentAccess';
+import { clearRequestNotifications, notifyAgentRequest, refuseJob } from './agentRequests';
 import { getUserSummaries } from './users';
 
 /**
@@ -69,8 +70,8 @@ export interface QueueJobInput {
   /** Triggered by another agent's closing reply (the done handshake). */
   closing?: boolean;
   /**
-   * Who caused it (a mention's, reply's or move's author); null for system sources. Jobs from
-   * people outside the owner's job sources wait for the owner's OK (BAT-24).
+   * Who caused it (a mention's, reply's or move's author); null for system sources. The owner's
+   * agent access decides: it runs, becomes a request for the owner, or isn't queued.
    */
   triggeredById?: string | null;
 }
@@ -131,7 +132,18 @@ export function queueJobs(tx: Tx, jobs: readonly QueueJobInput[]): string[] {
       continue;
     }
     const replyKind = REPLY_KINDS.includes(job.kind);
-    const accepted = acceptsJob(tx, agent, job);
+    // Agent access: `auto` runs, `ask` is a request for the owner, `none` isn't queued at all.
+    const level = agentAccessLevel(
+      tx,
+      agent,
+      { teamId: job.teamId, projectId: job.projectId },
+      job.triggeredById ?? null,
+    );
+    if (level === 'none') {
+      refuseJob(tx, agent, job);
+      continue;
+    }
+    const accepted = level === 'auto';
     const existing = tx
       .select()
       .from(s.agentJob)
@@ -142,6 +154,8 @@ export function queueJobs(tx: Tx, jobs: readonly QueueJobInput[]): string[] {
           eq(s.agentJob.targetType, job.targetType),
           eq(s.agentJob.targetId, job.targetId),
           inArray(s.agentJob.kind, replyKind ? [...REPLY_KINDS] : [job.kind]),
+          // A request only joins another request (never a job that runs anyway, nor a stopped run).
+          accepted ? undefined : and(eq(s.agentJob.needsOk, true), isNull(s.agentJob.heldAt)),
         ),
       )
       .orderBy(asc(s.agentJob.createdAt))
@@ -166,13 +180,22 @@ export function queueJobs(tx: Tx, jobs: readonly QueueJobInput[]): string[] {
           triggerReplyId: newTrigger ?? existing.triggerReplyId,
           closing: newTrigger ? (job.closing ?? false) : existing.closing,
           payload,
-          // A job the owner accepts makes a waiting one run.
+          // A job the owner accepts makes a waiting one run (a request counts as approved).
           ...(accepted && existing.needsOk
-            ? { needsOk: false, triggeredById: job.triggeredById ?? null }
+            ? {
+                needsOk: false,
+                triggeredById: job.triggeredById ?? null,
+                ...(existing.heldAt
+                  ? {}
+                  : { requestDecision: 'approved' as const, requestDecidedAt: new Date() }),
+              }
             : {}),
         })
         .where(eq(s.agentJob.id, existing.id))
         .run();
+      if (accepted && existing.needsOk && !existing.heldAt) {
+        clearRequestNotifications(tx, [existing.id]);
+      }
       ids.push(existing.id);
       jobChanged(tx, existing, agent.ownerId);
       continue;
@@ -198,28 +221,16 @@ export function queueJobs(tx: Tx, jobs: readonly QueueJobInput[]): string[] {
       .returning()
       .get();
     ids.push(row.id);
+    if (!accepted) notifyAgentRequest(tx, row, agent.ownerId);
     jobChanged(tx, row, agent.ownerId);
   }
   return ids;
 }
 
 /**
- * Does the owner run jobs from whoever caused this one without asking (BAT-24)? Jobs of system
- * sources and of the owner or the agent itself always run; otherwise the owner's job sources
- * decide (`me` by default, `anyone`, or a custom who-rule).
+ * The owner's former job sources ("Whose jobs run"), kept for the deprecated endpoints only:
+ * agent access decides now (migration 0026 translated them).
  */
-function acceptsJob(tx: Tx, agent: { id: string; ownerId: string }, job: QueueJobInput): boolean {
-  const by = job.triggeredById ?? null;
-  if (by === null || by === agent.ownerId || by === agent.id) return true;
-  const sources = jobSourcesOf(tx, agent.ownerId);
-  if (sources.mode === 'anyone') return true;
-  if (sources.mode === 'custom' && sources.rule) {
-    return matchesRule(tx, { teamId: job.teamId, projectId: job.projectId }, by, sources.rule);
-  }
-  return false;
-}
-
-/** The owner's job sources (the default: only jobs they triggered). */
 export function jobSourcesOf(db: DbExecutor, ownerId: string): JobSources {
   const row = db
     .select({ jobSources: s.agentSettings.jobSources })
@@ -270,6 +281,10 @@ export function cancelJobs(
       ),
     )
     .run();
+  clearRequestNotifications(
+    tx,
+    rows.map((row) => row.id),
+  );
   for (const row of rows) {
     const agent = agentRow(tx, row.agentUserId);
     if (agent) jobChanged(tx, row, agent.ownerId);
@@ -380,6 +395,7 @@ export function clearSettledJobs(
       .set({ status: 'cancelled', completedAt: now, clearedAt: now, clearedReason: why })
       .where(and(eq(s.agentJob.id, row.id), eq(s.agentJob.status, 'pending')))
       .run();
+    clearRequestNotifications(tx, [row.id]);
     const agent = agentRow(tx, row.agentUserId);
     if (agent) jobChanged(tx, row, agent.ownerId);
     cleared += 1;
@@ -682,7 +698,7 @@ interface ClaimOptions {
   needsTrigger?: boolean;
   /** Mark them done at once (the alias delivers instead of claiming). */
   deliver?: boolean;
-  /** Skip jobs waiting for the owner's OK (the desktop app's runners, BAT-24). */
+  /** Skip stopped runs too, not only requests (the desktop app's runners, BAT-24). */
   acceptedOnly?: boolean;
 }
 
@@ -711,7 +727,11 @@ function claimJobs(
           inArray(s.agentJob.projectId, [...projectIds]),
           options.kinds ? inArray(s.agentJob.kind, [...options.kinds]) : undefined,
           options.needsTrigger ? isNotNull(s.agentJob.triggerReplyId) : undefined,
-          options.acceptedOnly ? eq(s.agentJob.needsOk, false) : undefined,
+          // Requests never run before their owner approves them; stopped runs only go to
+          // listeners (the desktop app's runners wait for Retry).
+          options.acceptedOnly
+            ? eq(s.agentJob.needsOk, false)
+            : or(eq(s.agentJob.needsOk, false), isNotNull(s.agentJob.heldAt)),
         ),
       )
       .orderBy(asc(s.agentJob.createdAt), asc(s.agentJob.id))
@@ -748,6 +768,10 @@ function claimJobs(
           ),
         )
         .run();
+      clearRequestNotifications(
+        tx,
+        cancelled.map((row) => row.id),
+      );
     }
     if (claimed.length === 0) return [];
     const status: AgentJobStatus = options.deliver ? 'done' : 'claimed';

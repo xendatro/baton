@@ -16,6 +16,9 @@ export const AGENT_RUNNER_LIMITS = {
   chain: 8,
   model: 100,
   effort: 40,
+  /** Models and efforts a harness reports per machine. */
+  models: 200,
+  efforts: 20,
   sessionId: 300,
   /** Replies included in a job brief. */
   briefReplies: 12,
@@ -126,9 +129,30 @@ export const DEFAULT_JOB_SOURCES: JobSources = { mode: 'me', rule: null };
 // Runners
 // ---------------------------------------------------------------------------------------------
 
+const effortNameSchema = z.string().trim().min(1).max(AGENT_RUNNER_LIMITS.effort);
+
+/**
+ * A model a harness reports on a machine (the desktop app reads it from the harness itself: its
+ * `--help`, a models cache, …; never a hardcoded list): its id or alias as the harness takes it,
+ * a label, and the efforts it accepts (empty: the harness's `efforts` apply).
+ */
+export const harnessModelSchema = z.object({
+  id: z.string().trim().min(1).max(AGENT_RUNNER_LIMITS.model),
+  label: z.string().trim().max(AGENT_RUNNER_LIMITS.model).nullable().default(null),
+  efforts: z.array(effortNameSchema).max(AGENT_RUNNER_LIMITS.efforts).default([]),
+});
+export type HarnessModel = z.infer<typeof harnessModelSchema>;
+
 export const harnessInfoSchema = z.object({
   id: harnessIdSchema,
   version: z.string().trim().max(100).nullable().default(null),
+  /**
+   * The models the harness reports on that machine. Absent from desktop apps before 0.5 (their
+   * harnesses then accept any model, unverified).
+   */
+  models: z.array(harnessModelSchema).max(AGENT_RUNNER_LIMITS.models).optional(),
+  /** The efforts the harness accepts for models that don't list their own. */
+  efforts: z.array(effortNameSchema).max(AGENT_RUNNER_LIMITS.efforts).optional(),
 });
 export type HarnessInfo = z.infer<typeof harnessInfoSchema>;
 
@@ -500,3 +524,44 @@ export const agentConnectionSchema = z.object({
   taskInvolvesAgent: z.boolean().optional(),
 });
 export type AgentConnection = z.infer<typeof agentConnectionSchema>;
+
+// ---------------------------------------------------------------------------------------------
+// Model options: what the owner's computers can run
+// ---------------------------------------------------------------------------------------------
+
+/** How long a runner not seen any more still counts for the model options. */
+export const MODEL_OPTIONS_RUNNER_DAYS = 30;
+
+export const modelOptionSchema = z.object({
+  id: z.string(),
+  label: z.string().nullable(),
+  /** Efforts it accepts (empty: the harness's). */
+  efforts: z.array(z.string()),
+  /** On a computer online now. */
+  online: z.boolean(),
+});
+export type ModelOption = z.infer<typeof modelOptionSchema>;
+
+export const harnessOptionSchema = z.object({
+  id: harnessIdSchema,
+  /** Installed on a computer online now. */
+  online: z.boolean(),
+  /** The computers that have it (most recently seen first). */
+  machines: z.array(z.string()),
+  /**
+   * A computer reported the harness's models: only those count as available. False with older
+   * desktop apps, which don't report them (any model is accepted there, unverified).
+   */
+  reported: z.boolean(),
+  models: z.array(modelOptionSchema),
+  /** Efforts for models that don't list their own. */
+  efforts: z.array(z.string()),
+});
+export type HarnessOption = z.infer<typeof harnessOptionSchema>;
+
+/**
+ * `GET /api/me/agent/model-options`: the harnesses, models and efforts the owner's computers
+ * report (the union over their desktop apps seen in the last 30 days, online ones marked).
+ */
+export const modelOptionsSchema = z.object({ harnesses: z.array(harnessOptionSchema) });
+export type ModelOptions = z.infer<typeof modelOptionsSchema>;

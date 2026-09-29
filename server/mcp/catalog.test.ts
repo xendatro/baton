@@ -56,6 +56,8 @@ const DOCUMENTED_ADDITIONS = [
   'complete_job',
   'release_job',
   'list_jobs',
+  // agent access (DECISIONS 2026-09-29 agent access)
+  'list_requests',
   // core (DECISIONS 2026-09-27 BAT-14)
   'add_reaction',
   'remove_reaction',

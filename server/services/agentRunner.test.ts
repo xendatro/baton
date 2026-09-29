@@ -14,6 +14,7 @@ import {
   createTestContext,
   createUser,
   json,
+  openAgentAccess,
   type TaskRow,
   type TestContext,
   type UserRow,
@@ -34,9 +35,10 @@ import {
   registerRunner,
   runnerHeartbeat,
   setHarnessSession,
-  setJobSources,
   setModelMappings,
 } from './agentRunner';
+import { setTeamAgentAccess } from './agentAccess';
+import { listAgentRequests } from './agentRequests';
 import { listDifficulties } from './difficulties';
 import { getTeamPresence } from './presence';
 import { createReply } from './replies';
@@ -125,8 +127,12 @@ describe('runners', () => {
     // Caden mentions Ethan's agent: by default only Ethan's own jobs run by themselves.
     mention(cadenWeb);
     expect((await nextRunnerJobs(ctx.deps, runnerKey, runner.id, 0)).jobs).toEqual([]);
-    const waiting = listWaitingJobs(ctx.deps, ethanWeb).jobs;
-    expect(waiting).toMatchObject([{ triggeredBy: 'caden', needsOk: true, kind: 'mention' }]);
+    // It is a request (agent access), not a stopped run.
+    expect(listWaitingJobs(ctx.deps, ethanWeb).jobs).toEqual([]);
+    const waiting = listAgentRequests(ctx.deps, ethanWeb).requests;
+    expect(waiting).toMatchObject([
+      { requester: { username: 'caden' }, status: 'pending', kind: 'mention' },
+    ]);
     approveWaitingJob(ctx.deps, ethanWeb, waiting[0]?.jobId ?? '');
     const [job] = (await nextRunnerJobs(ctx.deps, runnerKey, runner.id, 0)).jobs;
     expect(job).toMatchObject({ kind: 'mention', needsOk: false, status: 'claimed' });
@@ -137,15 +143,17 @@ describe('runners', () => {
     expect((await nextRunnerJobs(ctx.deps, runnerKey, runner.id, 0)).jobs).toHaveLength(1);
   });
 
-  it('widens the job sources to anyone, or to a who-rule; dismissing cancels', async () => {
+  it('agent access widens who starts it, or narrows it to asking; dismissing declines', async () => {
     const runner = register();
-    setJobSources(ctx.deps, ethanWeb, { mode: 'anyone', rule: null });
+    openAgentAccess(ctx.db, ethan.id, teamId);
     mention(cadenWeb);
     expect((await nextRunnerJobs(ctx.deps, runnerKey, runner.id, 0)).jobs).toHaveLength(1);
 
-    setJobSources(ctx.deps, ethanWeb, {
-      mode: 'custom',
-      rule: { allow: [{ type: 'user', userId: ethan.id }], deny: [] },
+    setTeamAgentAccess(ctx.deps, ethanWeb, teamId, {
+      rules: {
+        auto: { allow: [], deny: [] },
+        ask: { allow: [{ type: 'user', userId: caden.id }], deny: [] },
+      },
     });
     const other = createTask(ctx.db, {
       project: ctx.db.orm.select().from(s.project).where(eq(s.project.id, projectId)).get()!,
@@ -157,10 +165,12 @@ describe('runners', () => {
       parentId: other.id,
       body: 'And this @ethan-ai',
     });
-    const [waiting] = listWaitingJobs(ctx.deps, runnerKey).jobs;
+    const [waiting] = listAgentRequests(ctx.deps, runnerKey).requests;
     expect(waiting?.target.title).toBe('Another');
     dismissWaitingJob(ctx.deps, runnerKey, waiting?.jobId ?? '');
-    expect(listWaitingJobs(ctx.deps, ethanWeb).jobs).toEqual([]);
+    expect(listAgentRequests(ctx.deps, ethanWeb).requests.map((request) => request.status)).toEqual(
+      ['declined'],
+    );
   });
 
   it('cancels the jobs of a deleted task; the heartbeat tells the runner to kill them (BAT-33)', async () => {
@@ -203,7 +213,7 @@ describe('runners', () => {
   });
 
   it('puts the claimed jobs of a vanished runner back', async () => {
-    setJobSources(ctx.deps, ethanWeb, { mode: 'anyone', rule: null });
+    openAgentAccess(ctx.db, ethan.id, teamId);
     const runner = register();
     mention(cadenWeb);
     await nextRunnerJobs(ctx.deps, runnerKey, runner.id, 0);
@@ -754,10 +764,14 @@ describe('stopped runs, jobs needing an OK, cleared jobs (BAT#22, BAT#23, BAT#29
     const jobId = await failedRun();
     othersJob();
     const jobs = listWaitingJobs(ctx.deps, ethanWeb).jobs;
-    expect(jobs.map((job) => [job.group, job.triggeredBy])).toEqual([
-      ['stopped', 'ethan'],
-      ['needs_ok', 'caden'],
-    ]);
+    expect(jobs.map((job) => [job.group, job.triggeredBy])).toEqual([['stopped', 'ethan']]);
+    // Caden's is a request, on its own list.
+    expect(
+      listAgentRequests(ctx.deps, ethanWeb).requests.map((request) => [
+        request.status,
+        request.requester?.username,
+      ]),
+    ).toEqual([['pending', 'caden']]);
     expect(jobs[0]?.run).toMatchObject({
       outcome: 'failed',
       error: 'The luna model is not supported when using Codex with a ChatGPT account',
@@ -783,7 +797,7 @@ describe('stopped runs, jobs needing an OK, cleared jobs (BAT#22, BAT#23, BAT#29
 
     // Retry: it runs again, and is no longer a stopped run.
     approveWaitingJob(ctx.deps, ethanWeb, jobId);
-    expect(listWaitingJobs(ctx.deps, ethanWeb).jobs.map((job) => job.group)).toEqual(['needs_ok']);
+    expect(listWaitingJobs(ctx.deps, ethanWeb).jobs).toEqual([]);
   });
 
   it('clears held jobs when their task finishes, shows them for a day, then drops them', async () => {
@@ -841,10 +855,9 @@ describe('stopped runs, jobs needing an OK, cleared jobs (BAT#22, BAT#23, BAT#29
       ]),
     );
     mention(cadenWeb, 'Also @ethan-ai');
-    expect(listWaitingJobs(ctx.deps, ethanWeb).jobs.map((job) => job.group)).toEqual([
-      'needs_ok',
-      'needs_ok',
-    ]);
+    expect(listAgentRequests(ctx.deps, ethanWeb).requests.map((request) => request.status)).toEqual(
+      ['pending', 'pending'],
+    );
     // Another open stage to move to.
     const review = ctx.db.orm
       .insert(s.status)
@@ -859,12 +872,19 @@ describe('stopped runs, jobs needing an OK, cleared jobs (BAT#22, BAT#23, BAT#29
       .returning()
       .get();
     updateTask(ctx.deps, cadenWeb, task.id, { statusId: review.id });
-    const jobs = listWaitingJobs(ctx.deps, ethanWeb).jobs;
-    expect(jobs.find((job) => job.jobId === jobId)).toMatchObject({
-      group: 'cleared',
-      clearedReason: 'moved',
+    const requests = listAgentRequests(ctx.deps, ethanWeb).requests;
+    expect(requests.find((request) => request.jobId === jobId)).toMatchObject({
+      status: 'cleared',
     });
-    expect(jobs.find((job) => job.kind === 'mention')).toMatchObject({ group: 'needs_ok' });
+    expect(requests.find((request) => request.kind === 'mention')).toMatchObject({
+      status: 'pending',
+    });
+    const row = ctx.db.orm
+      .select()
+      .from(s.agentJob)
+      .where(eq(s.agentJob.id, jobId ?? ''))
+      .get();
+    expect(row).toMatchObject({ status: 'cancelled', clearedReason: 'moved' });
   });
 
   it('serves the output and model failures over REST', async () => {

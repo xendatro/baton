@@ -504,6 +504,35 @@ export function describeActivity(
   const pipeline = pipelineSentence(entry, subject);
   if (pipeline) return pipeline;
 
+  // Agent access: the owner declined a request ("declined @caden’s request to @ethan-ai: …"),
+  // or Baton notes an agent doesn't take requests from someone.
+  if (verb === 'agent_request_declined' || verb === 'agent_request_refused') {
+    const agent = metaString(entry, 'agent');
+    const requester = metaString(entry, 'requester');
+    const on: ActivityPart[] =
+      subject === 'this'
+        ? []
+        : [{ text: 'on' }, ...entityPhrase(entry, { withNoun: false, withTitle: false })];
+    if (verb === 'agent_request_refused') {
+      return [
+        { text: 'noted that' },
+        { text: `@${agent ?? 'an agent'}`, emphasis: true },
+        { text: 'doesn’t take requests from' },
+        { text: `@${requester ?? 'them'}`, emphasis: true },
+        ...on,
+      ];
+    }
+    const reason = metaString(entry, 'reason');
+    return [
+      { text: 'declined' },
+      { text: requester ? `@${requester}’s` : 'a', emphasis: requester !== null },
+      { text: 'request to' },
+      { text: `@${agent ?? 'their agent'}`, emphasis: true },
+      ...on,
+      ...(reason ? [{ text: `: “${reason}”` }] : []),
+    ];
+  }
+
   // The agents' done handshake (design §4): "ethan-ai and @caden-ai agreed nothing more is needed".
   if (verb === 'agents_agreed_done') {
     const other = metaString(entry, 'with');

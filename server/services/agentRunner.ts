@@ -1,14 +1,24 @@
-import { and, asc, desc, eq, gte, inArray, isNull, or } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, or } from 'drizzle-orm';
 import { AGENT_LISTENER, PRIORITIES } from '@shared/constants';
-import { harnessOfAgentName, preferHarness, resolveChain } from '@shared/agentChains';
+import {
+  harnessOfAgentName,
+  preferHarness,
+  resolveChain,
+  type ResolvedChain,
+} from '@shared/agentChains';
 import { canonicalModel, estimateCost } from '@shared/modelPrices';
 import {
   AGENT_RUNNER_LIMITS,
   CLEARED_JOBS_SHOWN_MS,
   DEFAULT_CHAIN,
+  HARNESS_IDS,
   HARNESS_LABELS,
+  MODEL_OPTIONS_RUNNER_DAYS,
   harnessIdSchema,
   type HarnessId,
+  type HarnessInfo,
+  type HarnessOption,
+  type ModelOptions,
   type AgentStats,
   type AgentUsageTotals,
   type FinishJobInput,
@@ -46,6 +56,7 @@ import {
   requireListeningAgent,
   type AgentJobContext,
 } from './agentJobs';
+import { approveAgentRequest, declineAgentRequest, isOpenRequest } from './agentRequests';
 import { agentPauseReason, findAgentId, updateAgentSettings } from './agents';
 import { emitEvent } from './events';
 import { stageOf } from './pipelines';
@@ -108,6 +119,16 @@ function toRunner(deps: AppDeps, row: SessionRow): Runner {
     running: row.running,
     lastSeenAt: row.lastSeenAt.toISOString(),
     online: isOnline(deps, row),
+  };
+}
+
+/** What a runner row keeps of a harness: its version, and its models and efforts when reported. */
+function harnessRecord(harness: RegisterRunnerInput['harnesses'][number]): HarnessInfo {
+  return {
+    id: harness.id,
+    version: harness.version,
+    ...(harness.models ? { models: harness.models } : {}),
+    ...(harness.efforts ? { efforts: harness.efforts } : {}),
   };
 }
 
@@ -210,7 +231,7 @@ export function registerRunner(
   const values = {
     keyId: actor.key?.id ?? null,
     machineName: input.machineName,
-    harnesses: input.harnesses.map((harness) => ({ id: harness.id, version: harness.version })),
+    harnesses: input.harnesses.map(harnessRecord),
     projectIds,
     lastSeenAt: now,
   };
@@ -253,14 +274,7 @@ export function runnerHeartbeat(
     .set({
       lastSeenAt: new Date(),
       running: input.running ?? 0,
-      ...(input.harnesses
-        ? {
-            harnesses: input.harnesses.map((harness) => ({
-              id: harness.id,
-              version: harness.version,
-            })),
-          }
-        : {}),
+      ...(input.harnesses ? { harnesses: input.harnesses.map(harnessRecord) } : {}),
       ...(input.projectIds ? { projectIds: visibleProjects(orm, agent.id, input.projectIds) } : {}),
     })
     .where(eq(s.agentSession.id, current.id))
@@ -301,6 +315,81 @@ export async function nextRunnerJobs(
     signal,
   );
   return { jobs: jobContexts(deps, rows) };
+}
+
+/**
+ * `GET /api/me/agent/model-options`: the union of what the owner's desktop apps report (seen in
+ * the last 30 days): per harness the computers that have it, its models and efforts, and whether
+ * one of them is online now. The source of truth for every model picker.
+ */
+export function modelOptions(deps: AppDeps, actor: Actor): ModelOptions {
+  const owner = requireOwner(deps, actor);
+  if (!owner.agentId) return { harnesses: [] };
+  const since = new Date(Date.now() - MODEL_OPTIONS_RUNNER_DAYS * 24 * 60 * 60 * 1000);
+  const rows = deps.db.orm
+    .select()
+    .from(s.agentSession)
+    .where(
+      and(
+        eq(s.agentSession.agentUserId, owner.agentId),
+        eq(s.agentSession.kind, 'runner'),
+        gte(s.agentSession.lastSeenAt, since),
+      ),
+    )
+    .orderBy(desc(s.agentSession.lastSeenAt))
+    .all();
+  const harnesses = new Map<HarnessId, HarnessOption>();
+  for (const row of rows) {
+    const online = isOnline(deps, row);
+    for (const info of row.harnesses) {
+      const parsed = harnessIdSchema.safeParse(info.id);
+      if (!parsed.success) continue;
+      let entry = harnesses.get(parsed.data);
+      if (!entry) {
+        entry = {
+          id: parsed.data,
+          online: false,
+          machines: [],
+          reported: false,
+          models: [],
+          efforts: [],
+        };
+        harnesses.set(parsed.data, entry);
+      }
+      entry.online ||= online;
+      const machine = row.machineName ?? 'Unknown machine';
+      if (!entry.machines.includes(machine)) entry.machines.push(machine);
+      if (info.models) entry.reported = true;
+      for (const model of info.models ?? []) {
+        const known = entry.models.find(
+          (candidate) => candidate.id.toLowerCase() === model.id.toLowerCase(),
+        );
+        if (known) {
+          known.online ||= online;
+          known.label ??= model.label ?? null;
+          for (const effort of model.efforts) {
+            if (!known.efforts.includes(effort)) known.efforts.push(effort);
+          }
+        } else {
+          entry.models.push({
+            id: model.id,
+            label: model.label ?? null,
+            efforts: [...model.efforts],
+            online,
+          });
+        }
+      }
+      for (const effort of info.efforts ?? []) {
+        if (!entry.efforts.includes(effort)) entry.efforts.push(effort);
+      }
+    }
+  }
+  return {
+    harnesses: HARNESS_IDS.flatMap((id) => {
+      const entry = harnesses.get(id);
+      return entry ? [entry] : [];
+    }),
+  };
 }
 
 /** The owner's runners (most recently seen first), for the web and the app. */
@@ -357,9 +446,9 @@ function jobRuns(db: DbExecutor, rows: readonly JobRow[]): Map<string, JobRun> {
 }
 
 /**
- * `GET /api/me/agent/waiting`: the owner's jobs that wait on them (BAT#22) — jobs from people
- * outside their job sources (`needs_ok`) and their own runs that failed or were killed
- * (`stopped`) — plus those cleared in the last day because their item finished (BAT#29).
+ * `GET /api/me/agent/waiting`: the owner's runs that wait on them (BAT#22) — runs that failed or
+ * were killed (`stopped`) — plus those cleared in the last day because their item finished
+ * (BAT#29). Requests from people who may only ask are on `GET /api/me/agent/requests`.
  */
 export function listWaitingJobs(deps: AppDeps, actor: Actor): { jobs: OwnerJob[] } {
   const owner = requireOwner(deps, actor);
@@ -371,6 +460,8 @@ export function listWaitingJobs(deps: AppDeps, actor: Actor): { jobs: OwnerJob[]
     .where(
       and(
         eq(s.agentJob.agentUserId, owner.agentId),
+        // Requests (agent access) have their own page: only held runs are listed here.
+        isNotNull(s.agentJob.heldAt),
         or(
           and(eq(s.agentJob.status, 'pending'), eq(s.agentJob.needsOk, true)),
           gte(s.agentJob.clearedAt, new Date(Date.now() - CLEARED_JOBS_SHOWN_MS)),
@@ -434,7 +525,10 @@ export function jobOutput(deps: AppDeps, actor: Actor, jobId: string): JobOutput
 export function approveWaitingJob(deps: AppDeps, actor: Actor, jobId: string): AgentJobContext {
   const owner = requireOwner(deps, actor);
   const job = requireOwnersJob(deps, owner, jobId);
-  if (job.needsOk && job.status === 'pending') {
+  if (isOpenRequest(job)) {
+    // A request (agent access): approved without a model choice.
+    approveAgentRequest(deps, actor, jobId);
+  } else if (job.needsOk && job.status === 'pending') {
     deps.db.write((tx) => {
       tx.update(s.agentJob)
         .set({ needsOk: false, heldAt: null })
@@ -450,7 +544,9 @@ export function approveWaitingJob(deps: AppDeps, actor: Actor, jobId: string): A
 export function dismissWaitingJob(deps: AppDeps, actor: Actor, jobId: string): AgentJobContext {
   const owner = requireOwner(deps, actor);
   const job = requireOwnersJob(deps, owner, jobId);
-  if (job.status === 'pending') {
+  if (isOpenRequest(job)) {
+    declineAgentRequest(deps, actor, jobId);
+  } else if (job.status === 'pending') {
     deps.db.write((tx) => {
       tx.update(s.agentJob)
         .set({ status: 'cancelled', completedAt: new Date() })
@@ -697,6 +793,61 @@ function jobDifficultyId(
   return task.difficultyId;
 }
 
+/**
+ * The chain the owner's model mappings give a job (BAT-24, BAT-28: by the difficulty of the stage
+ * it is for), with that level. What runs unless the owner chose a model when approving it.
+ */
+export function mappedChain(
+  db: DbExecutor,
+  ownerId: string,
+  job: Pick<JobRow, 'payload' | 'projectId' | 'targetType' | 'targetId'>,
+  loadedTask?: { id: string; statusId: string; difficultyId: string | null },
+): { level: { id: string; name: string } | undefined; resolved: ResolvedChain } {
+  let task = loadedTask;
+  if (!task) {
+    const item = jobItem(db, job);
+    task =
+      item?.type === 'task'
+        ? db
+            .select({ id: s.task.id, statusId: s.task.statusId, difficultyId: s.task.difficultyId })
+            .from(s.task)
+            .where(eq(s.task.id, item.id))
+            .get()
+        : undefined;
+  }
+  const levels = db
+    .select()
+    .from(s.difficulty)
+    .where(eq(s.difficulty.projectId, job.projectId))
+    .all();
+  const difficultyId = task ? jobDifficultyId(db, job, task) : null;
+  const level = difficultyId ? levels.find((row) => row.id === difficultyId) : undefined;
+  const mappings = db
+    .select({ defaultMapping: s.agentSettings.defaultMapping })
+    .from(s.agentSettings)
+    .where(eq(s.agentSettings.userId, ownerId))
+    .get();
+  const projectMapping = db
+    .select({ levels: s.agentProjectMapping.levels })
+    .from(s.agentProjectMapping)
+    .where(
+      and(
+        eq(s.agentProjectMapping.userId, ownerId),
+        eq(s.agentProjectMapping.projectId, job.projectId),
+      ),
+    )
+    .get();
+  return {
+    level,
+    resolved: resolveChain({
+      levels,
+      difficultyId: level?.id ?? null,
+      project: projectMapping ? { levels: projectMapping.levels } : null,
+      defaults: mappings?.defaultMapping ?? null,
+    }),
+  };
+}
+
 function recentReplies(
   db: DbExecutor,
   item: { type: string; id: string },
@@ -809,37 +960,14 @@ export function jobBrief(
       : undefined;
 
   // Difficulty and the chain.
-  const levels = orm
-    .select()
-    .from(s.difficulty)
-    .where(eq(s.difficulty.projectId, job.projectId))
-    .all();
-  // BAT-28: the difficulty of the stage the job is for.
-  const difficultyId = task ? jobDifficultyId(orm, job, task) : null;
-  const level = difficultyId ? levels.find((row) => row.id === difficultyId) : undefined;
+  const { level, resolved: mapped } = mappedChain(orm, agent.ownerId, job, task);
   const jobStage =
     typeof job.payload.stage === 'string' ? job.payload.stage : (context.target.status ?? null);
-  const mappings = orm
-    .select({ defaultMapping: s.agentSettings.defaultMapping })
-    .from(s.agentSettings)
-    .where(eq(s.agentSettings.userId, agent.ownerId))
-    .get();
-  const projectMapping = orm
-    .select({ levels: s.agentProjectMapping.levels })
-    .from(s.agentProjectMapping)
-    .where(
-      and(
-        eq(s.agentProjectMapping.userId, agent.ownerId),
-        eq(s.agentProjectMapping.projectId, job.projectId),
-      ),
-    )
-    .get();
-  const resolved = resolveChain({
-    levels,
-    difficultyId: level?.id ?? null,
-    project: projectMapping ? { levels: projectMapping.levels } : null,
-    defaults: mappings?.defaultMapping ?? null,
-  });
+  // Agent access: the model the owner chose when approving the request wins over the mappings.
+  const override = job.modelOverride?.length ? job.modelOverride : null;
+  const resolved = override
+    ? { chain: override, source: 'chosen by your owner when approving the request' }
+    : mapped;
 
   // Harness sessions on this machine (most recent first).
   const resume: Record<string, string> = {};
@@ -867,7 +995,7 @@ export function jobBrief(
   // BAT#28: a follow-up goes to the harness that has been working on the item.
   let chain = resolved.chain;
   let chainSource = resolved.source;
-  if (item && FOLLOW_UP_KINDS.has(job.kind)) {
+  if (item && !override && FOLLOW_UP_KINDS.has(job.kind)) {
     const working = sessionHarness ?? lastWriteHarness(orm, agent.id, item);
     if (working && chain[0]?.harness !== working) {
       chain = preferHarness(chain, working, AGENT_RUNNER_LIMITS.chain);
@@ -898,7 +1026,13 @@ export function jobBrief(
       ...(task ? [`- Priority: ${PRIORITIES[task.priority]?.label ?? 'None'}`] : []),
       ...(task
         ? [
-            `- Difficulty: ${level?.name ?? 'none'}${jobStage ? ` (the task’s difficulty in ${jobStage}; it picked your model)` : ''}`,
+            `- Difficulty: ${level?.name ?? 'none'}${
+              override
+                ? ' (your owner chose your model for this job)'
+                : jobStage
+                  ? ` (the task’s difficulty in ${jobStage}; it picked your model)`
+                  : ''
+            }`,
           ]
         : []),
     ];

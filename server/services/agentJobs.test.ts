@@ -15,6 +15,7 @@ import {
   createTeam,
   createTestContext,
   createUser,
+  openAgentAccess,
   signIn,
   web,
   type TaskRow,
@@ -107,6 +108,9 @@ beforeEach(() => {
   cadenAgent = keyActor(caden, 'Caden PC', 'Claude');
   cadenWeb = { userId: caden.id, source: 'web', key: null };
   ethanWeb = { userId: ethan.id, source: 'web', key: null };
+  // These tests are about jobs, not who may start an agent (agentAccess.test.ts).
+  openAgentAccess(ctx.db, ethan.id, teamId);
+  openAgentAccess(ctx.db, caden.id, teamId);
 });
 
 afterEach(() => {

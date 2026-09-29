@@ -1,6 +1,7 @@
 import {
   CircleStopIcon,
   ExternalLinkIcon,
+  HandIcon,
   MonitorIcon,
   RotateCwIcon,
   SettingsIcon,
@@ -11,6 +12,7 @@ import { toast } from 'sonner';
 import { HARNESS_LABELS } from '@shared/schemas/agentRunner';
 import type { DesktopJob, DesktopState } from '@shared/desktopBridge';
 import { desktopVersionText } from '@shared/desktopVersion';
+import { usePendingRequestCount } from '@web/components/agentRequests/queries';
 import { AgentConnectionNotice } from '@web/components/common/AgentConnectionNotice';
 import { EmptyState } from '@web/components/common/EmptyState';
 import { PageContainer } from '@web/components/common/PageContainer';
@@ -102,6 +104,7 @@ function Agents() {
         <div className="grid gap-4">
           <PauseSwitches state={state} />
           <UncoveredProjects state={state} />
+          <RequestsHere />
           <WaitingHere state={state} />
           {runner?.jobs.length ? (
             <ul className="grid gap-4" aria-label="Running jobs">
@@ -254,6 +257,24 @@ function plural(count: number, word: string): string {
  * finished (BAT#29). A run stopped on this computer that Baton has no error for says why from the
  * app's own note; Retry ignores the usage limits stored here for that attempt (BAT#30).
  */
+/** Requests to start your agent wait on their own page: a pointer when some do. */
+function RequestsHere() {
+  const count = usePendingRequestCount();
+  if (count === 0) return null;
+  return (
+    <div className="flex flex-wrap items-center gap-2 rounded-lg border bg-card px-4 py-3">
+      <HandIcon className="size-4 text-amber-600" aria-hidden="true" />
+      <p className="text-sm">
+        {count === 1 ? '1 request waits' : `${count} requests wait`} for your OK before your agent
+        runs {count === 1 ? 'it' : 'them'}.
+      </p>
+      <Button asChild size="sm" variant="outline" className="ml-auto">
+        <Link to="/agent/requests">Open requests</Link>
+      </Button>
+    </div>
+  );
+}
+
 function WaitingHere({ state }: { state: DesktopState }) {
   const waiting = useWaitingJobs();
   if (!waiting.data?.length) return null;

@@ -30,6 +30,8 @@ const MENTION_TYPES: ReadonlySet<NotificationType> = new Set([
   'mention',
   'role_mention',
   'assigned',
+  // Someone asks to start your agent: addressed to you like a mention.
+  'agent_request',
 ]);
 
 /** The notification type's per-kind switch, or null for types that have none. */

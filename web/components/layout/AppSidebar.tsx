@@ -16,6 +16,7 @@ import {
   PinIcon,
   PinOffIcon,
   HomeIcon,
+  HandIcon,
   InboxIcon,
   ListChecksIcon,
   MonitorDownIcon,
@@ -82,6 +83,7 @@ import {
   useReorderMyTeams,
   useUpdateMyTeam,
 } from './sidebarTeams';
+import { usePendingRequestCount } from '@web/components/agentRequests/queries';
 import { useUnreadCount } from './useUnreadCount';
 import { UserMenu } from './UserMenu';
 
@@ -497,6 +499,7 @@ export function AppSidebar() {
   const { pathname, search } = useLocation();
   const me = useMe();
   const unread = useUnreadCount();
+  const requests = usePendingRequestCount();
   const desktop = isDesktopApp();
   const canCreateTeam = useShellActionAvailable('team.create');
   const { setOpenMobile } = useSidebar();
@@ -553,6 +556,13 @@ export function AppSidebar() {
                   active={pathname === '/inbox'}
                   badge={unread}
                   shortcut="g i"
+                />
+                <NavLink
+                  to="/agent/requests"
+                  label="Requests"
+                  icon={HandIcon}
+                  active={pathname === '/agent/requests'}
+                  badge={requests}
                 />
                 <NavLink
                   to="/my-tasks"
@@ -642,6 +652,7 @@ export function AppSidebar() {
 /** The desktop app's own pages (BAT-26), only inside the Baton desktop app. */
 function ThisComputer({ pathname }: { pathname: string }) {
   const { state } = useDesktopState();
+  const requests = usePendingRequestCount();
   const running = state?.runner?.jobs.length ?? 0;
   return (
     <SidebarGroup>
@@ -654,6 +665,14 @@ function ThisComputer({ pathname }: { pathname: string }) {
             icon={BotIcon}
             active={pathname === '/desktop'}
             badge={running}
+          />
+          {/* Requests to start your agent, next to what runs (the main list has them too). */}
+          <NavLink
+            to="/agent/requests"
+            label="Requests"
+            icon={HandIcon}
+            active={false}
+            badge={requests}
           />
           <NavLink
             to="/desktop/folders"

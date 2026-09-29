@@ -234,12 +234,27 @@ export class Runner extends EventEmitter {
     this.changed();
   }
 
-  /** Installed harnesses on this machine (detected again on every start). */
+  /**
+   * Installed harnesses on this machine (detected again on every start), with the models and
+   * efforts each reports, which Baton's model pickers offer. A harness that can't say still
+   * counts as installed (sent without them).
+   */
   async detect(): Promise<Map<HarnessId, HarnessInfo>> {
     const found = new Map<HarnessId, HarnessInfo>();
     for (const [id, adapter] of this.adapters) {
       const result = await adapter.detect();
-      if (result.installed) found.set(id, { id, version: result.version });
+      if (!result.installed) continue;
+      const info: HarnessInfo = { id, version: result.version };
+      try {
+        const reported = await adapter.capabilities?.();
+        if (reported) {
+          info.models = reported.models;
+          info.efforts = reported.efforts;
+        }
+      } catch {
+        // Reported without models: Baton then accepts any model for it, unverified.
+      }
+      found.set(id, info);
     }
     this.installed = found;
     return found;

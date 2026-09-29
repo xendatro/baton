@@ -1,5 +1,17 @@
+import { readFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import type { HarnessEvent, RunResult } from './types';
+import {
+  CODEX_FALLBACK_EFFORTS,
+  parseCliHelp,
+  parseCodexModelsCache,
+  parseOpencodeModels,
+  uniqueModels,
+  type HarnessCapabilities,
+} from './capabilities';
 import { cliAdapter, errorEventMessage, eventMessage, flag, num, str, type CliSpec } from './cli';
+import { capture } from './process';
 import { batonToolTouches, resultText } from './touches';
 
 /**
@@ -68,6 +80,41 @@ export const CODEX_WORKSPACE_NETWORK = 'sandbox_workspace_write.network_access=t
  * `--sandbox workspace-write` when the help lists it and `--full-auto` only on CLIs that still
  * have it.
  */
+/** Codex's models cache: `$CODEX_HOME/models_cache.json`, `~/.codex` by default. */
+export function codexModelsCachePath(env: NodeJS.ProcessEnv = process.env): string {
+  const home = env.CODEX_HOME?.trim() || path.join(os.homedir(), '.codex');
+  return path.join(home, 'models_cache.json');
+}
+
+/**
+ * Codex's models and efforts: its models cache (each model with the reasoning efforts it
+ * supports), else whatever `codex exec --help` / `codex --help` name, else no models and the
+ * usual effort names (passed as `-c model_reasoning_effort=`).
+ */
+export async function discoverCodex(
+  command: string,
+  help: string,
+  cachePath: string = codexModelsCachePath(),
+): Promise<HarnessCapabilities> {
+  let cached: ReturnType<typeof parseCodexModelsCache> = null;
+  try {
+    cached = parseCodexModelsCache(JSON.parse(await readFile(cachePath, 'utf8')) as unknown);
+  } catch {
+    cached = null;
+  }
+  if (cached) {
+    const efforts = [...new Set(cached.flatMap((model) => model.efforts))];
+    return { models: cached, efforts: efforts.length > 0 ? efforts : CODEX_FALLBACK_EFFORTS };
+  }
+  const fromHelp = parseCliHelp(help);
+  const top = fromHelp.models.length > 0 ? null : await capture(command, ['--help']);
+  const models = uniqueModels([...fromHelp.models, ...(top ? parseCliHelp(top).models : [])]);
+  return {
+    models,
+    efforts: fromHelp.efforts.length > 0 ? fromHelp.efforts : CODEX_FALLBACK_EFFORTS,
+  };
+}
+
 export const codexSpec: CliSpec = {
   id: 'codex',
   label: 'Codex',
@@ -76,6 +123,7 @@ export const codexSpec: CliSpec = {
   helpArgs: ['exec', '--help'],
   mcpListArgs: ['mcp', 'list'],
   aliases: [],
+  discover: (command, help) => discoverCodex(command, help),
   modes: [
     {
       id: 'full-auto',
@@ -280,6 +328,12 @@ export const opencodeAdapter = cliAdapter({
   helpArgs: ['run', '--help'],
   mcpListArgs: ['mcp', 'list'],
   aliases: [],
+  // `opencode models` lists every `provider/model` it can use.
+  async discover(command, help) {
+    const listed = parseOpencodeModels(await capture(command, ['models'], 20_000));
+    const fromHelp = parseCliHelp(help);
+    return { models: uniqueModels([...listed, ...fromHelp.models]), efforts: fromHelp.efforts };
+  },
   modes: [
     {
       id: 'default',

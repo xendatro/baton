@@ -286,7 +286,9 @@ describe('issues ↔ core and admin', () => {
       'GET',
       '/notifications',
     );
-    expect(inbox.body.items).toEqual([]);
+    // Ethan's agent answering in the thread Caden's agent started is only a request to Caden
+    // (agent access: everyone else may ask by default), which is all his inbox has.
+    expect(inbox.body.items.map((item) => item.type)).toEqual(['agent_request']);
     const mentioned = await call<{ items: Array<{ type: string }> }>(
       ownerWeb,
       'GET',
@@ -576,8 +578,13 @@ describe('wave B: issues ↔ tasks ↔ work', () => {
       '/notifications',
     );
     // Replying subscribed Caden's agent, not Caden, and his agent's "On it." is nothing he needs to
-    // hear about (`needs_me`): the replies reach no inbox.
-    expect(inbox.body.items.map((item) => item.type)).toEqual(['role_mention', 'assigned']);
+    // hear about (`needs_me`): the replies reach no inbox. Ethan's agent's "Thanks!" asks Caden to
+    // let his agent answer (agent access), a request.
+    expect(inbox.body.items.map((item) => item.type)).toEqual([
+      'agent_request',
+      'role_mention',
+      'assigned',
+    ]);
 
     // The member's agent claims it; the member's My tasks and dashboard show the assignment, the
     // agent's dashboard its claim.

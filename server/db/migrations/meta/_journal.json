@@ -176,6 +176,13 @@
       "when": 1790711458765,
       "tag": "0024_agent_runs_usage_detail",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "6",
+      "when": 1790714838876,
+      "tag": "0026_agent_access",
+      "breakpoints": true
     }
   ]
 }

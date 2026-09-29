@@ -127,6 +127,11 @@ export const queryKeys = {
   },
 
   activity: (entityType: string, entityId: string) => ['activity', entityType, entityId] as const,
+  /** Requests to start agents about one task or issue (agent access); without args, all. */
+  agentRequestsFor: (itemType?: string, itemId?: string) =>
+    itemType === undefined || itemId === undefined
+      ? (['agent-requests'] as const)
+      : (['agent-requests', itemType, itemId] as const),
   attachments: (parentType: string, parentId: string) =>
     ['attachments', parentType, parentId] as const,
   subscription: (entityType: string, entityId: string) =>
@@ -157,6 +162,15 @@ export const queryKeys = {
     /** The latest failed run per harness and model, for the chain editors (BAT#23). */
     agentModelFailures: () => ['account', 'agent', 'model-failures'] as const,
     agentJobSources: () => ['account', 'agent', 'job-sources'] as const,
+    /** Who can start your agent: your team defaults (agent access). */
+    agentAccess: () => ['account', 'agent', 'access'] as const,
+    /** Your override for one project (agent access). */
+    projectAgentAccess: (projectId: string) =>
+      ['account', 'agent', 'access', 'project', projectId] as const,
+    /** Requests to start your agent (the Requests page and the sidebar badge). */
+    agentRequests: () => ['account', 'agent', 'requests'] as const,
+    /** What your computers can run: harnesses, models, efforts (every model picker). */
+    agentModelOptions: () => ['account', 'agent', 'model-options'] as const,
     agentModels: () => ['account', 'agent', 'models'] as const,
     agentStats: (days: number) => ['account', 'agent', 'stats', days] as const,
     /**

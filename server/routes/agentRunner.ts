@@ -12,11 +12,32 @@ import {
   runnerHeartbeatInputSchema,
   runnerNextQuerySchema,
 } from '@shared/schemas/agentRunner';
+import {
+  approveAgentRequestInputSchema,
+  bulkAgentRequestsInputSchema,
+  declineAgentRequestInputSchema,
+  itemAgentRequestsQuerySchema,
+  setProjectAgentAccessInputSchema,
+  setTeamAgentAccessInputSchema,
+} from '@shared/schemas/agentAccess';
 import { idSchema } from '@shared/schemas/common';
 import type { AppEnv } from '../context';
 import { validateJson, validateParams, validateQuery } from '../lib/validate';
 import { requireActor } from '../middleware/actor';
+import {
+  getAgentAccess,
+  getProjectAgentAccess,
+  setProjectAgentAccess,
+  setTeamAgentAccess,
+} from '../services/agentAccess';
 import { getAgentConnection } from '../services/agentConnection';
+import {
+  approveAgentRequest,
+  decideAgentRequests,
+  declineAgentRequest,
+  itemAgentRequests,
+  listAgentRequests,
+} from '../services/agentRequests';
 import {
   agentStats,
   approveWaitingJob,
@@ -29,6 +50,7 @@ import {
   listRunners,
   listWaitingJobs,
   modelFailures,
+  modelOptions,
   nextRunnerJobs,
   pauseAgentEverywhere,
   registerRunner,
@@ -195,4 +217,96 @@ agentRunnerRoutes.get(
         c.req.valid('query'),
       ),
     ),
+);
+
+// ---------------------------------------------------------------------------------------------
+// Agent access (who can start your agent) and requests
+// ---------------------------------------------------------------------------------------------
+
+const projectParams = validateParams(z.object({ projectId: idSchema }));
+
+/** What the owner's computers can run: the source of every model picker. */
+agentRunnerRoutes.get('/me/agent/model-options', (c) =>
+  c.json(modelOptions(c.var.deps, requireActor(c))),
+);
+
+agentRunnerRoutes.get('/me/agent/access', (c) =>
+  c.json(getAgentAccess(c.var.deps, requireActor(c))),
+);
+
+agentRunnerRoutes.put(
+  '/me/agent/access/teams/:teamId',
+  validateParams(z.object({ teamId: idSchema })),
+  validateJson(setTeamAgentAccessInputSchema),
+  (c) =>
+    c.json(
+      setTeamAgentAccess(
+        c.var.deps,
+        requireActor(c),
+        c.req.valid('param').teamId,
+        c.req.valid('json'),
+      ),
+    ),
+);
+
+agentRunnerRoutes.get('/projects/:projectId/me/agent-access', projectParams, (c) =>
+  c.json(getProjectAgentAccess(c.var.deps, requireActor(c), c.req.valid('param').projectId)),
+);
+
+agentRunnerRoutes.put(
+  '/projects/:projectId/me/agent-access',
+  projectParams,
+  validateJson(setProjectAgentAccessInputSchema),
+  (c) =>
+    c.json(
+      setProjectAgentAccess(
+        c.var.deps,
+        requireActor(c),
+        c.req.valid('param').projectId,
+        c.req.valid('json'),
+      ),
+    ),
+);
+
+agentRunnerRoutes.get('/me/agent/requests', (c) =>
+  c.json(listAgentRequests(c.var.deps, requireActor(c))),
+);
+
+agentRunnerRoutes.post('/me/agent/requests/bulk', validateJson(bulkAgentRequestsInputSchema), (c) =>
+  c.json(decideAgentRequests(c.var.deps, requireActor(c), c.req.valid('json'))),
+);
+
+agentRunnerRoutes.post(
+  '/me/agent/requests/:jobId/approve',
+  jobParams,
+  validateJson(approveAgentRequestInputSchema),
+  (c) =>
+    c.json(
+      approveAgentRequest(
+        c.var.deps,
+        requireActor(c),
+        c.req.valid('param').jobId,
+        c.req.valid('json'),
+      ),
+    ),
+);
+
+agentRunnerRoutes.post(
+  '/me/agent/requests/:jobId/decline',
+  jobParams,
+  validateJson(declineAgentRequestInputSchema),
+  (c) =>
+    c.json(
+      declineAgentRequest(
+        c.var.deps,
+        requireActor(c),
+        c.req.valid('param').jobId,
+        c.req.valid('json'),
+      ),
+    ),
+);
+
+/** Requests about one task or issue (the owner's inline cards; "waiting for Ethan's OK"). */
+agentRunnerRoutes.get('/agent-requests', validateQuery(itemAgentRequestsQuerySchema), (c) =>
+  c.json(itemAgentRequests(c.var.deps, requireActor(c), c.req.valid('query'))),
 );

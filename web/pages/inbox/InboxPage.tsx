@@ -33,7 +33,14 @@ import { useInView } from '@web/lib/useInView';
 import { cn } from '@web/lib/utils';
 import { TeamIcon } from '@web/pages/teams/TeamIcon';
 import { actorName, dayLabel, NOTIFICATION_KINDS, notificationContext } from './notificationText';
-import { useInbox, useMarkNotificationsRead } from './queries';
+import { InboxFilters } from './InboxFilters';
+import { scopeLabel, useInboxScope } from './inboxScope';
+import {
+  useInbox,
+  useMarkNotificationsRead,
+  useNotificationCounts,
+  type InboxScope,
+} from './queries';
 
 type InboxTab = 'all' | 'unread';
 
@@ -41,15 +48,24 @@ type InboxTab = 'all' | 'unread';
 export default function InboxPage() {
   const [params, setParams] = useSearchParams();
   const tab: InboxTab = params.get('filter') === 'unread' ? 'unread' : 'all';
-  const unread = useUnreadCount();
+  const allUnread = useUnreadCount();
   const markRead = useMarkNotificationsRead();
+  const counts = useNotificationCounts();
+  const [scope, setScope] = useInboxScope();
+  const scoped = scope.teamId !== undefined || scope.projectId !== undefined;
+  // Within a filter, the unread badge and "Mark all as read" follow it (BAT-34).
+  const unread = !scoped
+    ? allUnread
+    : scope.projectId
+      ? (counts.data?.projects.find((row) => row.projectId === scope.projectId)?.unread ?? 0)
+      : (counts.data?.teams.find((row) => row.teamId === scope.teamId)?.unread ?? 0);
 
   const setTab = (next: string) =>
     setParams(next === 'unread' ? { filter: 'unread' } : {}, { replace: true });
 
   const markAllRead = () =>
     markRead.mutate(
-      { all: true },
+      { all: true, ...scope },
       { onSuccess: ({ updated }) => toast.success(updated > 0 ? 'All caught up' : 'Nothing new') },
     );
 
@@ -73,6 +89,12 @@ export default function InboxPage() {
           </>
         }
       />
+      <InboxFilters
+        counts={counts.data}
+        scope={scope}
+        onChange={setScope}
+        unreadOnly={tab === 'unread'}
+      />
       <Tabs value={tab} onValueChange={setTab} className="gap-4">
         <TabsList variant="line" className="w-full justify-start border-b pb-0">
           <TabsTrigger value="all" className="flex-none px-3">
@@ -88,10 +110,20 @@ export default function InboxPage() {
           </TabsTrigger>
         </TabsList>
         <TabsContent value="all">
-          <NotificationList unreadOnly={false} onShowAll={() => setTab('all')} />
+          <NotificationList
+            unreadOnly={false}
+            scope={scope}
+            onShowAll={() => setTab('all')}
+            onClearScope={() => setScope({})}
+          />
         </TabsContent>
         <TabsContent value="unread">
-          <NotificationList unreadOnly onShowAll={() => setTab('all')} />
+          <NotificationList
+            unreadOnly
+            scope={scope}
+            onShowAll={() => setTab('all')}
+            onClearScope={() => setScope({})}
+          />
         </TabsContent>
       </Tabs>
     </PageContainer>
@@ -100,12 +132,16 @@ export default function InboxPage() {
 
 function NotificationList({
   unreadOnly,
+  scope,
   onShowAll,
+  onClearScope,
 }: {
   unreadOnly: boolean;
+  scope: InboxScope;
   onShowAll: () => void;
+  onClearScope: () => void;
 }) {
-  const inbox = useInbox(unreadOnly);
+  const inbox = useInbox(unreadOnly, scope);
   const teams = useMe().data?.teams ?? [];
   const markRead = useMarkNotificationsRead();
   const now = new Date(useNow());
@@ -136,6 +172,24 @@ function NotificationList({
     );
   }
   const items = inbox.data.pages.flatMap((page) => page.items);
+  if (items.length === 0 && (scope.teamId || scope.projectId)) {
+    return (
+      <EmptyState
+        icon={unreadOnly ? CheckCheckIcon : InboxIcon}
+        title={
+          unreadOnly
+            ? `Nothing unread from ${scopeLabel(scope, teams)}`
+            : `Nothing from ${scopeLabel(scope, teams)}`
+        }
+        description="Other teams and projects may have notifications for you."
+        action={
+          <Button variant="outline" onClick={onClearScope}>
+            Show all teams and projects
+          </Button>
+        }
+      />
+    );
+  }
   if (items.length === 0) {
     return unreadOnly ? (
       <EmptyState

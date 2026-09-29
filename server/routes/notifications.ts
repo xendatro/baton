@@ -9,6 +9,7 @@ import { requireActor } from '../middleware/actor';
 import {
   listNotifications,
   markNotificationsRead,
+  notificationCounts,
   unreadNotificationCount,
 } from '../services/notifications';
 
@@ -24,6 +25,10 @@ notificationRoutes.get('/notifications', validateQuery(listNotificationsQuerySch
 
 notificationRoutes.get('/notifications/unread-count', (c) =>
   c.json({ count: unreadNotificationCount(c.var.deps, requireActor(c)) }),
+);
+
+notificationRoutes.get('/notifications/counts', (c) =>
+  c.json(notificationCounts(c.var.deps, requireActor(c))),
 );
 
 notificationRoutes.post(

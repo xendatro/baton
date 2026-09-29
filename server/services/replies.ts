@@ -28,6 +28,7 @@ import {
 } from './access';
 import { recordActivity } from './activity';
 import { queueThreadReplyJobs } from './agentJobs';
+import { refreshItemsWorking } from './agentWorking';
 import { attachmentsByParent, attachToParent, referencedPendingUploads } from './attachments';
 import { emitAfterCommit } from './events';
 import { findItem, itemResolvers, requireItem, type ItemInfo } from './items';
@@ -482,6 +483,8 @@ export function createReply(
 ): ReplyWithContext {
   const prepared = prepareReply(deps, actor, input);
   const row = deps.db.write((tx) => insertReply(tx, actor, prepared));
+  // BAT#42: an agent's answer ends its work on the job it answers ("… is working" stops now).
+  if (actor.ownerId && row.parentReplyId) refreshItemsWorking(deps, [prepared.item]);
   return withContext(deps, toReply(deps.db.orm, row, actor.userId), prepared.item);
 }
 

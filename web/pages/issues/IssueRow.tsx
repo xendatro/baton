@@ -6,6 +6,7 @@ import { LabelChip } from '@web/components/common/LabelChip';
 import { RelativeTime } from '@web/components/common/RelativeTime';
 import { UnreadBadge } from '@web/components/common/UnreadBadge';
 import { UserName } from '@web/components/common/UserName';
+import { WorkingDot } from '@web/components/common/WorkingDot';
 import { Skeleton } from '@web/components/ui/skeleton';
 import { pluralize } from '@web/lib/format';
 import { cn } from '@web/lib/utils';
@@ -47,6 +48,7 @@ export function IssueRow({
             >
               {issue.title}
             </Link>
+            <WorkingDot working={issue.agentWorking} className="relative" />
             <UnreadBadge count={issue.unreadCount} className="relative" />
             {issue.labels.map((label) => (
               <LabelChip key={label.id} label={label} className="relative" />

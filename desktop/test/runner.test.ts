@@ -286,6 +286,7 @@ describe('runner', () => {
     expect(calls.find((call) => call.call === 'heartbeat')?.args[1]).toMatchObject({
       running: 1,
       jobIds: ['job-1'],
+      activeJobIds: ['job-1'],
     });
     const finish = calls.find((call) => call.call === 'finish');
     expect(finish?.args.slice(1)).toEqual([
@@ -323,6 +324,35 @@ describe('runner', () => {
     expect(calls.find((call) => call.call === 'finish')?.args[1]).toBe('complete');
     // Only that attempt ignores it: the stored limit stays until it resets or is cleared.
     expect(exhausted.codex).toBeGreaterThan(Date.now());
+  });
+
+  it('reports which jobs a harness runs, heartbeating early when that changes (BAT#42)', async () => {
+    const seen: RunOptions[] = [];
+    const { runner, calls, exhausted } = setup(
+      [{ harness: 'codex', model: '', effort: '' }],
+      [fakeAdapter('codex', [{ outcome: 'killed' }], seen)],
+    );
+    exhausted.codex = Date.now() + 5 * 3_600_000;
+    await ready(runner);
+    const running = runner.runJob(job);
+    await tick();
+    await runner.start();
+    await tick();
+    const beats = () =>
+      calls
+        .filter((call) => call.call === 'heartbeat')
+        .map((call) => call.args[1] as { jobIds: string[]; activeJobIds: string[] });
+    // Waiting on usage: on the machine, but not working.
+    expect(beats()).toEqual([expect.objectContaining({ jobIds: ['job-1'], activeJobIds: [] })]);
+    runner.clearUsageLimit('codex');
+    await tick();
+    expect(seen).toHaveLength(1);
+    // The harness started: Baton hears it within seconds, not at the next 30 s heartbeat.
+    await new Promise((resolve) => setTimeout(resolve, 2_200));
+    expect(beats().at(-1)).toMatchObject({ jobIds: ['job-1'], activeJobIds: ['job-1'] });
+    runner.kill('job-1');
+    await running;
+    runner.stop();
   });
 
   it('Clear usage limit forgets the harness’s limit and the waiting job runs', async () => {

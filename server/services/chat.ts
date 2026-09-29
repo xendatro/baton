@@ -26,6 +26,7 @@ import {
 import { recordActivity } from './activity';
 import { jobChanged, queueJobs, requireListeningAgent } from './agentJobs';
 import { agentPauseReason, findAgentId } from './agents';
+import { workingAgentIdsOf } from './agentWorking';
 import { emitAfterCommit, emitEvent } from './events';
 import { requireItem, type ItemInfo } from './items';
 import { listReplyPage } from './replies';
@@ -113,23 +114,6 @@ function unreadMessages(db: DbExecutor, userId: string, item: Pick<ItemInfo, 'ty
   return { count: rows.length, firstReplyId: rows[0]?.id ?? null };
 }
 
-/** Agent members working on a job about the item right now (catch-up jobs are private). */
-function workingAgentIds(db: DbExecutor, item: Pick<ItemInfo, 'type' | 'id'>): string[] {
-  return db
-    .selectDistinct({ agentUserId: s.agentJob.agentUserId })
-    .from(s.agentJob)
-    .where(
-      and(
-        eq(s.agentJob.targetType, item.type),
-        eq(s.agentJob.targetId, item.id),
-        eq(s.agentJob.status, 'claimed'),
-        inArray(s.agentJob.kind, ['mention', 'thread_reply', 'assigned', 'pool', 'approval']),
-      ),
-    )
-    .all()
-    .map((row) => row.agentUserId);
-}
-
 /**
  * `GET /api/items/:type/:id/chat`: a page of messages (the newest first; `before` continues with
  * older ones), oldest first within the page, with the viewer's unread count as it was before the
@@ -150,7 +134,8 @@ export function getChatPage(
     cursor: query.before,
     order: 'desc',
   });
-  const agents = getUserSummaries(orm, workingAgentIds(orm, item));
+  // BAT#42: only agents whose job about the item is running now (agentWorking.ts).
+  const agents = getUserSummaries(orm, workingAgentIdsOf(orm, item));
   return {
     items: page.items.reverse(),
     olderCursor: page.nextCursor,

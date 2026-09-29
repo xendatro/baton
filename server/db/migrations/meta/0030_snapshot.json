@@ -1,8 +1,8 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "6f87b1eb-b6e3-40fe-b2d5-210d61b37541",
-  "prevId": "6ece63c8-b8cc-4e0c-b4b3-3040b89ac553",
+  "id": "98c413b2-8d86-436f-a2d3-8b8bf1d7f270",
+  "prevId": "6f87b1eb-b6e3-40fe-b2d5-210d61b37541",
   "tables": {
     "account": {
       "name": "account",
@@ -7074,6 +7074,94 @@
             "user_id"
           ],
           "name": "team_member_team_id_user_id_pk"
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "team_member_settings": {
+      "name": "team_member_settings",
+      "columns": {
+        "user_id": {
+          "name": "user_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "team_id": {
+          "name": "team_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "notifications": {
+          "name": "notifications",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "agent_notifications": {
+          "name": "agent_notifications",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "team_member_settings_team_idx": {
+          "name": "team_member_settings_team_idx",
+          "columns": [
+            "team_id"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "team_member_settings_user_id_user_id_fk": {
+          "name": "team_member_settings_user_id_user_id_fk",
+          "tableFrom": "team_member_settings",
+          "tableTo": "user",
+          "columnsFrom": [
+            "user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "team_member_settings_team_id_team_id_fk": {
+          "name": "team_member_settings_team_id_team_id_fk",
+          "tableFrom": "team_member_settings",
+          "tableTo": "team",
+          "columnsFrom": [
+            "team_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "team_member_settings_user_id_team_id_pk": {
+          "columns": [
+            "user_id",
+            "team_id"
+          ],
+          "name": "team_member_settings_user_id_team_id_pk"
         }
       },
       "uniqueConstraints": {},

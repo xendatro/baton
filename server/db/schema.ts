@@ -1362,6 +1362,15 @@ export const agentSession = sqliteTable(
       .default(sql`'[]'`),
     /** Runners: jobs running now (from the last heartbeat). */
     running: integer('running').notNull().default(0),
+    /**
+     * Runners: the jobs whose harness is running now, from the last heartbeat (BAT#42: "Ethan AI
+     * is working"); only counts while `running_reported_at` is fresh.
+     */
+    runningJobIds: text('running_job_ids', { mode: 'json' })
+      .$type<string[]>()
+      .notNull()
+      .default(sql`'[]'`),
+    runningReportedAt: timestamp('running_reported_at'),
     startedAt: createdAtColumn(),
     lastSeenAt: timestamp('last_seen_at').notNull(),
   },

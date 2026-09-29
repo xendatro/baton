@@ -54,6 +54,21 @@ describe('TaskCardBody', () => {
     expect(screen.getByText(/Mia via Claude on laptop claimed this/)).toBeInTheDocument();
   });
 
+  it('shows a labelled dot while an agent works on it, and none otherwise (BAT#42)', () => {
+    const { rerender } = render(
+      <TooltipProvider>
+        <TaskCardBody task={{ ...base, agentWorking: { agentIds: ['a'], names: ['Ethan AI'] } }} />
+      </TooltipProvider>,
+    );
+    expect(screen.getByRole('img', { name: 'Ethan AI is working' })).toBeInTheDocument();
+    rerender(
+      <TooltipProvider>
+        <TaskCardBody task={{ ...base, agentWorking: null }} />
+      </TooltipProvider>,
+    );
+    expect(screen.queryByTestId('working-dot')).not.toBeInTheDocument();
+  });
+
   it('shows the viewer’s unread notifications as a counted badge (BAT-16)', () => {
     const { rerender } = render(
       <TooltipProvider>

@@ -9,6 +9,7 @@ import { PriorityIcon } from '@web/components/common/PriorityIcon';
 import { RoleChip } from '@web/components/common/RoleChip';
 import { UnreadBadge } from '@web/components/common/UnreadBadge';
 import { AvatarStack } from '@web/components/common/UserAvatar';
+import { WorkingDot } from '@web/components/common/WorkingDot';
 import { cn } from '@web/lib/utils';
 
 /**
@@ -40,6 +41,7 @@ export function TaskCardBody({
             {task.status.pipeline.name}
           </span>
         ) : null}
+        <WorkingDot working={task.agentWorking} />
         <UnreadBadge count={task.unreadCount} />
         {task.blocked ? <BlockedBadge blockers={task.blockers} /> : null}
         <PriorityIcon value={task.priority} className="ml-auto" />

@@ -360,9 +360,9 @@ export function useReorderStatuses(projectId: string) {
 export function useDeleteStatus(projectId: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, moveTo }: { id: string; moveTo: string }) =>
+    mutationFn: ({ id, moveTo }: { id: string; moveTo?: string | undefined }) =>
       api.delete(`/api/statuses/${enc(id)}`, {
-        query: { moveTo },
+        query: moveTo ? { moveTo } : {},
         schema: deleteStatusResponseSchema,
       }),
     onSuccess: () => refreshStatuses(queryClient, projectId),

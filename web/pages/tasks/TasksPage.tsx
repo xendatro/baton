@@ -145,10 +145,11 @@ function Tasks({ team, project }: { team: MeTeam; project: MeProject }) {
       ? (id: string | undefined) => pipelineList.find((candidate) => candidate.id === id)?.name
       : undefined;
   // BAT-34: pipelines where no stage accepts new tasks are warned about.
-  const { blocked, createBlocked } = blockedPipelines(
+  const { blocked, createBlocked, stageless } = blockedPipelines(
     statuses.data ?? [],
     pipelineList,
     pipeline?.id,
+    allStatuses.data,
   );
   const labels = useLabels(project.id);
   const difficulties = useDifficulties(project.id);
@@ -459,9 +460,10 @@ function Tasks({ team, project }: { team: MeTeam; project: MeProject }) {
             {pluralize(total, 'matching task')}
           </p>
         ) : null}
-        {canCreate ? (
+        {canCreate || stageless.length > 0 ? (
           <NoStartStageNotices
-            blocked={blocked}
+            blocked={canCreate ? blocked : []}
+            stageless={stageless}
             named={pipelineList.length > 1}
             projectBase={projectBase}
             canManageStatuses={canManageStatuses}

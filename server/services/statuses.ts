@@ -278,9 +278,11 @@ export function createStatus(
       })
       .returning()
       .get();
-    if (input.isDefault) setDefault(tx, pipeline.id, row.id);
+    // A pipeline's only stage (say, after all were deleted) is its default: tasks can start there.
+    const makeDefault = input.isDefault === true || existing.length === 0;
+    if (makeDefault) setDefault(tx, pipeline.id, row.id);
     // BAT-34: new tasks start in the default stage, so making one the default lets them.
-    const rulesPatch = input.isDefault ? { ...input.rules, allowCreate: true } : input.rules;
+    const rulesPatch = makeDefault ? { ...input.rules, allowCreate: true } : input.rules;
     if (rulesPatch || copied) {
       const rules = mergeRules(
         tx,
@@ -301,7 +303,7 @@ export function createStatus(
         name: row.name,
         color: row.color,
         icon: row.icon,
-        ...(input.isDefault ? { isDefault: true } : {}),
+        ...(makeDefault ? { isDefault: true } : {}),
         ...(pipeline.isDefault ? {} : { pipeline: pipeline.name }),
         ...(copied ? { copiedFrom: copied.from } : {}),
       },
@@ -471,12 +473,15 @@ export function reorderStatuses(
 }
 
 /**
- * Deletes a status (`MANAGE_STATUSES`), moving its tasks to the end of `moveTo`'s column. The last
- * status can't be deleted; deleting the default makes `moveTo` the default. The deletion is audited
- * on the status (with the number of tasks moved), and each moved live task enters `moveTo` like
- * any other move: a `task.moved` row (`meta.reason: 'status_deleted'`), `moveTo`'s on-enter
- * effects and hand-off (no exit rules are checked). Tasks in Trash just follow the status, taking
- * their assignees along. The deleted stage's assignment history goes with it.
+ * Deletes a status (`MANAGE_STATUSES`), moving its tasks to the end of `moveTo`'s column. `moveTo`
+ * is needed only when the status has tasks (Trash included: a task always has a stage); it may be
+ * a stage of another pipeline. A pipeline's last stage can go too, leaving a pipeline with no
+ * stages, which clients flag (odd but consistent; its tasks must have moved elsewhere first).
+ * Deleting the default makes `moveTo` the default (or the pipeline's first remaining stage). The
+ * deletion is audited on the status (with the number of tasks moved), and each moved live task
+ * enters `moveTo` like any other move: a `task.moved` row (`meta.reason: 'status_deleted'`),
+ * `moveTo`'s on-enter effects and hand-off (no exit rules are checked). Tasks in Trash just follow
+ * the status, taking their assignees along. The deleted stage's assignment history goes with it.
  */
 export function deleteStatus(
   deps: AppDeps,
@@ -488,20 +493,29 @@ export function deleteStatus(
   if (query.moveTo === statusId) {
     throw errors.validation('Choose another status to move its tasks to');
   }
+  const hasTasks = (db: DbExecutor) =>
+    (db.select({ n: count() }).from(s.task).where(eq(s.task.statusId, statusId)).get()?.n ?? 0) > 0;
+  if (!query.moveTo && hasTasks(deps.db.orm)) {
+    throw errors.validation(`Choose a stage to move the tasks of "${status.name}" to`);
+  }
   if (actor.ownerId) {
     // An agent's request is only worth its owner's time when it could run (design §6).
-    const moveTo = deps.db.orm
-      .select({ name: s.status.name })
-      .from(s.status)
-      .where(and(eq(s.status.id, query.moveTo), eq(s.status.projectId, project.id)))
-      .get();
-    if (!moveTo) throw errors.notFound('Status to move the tasks to');
+    const moveTo = query.moveTo
+      ? deps.db.orm
+          .select({ name: s.status.name })
+          .from(s.status)
+          .where(and(eq(s.status.id, query.moveTo), eq(s.status.projectId, project.id)))
+          .get()
+      : null;
+    if (query.moveTo && !moveTo) throw errors.notFound('Status to move the tasks to');
     requireSignoff(deps, actor, {
       action: 'delete_status',
       teamId: project.teamId,
       projectId: project.id,
-      input: { statusId, moveTo: query.moveTo },
-      summary: `delete the status “${status.name}” in ${project.key}, moving its tasks to “${moveTo.name}”`,
+      input: { statusId, ...(query.moveTo ? { moveTo: query.moveTo } : {}) },
+      summary: moveTo
+        ? `delete the status “${status.name}” in ${project.key}, moving its tasks to “${moveTo.name}”`
+        : `delete the status “${status.name}” in ${project.key}`,
       url: appPaths.projectSettings(teamSlug, project.key, 'pipelines'),
     });
   }
@@ -513,25 +527,32 @@ export function deleteStatus(
       .where(eq(s.status.pipelineId, status.pipelineId))
       .orderBy(asc(s.status.position), asc(s.status.createdAt))
       .all();
-    if (statuses.length <= 1) throw errors.conflict("A pipeline's last status can't be deleted");
     // Its tasks may go to a stage of another pipeline too (BAT-25).
-    const target = tx
-      .select()
-      .from(s.status)
-      .where(and(eq(s.status.id, query.moveTo), eq(s.status.projectId, project.id)))
-      .get();
-    if (!target) throw errors.notFound('Status to move the tasks to');
+    const target = query.moveTo
+      ? tx
+          .select()
+          .from(s.status)
+          .where(and(eq(s.status.id, query.moveTo), eq(s.status.projectId, project.id)))
+          .get()
+      : undefined;
+    if (query.moveTo && !target) throw errors.notFound('Status to move the tasks to');
+    // Re-checked under the write lock: a task may have arrived since.
+    if (!target && hasTasks(tx)) {
+      throw errors.validation(`Choose a stage to move the tasks of "${status.name}" to`);
+    }
     // Re-read under the write lock: the rules may have changed since the access check.
     const source = statuses.find((row) => row.id === statusId) ?? status;
 
-    const movedCount = moveTasksOfStatus(tx, actor, { project, teamSlug }, source, target, {
-      reason: 'status_deleted',
-    });
+    const movedCount = target
+      ? moveTasksOfStatus(tx, actor, { project, teamSlug }, source, target, {
+          reason: 'status_deleted',
+        })
+      : 0;
 
     tx.delete(s.status).where(eq(s.status.id, statusId)).run();
     const remaining = statuses.filter((row) => row.id !== statusId);
     const newDefault = source.isDefault
-      ? target.pipelineId === source.pipelineId
+      ? target?.pipelineId === source.pipelineId
         ? target
         : remaining[0]
       : undefined;
@@ -550,8 +571,9 @@ export function deleteStatus(
       action: 'status.deleted',
       meta: {
         name: source.name,
-        movedTo: target.name,
+        ...(target ? { movedTo: target.name } : {}),
         movedTasks: movedCount,
+        ...(remaining.length === 0 ? { lastStage: true } : {}),
         ...(newDefault ? { newDefault: newDefault.name } : {}),
       },
     });

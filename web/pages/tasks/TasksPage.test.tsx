@@ -215,4 +215,27 @@ describe('TasksPage with several pipelines (BAT-25)', () => {
     );
     expect(screen.queryByRole('link', { name: 'New pipeline' })).not.toBeInTheDocument();
   });
+
+  it('flags a pipeline with no stages, and New task can’t target it', async () => {
+    mockApi({
+      '/api/me': meWith(['VIEW_PROJECT', 'CREATE_TASKS', 'MANAGE_STATUSES']),
+      '/api/projects/p1/board': { columns: [], total: 0 },
+      // Every stage belongs to Scripting: Modeling has none left.
+      '/api/projects/p1/statuses': {
+        items: statuses.map((entry) => ({ ...entry, pipelineId: 'pl-a' })),
+      },
+      '/api/projects/p1/labels': { items: [] },
+      '/api/projects/p1/pipelines': {
+        items: [pipeline('pl-a', 'Scripting', 0), pipeline('pl-b', 'Modeling', 1)],
+      },
+    });
+    renderWorkPage(<TasksPage />, '/t/:team/p/:key/tasks', '/t/acme/p/WEB/tasks?pipeline=pl-b');
+    const notice = await screen.findByTestId('no-stages');
+    expect(notice).toHaveTextContent('Modeling has no stages — add one to put tasks in it.');
+    expect(within(notice).getByRole('link', { name: 'Add stage' })).toHaveAttribute(
+      'href',
+      '/t/acme/p/WEB/settings/pipelines?pipeline=pl-b',
+    );
+    expect(screen.queryByRole('button', { name: /Create a task/ })).not.toBeInTheDocument();
+  });
 });

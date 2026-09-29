@@ -3,6 +3,8 @@ import {
   FileTextIcon,
   KanbanSquareIcon,
   MessagesSquareIcon,
+  PinIcon,
+  PinOffIcon,
   SettingsIcon,
   TagsIcon,
   UserCogIcon,
@@ -13,6 +15,7 @@ import { useState } from 'react';
 import { Link, Navigate, Outlet, useLocation, useNavigate, useParams } from 'react-router';
 import type { MeProject, MeTeam } from '@shared/schemas/core';
 import { EntityIcon } from '@web/components/common/EntityIcon';
+import { useTogglePin } from '@web/components/layout/sidebarTeams';
 import { NotFound } from '@web/components/common/NotFound';
 import { usePaletteCommands } from '@web/components/palette/registry';
 import { Button } from '@web/components/ui/button';
@@ -87,6 +90,8 @@ function ProjectFrame({ team, project }: { team: MeTeam; project: MeProject }) {
   const [section = '', item] = pathname.slice(base.length).split('/').slice(1);
   // On a task or issue page (and New issue) the item is the page's h1; the project name is not.
   const ProjectName = (section === 'tasks' || section === 'issues') && item ? 'p' : 'h1';
+  const { isPinned, toggle } = useTogglePin();
+  const pinned = isPinned(project.id);
 
   // The project's counts and statuses change with its tasks, issues, statuses and labels.
   useLiveEventListener((event) => {
@@ -117,6 +122,14 @@ function ProjectFrame({ team, project }: { team: MeTeam; project: MeProject }) {
   ];
 
   usePaletteCommands([
+    {
+      id: `project.${project.id}.pin`,
+      label: pinned ? `Unpin ${project.name}` : `Pin ${project.name}`,
+      group: 'Project',
+      icon: pinned ? PinOffIcon : PinIcon,
+      keywords: [project.key, pinned ? 'unpin project' : 'pin project', 'sidebar', 'favorite'],
+      perform: () => toggle(project, !pinned),
+    },
     {
       id: `project.${project.id}.overview`,
       label: `${project.name} › Overview`,
@@ -193,6 +206,19 @@ function ProjectFrame({ team, project }: { team: MeTeam; project: MeProject }) {
               </p>
             ) : null}
           </div>
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            className="shrink-0"
+            aria-pressed={pinned}
+            aria-label="Pin project"
+            title={pinned ? 'Unpin from the sidebar' : 'Pin to the top of the sidebar'}
+            onClick={() => toggle(project, !pinned)}
+          >
+            {pinned ? <PinOffIcon aria-hidden="true" /> : <PinIcon aria-hidden="true" />}
+            <span className="hidden sm:inline">{pinned ? 'Unpin' : 'Pin'}</span>
+          </Button>
           <Button
             asChild
             size="sm"

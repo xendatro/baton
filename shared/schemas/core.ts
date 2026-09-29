@@ -252,8 +252,6 @@ export const meTeamSchema = z.object({
   /** Effective permissions (full list for owners and administrators). */
   permissions: z.array(z.enum(PERMISSIONS)),
   projects: z.array(meProjectSchema),
-  /** Pinned to the top of your sidebar (BAT-36; the server always sends it, missing: false). */
-  pinned: z.boolean().optional(),
   /** Its project list is folded in your sidebar (missing: false). */
   collapsed: z.boolean().optional(),
 });
@@ -265,13 +263,11 @@ export const reorderMyTeamsInputSchema = z.object({
 });
 export type ReorderMyTeamsInput = z.infer<typeof reorderMyTeamsInputSchema>;
 
-/** `PATCH /api/me/teams/:teamId`: pin a team to the top of your sidebar, or fold it. */
-export const updateMyTeamInputSchema = z
-  .object({ pinned: z.boolean(), collapsed: z.boolean() })
-  .partial()
-  .refine((input) => input.pinned !== undefined || input.collapsed !== undefined, {
-    message: 'Nothing to change',
-  });
+/**
+ * `PATCH /api/me/teams/:teamId`: fold or unfold a team in your sidebar. (Teams are no longer
+ * pinned: projects are, see `pinnedProjectIds`.)
+ */
+export const updateMyTeamInputSchema = z.object({ collapsed: z.boolean() });
 export type UpdateMyTeamInput = z.infer<typeof updateMyTeamInputSchema>;
 
 /**
@@ -287,9 +283,23 @@ export const reorderMyProjectsInputSchema = z.object({
 });
 export type ReorderMyProjectsInput = z.infer<typeof reorderMyProjectsInputSchema>;
 
+/** `PUT /api/me/pinned-projects/order`: your pinned projects, top first, each once. */
+export const reorderPinnedProjectsInputSchema = z.object({
+  projectIds: z
+    .array(idSchema)
+    .max(1000)
+    .refine((ids) => new Set(ids).size === ids.length, { message: 'A project is listed twice' }),
+});
+export type ReorderPinnedProjectsInput = z.infer<typeof reorderPinnedProjectsInputSchema>;
+
 export const meResponseSchema = z.object({
   user: meUserSchema,
   teams: z.array(meTeamSchema),
+  /**
+   * Your pinned projects, top first: the Pinned section of your sidebar. Only projects you can
+   * see (each is in `teams[].projects`). The server always sends it; missing: none.
+   */
+  pinnedProjectIds: z.array(z.string()).optional(),
   unreadNotifications: z.number().int().nonnegative(),
 });
 export type MeResponse = z.infer<typeof meResponseSchema>;

@@ -190,6 +190,13 @@
       "when": 1790714838876,
       "tag": "0026_agent_access",
       "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "6",
+      "when": 1790720322311,
+      "tag": "0027_project_pins",
+      "breakpoints": true
     }
   ]
 }

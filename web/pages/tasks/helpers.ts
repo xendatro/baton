@@ -34,6 +34,8 @@ export interface BoardMoves {
   allowed: Set<string>;
   /** Earlier stages it may be sent back to (a drop there asks for the reason), nearest first. */
   back: Status[];
+  /** Its next stage (the only forward move), or null from the last stage. */
+  next?: Status | null;
 }
 
 /** Where a card in `fromId` may be dragged (BAT-27: strict moves), from the board's statuses. */
@@ -60,6 +62,7 @@ export function boardMoves(statuses: readonly Status[], fromId: string): BoardMo
       ...statuses.filter((status) => !samePipeline(status)).map((status) => status.id),
     ]),
     back,
+    next: next?.status ?? null,
   };
 }
 

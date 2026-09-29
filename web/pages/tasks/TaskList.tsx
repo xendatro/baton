@@ -17,6 +17,7 @@ import { Skeleton } from '@web/components/ui/skeleton';
 import { cn } from '@web/lib/utils';
 import type { ListOptions } from './filters';
 import { groupTasks, type TaskGroup } from './helpers';
+import { TaskContextMenu } from './TaskCardMenu';
 
 /**
  * The list view (SPEC §1.9): a table with sortable columns (sorted by the server) and groups by
@@ -131,7 +132,7 @@ export function TaskList({ tasks, statuses, options, onSort }: TaskListProps) {
                 </tr>
               ) : null}
               {group.tasks.map((task) => (
-                <Row key={`${group.key}:${task.id}`} task={task} />
+                <Row key={`${group.key}:${task.id}`} task={task} statuses={statuses} />
               ))}
             </Fragment>
           ))}
@@ -158,76 +159,78 @@ function GroupMark({ group }: { group: TaskGroup }) {
   return null;
 }
 
-function Row({ task }: { task: TaskCard }) {
+function Row({ task, statuses }: { task: TaskCard; statuses: readonly Status[] }) {
   const done = task.completedAt !== null;
   return (
-    <tr className="group border-b transition-colors hover:bg-muted/40">
-      <td className="py-2 pr-2 pl-4 align-top font-mono text-xs text-muted-foreground tabular-nums sm:pl-6">
-        <Link to={task.path} tabIndex={-1} className="leading-6">
-          {task.ref}
-        </Link>
-      </td>
-      <td className="min-w-0 px-2 py-2 align-top">
-        <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-          <StatusIcon status={task.status} className="md:hidden" />
-          <Link
-            to={task.path}
-            className={cn(
-              'max-w-full shrink-0 truncate leading-6 font-medium outline-none hover:underline focus-visible:underline',
-              done && 'text-muted-foreground',
-            )}
-          >
-            {task.title}
+    <TaskContextMenu task={task} statuses={statuses}>
+      <tr className="group border-b transition-colors hover:bg-muted/40">
+        <td className="py-2 pr-2 pl-4 align-top font-mono text-xs text-muted-foreground tabular-nums sm:pl-6">
+          <Link to={task.path} tabIndex={-1} className="leading-6">
+            {task.ref}
           </Link>
-          <UnreadBadge count={task.unreadCount} />
-          {task.blocked ? <BlockedBadge blockers={task.blockers} /> : null}
-          {task.labels.map((label) => (
-            <LabelChip key={label.id} label={label} />
-          ))}
-          {task.claim ? (
-            <ClaimBadge
-              holder={task.claim.user}
-              via={task.claim.via}
-              claimedAt={task.claim.claimedAt}
-            />
-          ) : null}
-        </div>
-      </td>
-      <td className="hidden px-2 py-2 align-top leading-6 md:table-cell">
-        <StatusBadge status={task.status} />
-      </td>
-      <td className="hidden px-2 py-2 align-top leading-6 lg:table-cell">
-        <PriorityIcon value={task.priority} showLabel />
-      </td>
-      <td className="hidden px-2 py-2 align-top md:table-cell">
-        <div className="flex min-h-6 items-center gap-1">
-          {task.assignees.users.length ? (
-            <AvatarStack users={task.assignees.users} size="sm" />
-          ) : null}
-          {task.assignees.roles.slice(0, 1).map((role) => (
-            <RoleChip key={role.id} role={role} className="max-w-24" />
-          ))}
-          {task.assignees.roles.length > 1 ? (
-            <span className="text-xs text-muted-foreground">
-              +{task.assignees.roles.length - 1}
-            </span>
-          ) : null}
-          {task.assignees.users.length === 0 && task.assignees.roles.length === 0 ? (
+        </td>
+        <td className="min-w-0 px-2 py-2 align-top">
+          <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+            <StatusIcon status={task.status} className="md:hidden" />
+            <Link
+              to={task.path}
+              className={cn(
+                'max-w-full shrink-0 truncate leading-6 font-medium outline-none hover:underline focus-visible:underline',
+                done && 'text-muted-foreground',
+              )}
+            >
+              {task.title}
+            </Link>
+            <UnreadBadge count={task.unreadCount} />
+            {task.blocked ? <BlockedBadge blockers={task.blockers} /> : null}
+            {task.labels.map((label) => (
+              <LabelChip key={label.id} label={label} />
+            ))}
+            {task.claim ? (
+              <ClaimBadge
+                holder={task.claim.user}
+                via={task.claim.via}
+                claimedAt={task.claim.claimedAt}
+              />
+            ) : null}
+          </div>
+        </td>
+        <td className="hidden px-2 py-2 align-top leading-6 md:table-cell">
+          <StatusBadge status={task.status} />
+        </td>
+        <td className="hidden px-2 py-2 align-top leading-6 lg:table-cell">
+          <PriorityIcon value={task.priority} showLabel />
+        </td>
+        <td className="hidden px-2 py-2 align-top md:table-cell">
+          <div className="flex min-h-6 items-center gap-1">
+            {task.assignees.users.length ? (
+              <AvatarStack users={task.assignees.users} size="sm" />
+            ) : null}
+            {task.assignees.roles.slice(0, 1).map((role) => (
+              <RoleChip key={role.id} role={role} className="max-w-24" />
+            ))}
+            {task.assignees.roles.length > 1 ? (
+              <span className="text-xs text-muted-foreground">
+                +{task.assignees.roles.length - 1}
+              </span>
+            ) : null}
+            {task.assignees.users.length === 0 && task.assignees.roles.length === 0 ? (
+              <span className="text-xs text-muted-foreground">—</span>
+            ) : null}
+          </div>
+        </td>
+        <td className="hidden px-2 py-2 align-top leading-6 sm:table-cell">
+          {task.dueDate ? (
+            <DueDate value={task.dueDate} done={done} />
+          ) : (
             <span className="text-xs text-muted-foreground">—</span>
-          ) : null}
-        </div>
-      </td>
-      <td className="hidden px-2 py-2 align-top leading-6 sm:table-cell">
-        {task.dueDate ? (
-          <DueDate value={task.dueDate} done={done} />
-        ) : (
-          <span className="text-xs text-muted-foreground">—</span>
-        )}
-      </td>
-      <td className="hidden py-2 pr-4 pl-2 align-top text-xs leading-6 sm:pr-6 xl:table-cell">
-        <RelativeTime value={task.updatedAt} />
-      </td>
-    </tr>
+          )}
+        </td>
+        <td className="hidden py-2 pr-4 pl-2 align-top text-xs leading-6 sm:pr-6 xl:table-cell">
+          <RelativeTime value={task.updatedAt} />
+        </td>
+      </tr>
+    </TaskContextMenu>
   );
 }
 

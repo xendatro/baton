@@ -273,7 +273,8 @@ export const teamMember = sqliteTable(
       .notNull()
       .$defaultFn(() => new Date()),
     // The member's own sidebar (BAT-36): their order of teams (null: never arranged, after the
-    // arranged ones by name), pinned to the top, and the project list folded.
+    // arranged ones by name) and the project list folded. `pinned` is unused since team pins gave
+    // way to project pins (0027_project_pins cleared it; kept to avoid a table rebuild).
     sidebarPosition: integer('sidebar_position'),
     pinned: integer('pinned', { mode: 'boolean' }).default(false).notNull(),
     sidebarCollapsed: integer('sidebar_collapsed', { mode: 'boolean' }).default(false).notNull(),
@@ -1862,5 +1863,30 @@ export const sidebarProjectOrder = sqliteTable(
   (t) => [
     primaryKey({ columns: [t.userId, t.projectId] }),
     index('sidebar_project_order_project_idx').on(t.projectId),
+  ],
+);
+
+/**
+ * A person's pinned projects: the Pinned section at the top of their sidebar, in their order
+ * (`position`, top first). Personal, so it follows them across browsers and the desktop app. Pins
+ * on projects they can no longer see (or deleted ones) are kept but not listed.
+ */
+export const projectPin = sqliteTable(
+  'project_pin',
+  {
+    userId: text('user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    projectId: text('project_id')
+      .notNull()
+      .references(() => project.id, { onDelete: 'cascade' }),
+    position: integer('position').notNull(),
+    createdAt: timestamp('created_at')
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (t) => [
+    primaryKey({ columns: [t.userId, t.projectId] }),
+    index('project_pin_project_idx').on(t.projectId),
   ],
 );

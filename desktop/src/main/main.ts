@@ -271,6 +271,20 @@ function showWindow(url?: string) {
       void shell.openExternal(url);
     }
   });
+  // Text fields and selected text get the usual Cut / Copy / Paste menu. The web app's own
+  // right-click menus (tasks, projects, teams) cancel the DOM event, so this never shows over them.
+  contents.on('context-menu', (_event, params) => {
+    const editable = params.isEditable;
+    if (!editable && !params.selectionText.trim()) return;
+    const flags = params.editFlags;
+    Menu.buildFromTemplate([
+      ...(editable ? [{ role: 'cut' as const, enabled: flags.canCut }] : []),
+      { role: 'copy' as const, enabled: flags.canCopy },
+      ...(editable ? [{ role: 'paste' as const, enabled: flags.canPaste }] : []),
+      { type: 'separator' as const },
+      { role: 'selectAll' as const, enabled: flags.canSelectAll },
+    ]).popup({ window: window ?? undefined });
+  });
   contents.on('did-fail-load', (_event, code, description, url, isMainFrame) => {
     // -3: aborted (a new navigation replaced it).
     if (!isMainFrame || code === -3 || url.startsWith('file:')) return;

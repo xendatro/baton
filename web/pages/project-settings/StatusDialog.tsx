@@ -16,6 +16,7 @@ import {
   type UpdateStatusInput,
 } from '@shared/schemas/projects';
 import { HelpTip } from '@web/components/common/HelpTip';
+import { SoftWarning } from '@web/components/common/SoftWarning';
 import { Spinner } from '@web/components/common/Spinner';
 import { StatusIcon } from '@web/components/common/StatusBadge';
 import { STATUS_ICON_SHAPES } from '@web/components/common/statusIcons';
@@ -1180,6 +1181,12 @@ function MovingSection({
               {approvalsSentence(approvals.count, approvals.rule, options)} Add{' '}
               <code className="text-xs">-ai</code> names to let agents approve.
             </p>
+            {approvals.rule.allow.length === 0 ? (
+              <SoftWarning size="sm" data-testid="no-approvers">
+                Nobody can approve yet, so tasks can’t move on from this stage (except by forcing
+                the move). Choose who can approve, or set approvals to 0.
+              </SoftWarning>
+            ) : null}
             <CheckRow
               label="Re-approve after edits"
               help="If the task or its evidence changes after someone approved, their approval is cleared and they must approve again."

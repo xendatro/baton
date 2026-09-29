@@ -589,20 +589,22 @@ const deleteStatusTool = defineTool({
   name: 'delete_status',
   title: 'Delete status',
   description:
-    'Deletes a status and moves its tasks to another status (needs MANAGE_STATUSES). Deleting the default status makes the target the default. The last status can’t be deleted.',
+    'Deletes a status and moves its tasks to another status, possibly of another pipeline (needs MANAGE_STATUSES). `moveTo` is required only when the status has tasks. Deleting the default status makes the target the default. A pipeline’s last status can be deleted once it has no tasks, leaving a pipeline with no stages (no task can be created in it until a stage is added).',
   input: toolInput({
     project: projectRef,
     status: statusRef.describe('Status to delete (name or id)'),
-    moveTo: statusRef.describe('Status that receives its tasks (name or id)'),
+    moveTo: statusRef
+      .optional()
+      .describe('Status that receives its tasks (name or id); required when it has tasks'),
   }),
   annotations: { destructiveHint: true },
   handler: (ctx, input) => {
     const projectId = projectContext(ctx, input.project).id;
     const { orm } = ctx.deps.db;
     const status = resolveStatus(orm, projectId, input.status);
-    const moveTo = resolveStatus(orm, projectId, input.moveTo);
-    const result = deleteStatus(ctx.deps, ctx.actor, status.id, { moveTo: moveTo.id });
-    return { ...result, deleted: status.name, movedTo: moveTo.name };
+    const moveTo = input.moveTo ? resolveStatus(orm, projectId, input.moveTo) : null;
+    const result = deleteStatus(ctx.deps, ctx.actor, status.id, { moveTo: moveTo?.id });
+    return { ...result, deleted: status.name, ...(moveTo ? { movedTo: moveTo.name } : {}) };
   },
 });
 

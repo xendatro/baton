@@ -11,6 +11,7 @@ import { jsonResponse, mockApi, testMe } from '@web/test/mockApi';
 import { DesktopUpdateNotice } from '@web/components/layout/DesktopUpdateNotice';
 import { DesktopVersionLine } from '@web/components/layout/DesktopVersionLine';
 import { usageClock } from '@web/lib/desktop';
+import { requestFixture } from '@web/test/agentRequests';
 import DesktopAgentsPage from './DesktopAgentsPage';
 import DesktopFoldersPage from './DesktopFoldersPage';
 import DesktopHarnessesPage from './DesktopHarnessesPage';
@@ -321,7 +322,7 @@ describe('desktop pages', () => {
     expect(screen.getByText('· Up to date')).toBeInTheDocument();
   });
 
-  it('splits jobs needing your OK from stopped runs on Running agents (BAT#22)', async () => {
+  it('shows stopped runs on Running agents, and points to the requests (BAT#22)', async () => {
     const user = userEvent.setup();
     const decisions: string[] = [];
     const job = (jobId: string, ref: string, extra: Record<string, unknown>) => ({
@@ -358,16 +359,15 @@ describe('desktop pages', () => {
               hasOutput: true,
             },
           }),
-          job('job-10', 'baton/BAT-36', { group: 'needs_ok', triggeredBy: 'caden' }),
         ],
       },
+      '/api/me/agent/requests': { requests: [requestFixture({ jobId: 'job-10' })] },
       '/api/me/agent/jobs/job-9/output': {
         jobId: 'job-9',
         run: null,
         output: 'error: unsupported model',
       },
       'POST /api/me/agent/jobs/job-9/dismiss': decide,
-      'POST /api/me/agent/jobs/job-10/approve': decide,
     });
     mockBridge();
     renderPage(<DesktopAgentsPage />);
@@ -382,16 +382,13 @@ describe('desktop pages', () => {
     await user.keyboard('{Escape}');
     await user.click(within(stopped).getByRole('button', { name: 'Trash baton/BAT-35' }));
 
-    const needsOk = screen.getByRole('region', { name: 'Needs your OK' });
-    expect(
-      within(needsOk).getByRole('button', { name: 'Decline baton/BAT-36' }),
-    ).toBeInTheDocument();
-    await user.click(within(needsOk).getByRole('button', { name: 'Approve baton/BAT-36' }));
-    await waitFor(() =>
-      expect(decisions).toEqual([
-        '/api/me/agent/jobs/job-9/dismiss',
-        '/api/me/agent/jobs/job-10/approve',
-      ]),
+    await waitFor(() => expect(decisions).toEqual(['/api/me/agent/jobs/job-9/dismiss']));
+    // Requests have their own page.
+    expect(screen.queryByRole('region', { name: 'Needs your OK' })).toBeNull();
+    expect(await screen.findByText(/1 request waits for your OK/)).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Open requests' })).toHaveAttribute(
+      'href',
+      '/agent/requests',
     );
   });
 });

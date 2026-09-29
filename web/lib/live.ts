@@ -74,6 +74,8 @@ const taskChange: Invalidation = (e) => [
 const replyChange: Invalidation = (e) => [
   ...parentKey(e, queryKeys.replies.list),
   ...parentItemKeys(e),
+  // A mention may have asked someone's agent (agent access): the item's request status.
+  ...parentKey(e, queryKeys.agentRequestsFor),
 ];
 
 // Reactions show only on task and issue pages and in threads, so lists and boards stay put.
@@ -150,6 +152,8 @@ export const LIVE_INVALIDATIONS: Readonly<Record<LiveEventType, Invalidation>> =
   // For activity events parentType/parentId name the entity the activity row is about.
   'activity.created': (e) => [
     ...parentKey(e, queryKeys.activity),
+    // A request declined (or refused) on the item.
+    ...parentKey(e, queryKeys.agentRequestsFor),
     ...teamKeys(e, (teamId) => queryKeys.teams.auditLog(teamId)),
     queryKeys.work.dashboard(),
     // Account-level rows (team null) are the user's security log: sign-ins, sessions, keys.
@@ -179,6 +183,10 @@ export const LIVE_INVALIDATIONS: Readonly<Record<LiveEventType, Invalidation>> =
     queryKeys.account.agentConnection(),
     // A catch-up summary arrived, or the catch-up job moved on.
     queryKeys.catchUp.all(),
+    queryKeys.account.agentRequests(),
+    queryKeys.account.agentModelOptions(),
+    queryKeys.account.agentAccess(),
+    queryKeys.agentRequestsFor(),
   ],
   // Personal: your agent asked for sign-off, or a request was decided or expired (design §6).
   'agent_action.changed': () => [queryKeys.account.agentActions(), queryKeys.notifications.all()],

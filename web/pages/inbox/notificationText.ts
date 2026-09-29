@@ -3,6 +3,7 @@ import {
   AtSignIcon,
   CircleCheckBigIcon,
   CircleDotIcon,
+  HandIcon,
   MessageSquareIcon,
   ShieldAlertIcon,
   SquareCheckBigIcon,
@@ -81,6 +82,12 @@ export const NOTIFICATION_KINDS: Record<NotificationType, NotificationKind> = {
     verb: 'moved a task into a stage you follow',
     label: 'Stage',
     tone: 'text-indigo-600 dark:text-indigo-400',
+  },
+  agent_request: {
+    icon: HandIcon,
+    verb: 'asks to start your agent',
+    label: 'Request',
+    tone: 'text-amber-600 dark:text-amber-400',
   },
 };
 

@@ -15,6 +15,7 @@ import { appPaths } from '../../lib/urls';
 import { parseInput } from '../../lib/validate';
 import { listEntityActivity } from '../../services/activity';
 import { resolveTrashRef } from '../../services/admin';
+import { pendingRequestsOn } from '../../services/agentRequests';
 import {
   createIssue,
   deleteIssue,
@@ -214,6 +215,8 @@ const getIssueTool = defineTool({
     });
     return {
       ...issueForAgent(ctx, issue),
+      // Agent access: agents waiting for their owner's OK to work on this issue.
+      pendingAgentRequests: pendingRequestsOn(ctx.deps.db.orm, { type: 'issue', id: issue.id }),
       replyCount: replies.total,
       replies: replies.items.reverse().map((reply) => replyForAgent(ctx, issue.path, reply)),
       history: historyForAgent(history.items.slice(-HISTORY_LIMIT)),

@@ -183,6 +183,13 @@
       "when": 1790714727980,
       "tag": "0025_conversation_mode",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "6",
+      "when": 1790714838876,
+      "tag": "0026_agent_access",
+      "breakpoints": true
     }
   ]
 }

@@ -6,6 +6,7 @@ import { capture, num, parseJsonLine, spawnLines, str, which } from './process';
 import { usageLimitOf } from './usageLimits';
 import { mcpListReaches } from './mcpList';
 import { batonToolTouches, resultText } from './touches';
+import { parseClaudeHelp } from './capabilities';
 
 /**
  * Claude Code (`claude -p`), checked against its `--help` (2.1.x): stream-json output with
@@ -320,6 +321,7 @@ export class ClaudeSession {
 export function claudeAdapter(): HarnessAdapter {
   let resolved: string | null = null;
   const command = () => resolved ?? 'claude';
+  const capabilities = async () => parseClaudeHelp(await help(command()));
   return {
     id: 'claude',
     label: 'Claude Code',
@@ -331,16 +333,9 @@ export function claudeAdapter(): HarnessAdapter {
       return { installed: true, path: resolved, version };
     },
     async listModels() {
-      const text = await help(command());
-      const quoted = [
-        ...(/--model <model>[\s\S]*?\(e\.g\.([^)]*)\)/.exec(text)?.[1] ?? '').matchAll(
-          /'([^']+)'/g,
-        ),
-      ]
-        .map((match) => match[1] ?? '')
-        .filter((name) => name && !name.includes('-'));
-      return [...new Set(['opus', 'sonnet', 'haiku', ...quoted])];
+      return (await capabilities()).models.map((model) => model.id);
     },
+    capabilities,
     permissionModes: MODES,
     async run(options: RunOptions): Promise<RunResult> {
       const started = Date.now();

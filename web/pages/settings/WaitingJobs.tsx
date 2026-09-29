@@ -7,6 +7,7 @@ import {
   XIcon,
 } from 'lucide-react';
 import { useState } from 'react';
+import { Link } from 'react-router';
 import { toast } from 'sonner';
 import {
   HARNESS_LABELS,
@@ -29,12 +30,12 @@ import { cn } from '@web/lib/utils';
 import { useDecideWaitingJob, useJobOutput, type WaitingJob } from './automaticAgentsQueries';
 
 /**
- * The jobs that wait on their owner (BAT#22), in three groups, in Settings → Automatic agents and
- * on the desktop app's Running agents page:
- * - **Needs your OK**: from people outside "Whose jobs run". Approve runs it; Decline drops it.
- * - **Stopped runs**: your agent's own runs that failed or that you killed, with why (the error,
- *   killed by you, out of usage) and the output's tail. Retry runs it again; Trash drops it.
- * - **Cleared — task finished** (BAT#29): either kind whose task or issue finished meanwhile,
+ * Your agent's runs that wait on you (BAT#22), in Settings → Automatic agents and on the desktop
+ * app's Running agents page. Requests from people who can only ask you (agent access) have their
+ * own page (`/agent/requests`), linked from here when some wait.
+ * - **Stopped runs**: your agent's own runs that failed or that you killed ("Killed by you"), with
+ *   why (the error, out of usage) and the output's tail. Retry runs it again; Trash drops it.
+ * - **Cleared — task finished** (BAT#29): stopped runs whose task or issue finished meanwhile,
  *   muted with only Open, for a day.
  *
  * On the desktop app, `notes` carries why a job stopped on this computer (shown when Baton has
@@ -45,18 +46,18 @@ export function WaitingJobGroups({
   jobs,
   ...options
 }: { jobs: readonly WaitingJob[] } & RowOptions) {
-  const needsOk = jobs.filter((job) => job.group === 'needs_ok');
+  // Older servers list requests here too (`needs_ok`): they belong on the Requests page.
+  const requests = jobs.filter((job) => job.group === 'needs_ok').length;
   const stopped = jobs.filter((job) => job.group === 'stopped');
   const cleared = jobs.filter((job) => job.group === 'cleared');
   return (
     <div className="grid gap-4">
-      {needsOk.length > 0 ? (
-        <Group
-          title="Needs your OK"
-          description="From people outside “Whose jobs run”. They only run when you approve them."
-          jobs={needsOk}
-          options={options}
-        />
+      {requests > 0 ? (
+        <p className="text-sm">
+          <Link to="/agent/requests" className="font-medium text-primary hover:underline">
+            {requests === 1 ? '1 request waits' : `${requests} requests wait`} for you
+          </Link>
+        </p>
       ) : null}
       {stopped.length > 0 ? (
         <Group

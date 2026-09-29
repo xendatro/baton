@@ -3,8 +3,8 @@ import type { Page } from '@playwright/test';
 import { expect, ORIGIN, signedInUser, test, withDatabase } from './support/fixtures.ts';
 
 /**
- * Automatic agents (BAT-24) on the web: the default models, whose jobs run, and a job from
- * someone else waiting for the owner's OK, run from Settings → Automatic agents.
+ * Automatic agents (BAT-24) on the web: the default models and who can start your agent (agent
+ * access); a job from someone else is a request (agentRequests.spec.ts).
  */
 
 async function post<T>(page: Page, url: string, data: unknown): Promise<T> {
@@ -13,7 +13,7 @@ async function post<T>(page: Page, url: string, data: unknown): Promise<T> {
   return (await res.json()) as T;
 }
 
-test('models, whose jobs run and a job waiting for my OK', async ({ page, browser }) => {
+test('models, and who can start my agent', async ({ page, browser }) => {
   const owner = await signedInUser(page);
   const slug = `auto-${randomBytes(4).toString('hex')}`;
   const team = await post<{ id: string }>(page, '/api/teams', { name: `Auto ${slug}`, slug });
@@ -54,18 +54,11 @@ test('models, whose jobs run and a job waiting for my OK', async ({ page, browse
   await page.goto('/settings/automatic-agents');
   await expect(page.getByRole('heading', { name: 'Automatic agents' })).toBeVisible();
 
-  // The job needs the owner's OK (BAT#22); Approve clears it.
-  const waiting = page.getByRole('region', { name: 'Needs your OK' });
-  await expect(waiting.getByText('Wire the runner')).toBeVisible();
-  await expect(waiting.getByRole('button', { name: /^Decline / })).toBeVisible();
-  await waiting.getByRole('button', { name: /^Approve / }).click();
-  await expect(page.getByText('Approved: your agent will run it')).toBeVisible();
-  await expect(waiting).toBeHidden();
-
-  // Whose jobs run: anyone.
-  await page.getByRole('radio', { name: 'Anyone who can mention or assign my agent' }).click();
-  await page.getByRole('button', { name: 'Save', exact: true }).click();
-  await expect(page.getByText('Saved whose jobs run')).toBeVisible();
+  // The job is a request (agent access): it waits on the Requests page, not here.
+  await expect(page.getByRole('region', { name: 'Needs your OK' })).toHaveCount(0);
+  const access = page.getByRole('region', { name: 'Who can start your agent' });
+  await expect(access.getByText('Start automatically', { exact: true })).toBeVisible();
+  await expect(access.getByText('Can ask you', { exact: true })).toBeVisible();
 
   // Models: a fallback on the default chain (each project's own are on its Your settings page).
   const models = page.getByRole('group', { name: 'Default chain' });

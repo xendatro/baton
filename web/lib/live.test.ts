@@ -50,7 +50,11 @@ describe('LIVE_INVALIDATIONS', () => {
     const keys = LIVE_INVALIDATIONS['reply.created'](
       event({ type: 'reply.created', entityType: 'reply', parentType: 'issue', parentId: 'iss1' }),
     );
-    expect(keys).toEqual([queryKeys.replies.list('issue', 'iss1'), queryKeys.issues.all('proj1')]);
+    expect(keys).toEqual([
+      queryKeys.replies.list('issue', 'iss1'),
+      queryKeys.issues.all('proj1'),
+      queryKeys.agentRequestsFor('issue', 'iss1'),
+    ]);
   });
 
   it('refreshes the unread badges of the item a notification is about (BAT-16)', () => {

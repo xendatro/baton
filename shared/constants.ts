@@ -455,6 +455,8 @@ export const NOTIFICATION_TYPES = [
   'agent_action_request',
   /** A task entered a pipeline stage whose `notify` rule names you (design §5). */
   'stage_entered',
+  /** Someone who may only ask wants to start your agent (agent access): a request to approve. */
+  'agent_request',
 ] as const;
 export type NotificationType = (typeof NOTIFICATION_TYPES)[number];
 

@@ -39,6 +39,8 @@ const shellRoutes: RouteObject[] = [
   { path: 'inbox', ...page(() => import('./pages/inbox/InboxPage')) },
   { path: 'my-tasks', ...page(() => import('./pages/my-tasks/MyTasksPage')) },
   { path: 'download', ...page(() => import('./pages/download/DownloadPage')) },
+  // agent access: requests to start your agent
+  { path: 'agent/requests', ...page(() => import('./pages/agent/RequestsPage')) },
   // desktop app (BAT-26): shown inside the Baton desktop app
   { path: 'desktop', ...page(() => import('./pages/desktop/DesktopAgentsPage')) },
   { path: 'desktop/setup', ...page(() => import('./pages/desktop/DesktopSetupPage')) },

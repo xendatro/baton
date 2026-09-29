@@ -3,19 +3,17 @@ import { z } from 'zod';
 import {
   agentStatsSchema,
   jobOutputSchema,
-  jobSourcesSchema,
   modelFailuresSchema,
   modelMappingsSchema,
   ownerJobsSchema,
   runnerSchema,
-  type JobSources,
   type ModelMappings,
   type OwnerJob,
 } from '@shared/schemas/agentRunner';
 import { api } from '@web/lib/api';
 import { queryKeys } from '@web/lib/queryKeys';
 
-/** Automatic agents (BAT-24) on the web: runners, waiting jobs, job sources, models, stats. */
+/** Automatic agents (BAT-24) on the web: runners, stopped runs, models, stats. */
 
 const enc = encodeURIComponent;
 
@@ -72,24 +70,6 @@ export function useModelFailures() {
     queryFn: ({ signal }) =>
       api.get('/api/me/agent/model-failures', { schema: modelFailuresSchema, signal }),
     select: (data) => data.failures,
-  });
-}
-
-export function useJobSources() {
-  return useQuery({
-    queryKey: queryKeys.account.agentJobSources(),
-    queryFn: ({ signal }) =>
-      api.get('/api/me/agent/job-sources', { schema: jobSourcesSchema, signal }),
-  });
-}
-
-export function useSetJobSources() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (input: JobSources) =>
-      api.put('/api/me/agent/job-sources', input, { schema: jobSourcesSchema }),
-    onSuccess: (data) => queryClient.setQueryData(queryKeys.account.agentJobSources(), data),
-    meta: { suppressErrorToast: true },
   });
 }
 

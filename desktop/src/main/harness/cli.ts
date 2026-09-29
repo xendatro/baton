@@ -6,6 +6,7 @@ import type { HarnessAdapter, HarnessEvent, PermissionMode, RunOptions, RunResul
 import { capture, num, parseJsonLine, spawnLines, str, which } from './process';
 import { mcpListReaches } from './mcpList';
 import { usageLimitOf } from './usageLimits';
+import { parseCliHelp, uniqueModels, type HarnessCapabilities } from './capabilities';
 
 /**
  * Adapters for CLIs that print JSON lines (Codex, Gemini CLI, Cursor CLI, opencode). Their flags
@@ -33,6 +34,11 @@ export interface CliSpec {
   /** Arguments that list configured MCP servers (to see whether Baton is there). */
   mcpListArgs?: readonly string[];
   aliases: readonly string[];
+  /**
+   * The harness's models and efforts on this machine, given the CLI's resolved command and its
+   * run help (default: `parseCliHelp` of that help, plus `aliases`).
+   */
+  discover?(command: string, help: string): Promise<HarnessCapabilities>;
   modes: PermissionMode[];
   build(context: BuildContext): { args: string[]; stdin: string | null; env?: NodeJS.ProcessEnv };
   /** Reads one JSON event into the result; emits what to show. */
@@ -157,6 +163,22 @@ export function cliAdapter(spec: CliSpec): HarnessAdapter {
   let helpText: string | null = null;
   const command = () => resolved ?? spec.commands[0] ?? spec.id;
   const help = async () => (helpText ??= (await capture(command(), [...spec.helpArgs])) ?? '');
+  let discovered: Promise<HarnessCapabilities> | null = null;
+  const capabilities = (): Promise<HarnessCapabilities> =>
+    (discovered ??= (async () => {
+      const text = await help();
+      const found = spec.discover ? await spec.discover(command(), text) : parseCliHelp(text);
+      return {
+        models: uniqueModels([
+          ...spec.aliases.map((id) => ({ id, label: null, efforts: [] })),
+          ...found.models,
+        ]),
+        efforts: found.efforts,
+      };
+    })().catch(() => {
+      discovered = null;
+      return { models: [], efforts: [] };
+    }));
   return {
     id: spec.id,
     label: spec.label,
@@ -171,8 +193,10 @@ export function cliAdapter(spec: CliSpec): HarnessAdapter {
       return { installed: true, path: resolved, version };
     },
     async listModels() {
-      return [...spec.aliases];
+      const found = await capabilities();
+      return [...new Set([...spec.aliases, ...found.models.map((model) => model.id)])];
     },
+    capabilities,
     permissionModes: spec.modes,
     async run(options): Promise<RunResult> {
       const started = Date.now();

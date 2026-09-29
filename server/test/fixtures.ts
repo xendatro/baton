@@ -112,6 +112,43 @@ export function setAgentSignoff(db: Database, teamId: string, enabled: boolean):
   db.orm.update(s.team).set({ agentSignoff: enabled }).where(eq(s.team.id, teamId)).run();
 }
 
+/**
+ * Agent access: every person and agent of the team starts `ownerId`'s agent without asking (its
+ * team default), for tests of what jobs do rather than of who may start them. The built-in
+ * default makes everyone else's jobs requests.
+ */
+export function openAgentAccess(db: Database, ownerId: string, teamId: string): void {
+  db.orm
+    .delete(s.agentAccess)
+    .where(
+      and(
+        eq(s.agentAccess.ownerId, ownerId),
+        eq(s.agentAccess.teamId, teamId),
+        sql`${s.agentAccess.projectId} is null`,
+      ),
+    )
+    .run();
+  db.orm
+    .insert(s.agentAccess)
+    .values({
+      ownerId,
+      teamId,
+      projectId: null,
+      rules: {
+        auto: {
+          allow: [
+            { type: 'everyone', scope: 'people' },
+            { type: 'everyone', scope: 'agents' },
+          ],
+          deny: [],
+        },
+        ask: { allow: [], deny: [] },
+      },
+      updatedAt: new Date(),
+    })
+    .run();
+}
+
 /** A team with the seeded `@everyone` and Admin roles; the owner is a member. */
 export function createTeam(db: Database, options: CreateTeamOptions): CreatedTeam {
   const n = nextSequence();

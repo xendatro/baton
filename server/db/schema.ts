@@ -57,7 +57,9 @@ import type {
   OnEnterRules,
 } from '../../shared/schemas/pipelines';
 import type { ReadmeSource } from '../../shared/schemas/github';
+import { AGENT_REQUEST_DECISIONS, type AgentAccessRules } from '../../shared/schemas/agentAccess';
 import type {
+  Chain,
   ClearedReason,
   DefaultMapping,
   HarnessInfo,
@@ -1265,6 +1267,16 @@ export const agentJob = sqliteTable(
      */
     clearedAt: timestamp('cleared_at'),
     clearedReason: text('cleared_reason').$type<ClearedReason>(),
+    /**
+     * The model the owner chose when approving a request ("Run with", agent access): runners use
+     * this chain instead of their model mappings. Independent of difficulty.
+     */
+    modelOverride: text('model_override', { mode: 'json' }).$type<Chain>(),
+    /** A request (someone who may only ask started it) the owner approved or declined. */
+    requestDecision: text('request_decision', { enum: AGENT_REQUEST_DECISIONS }),
+    requestDecidedAt: timestamp('request_decided_at'),
+    /** Why the owner declined it, shown to the requester. */
+    requestReason: text('request_reason'),
   },
   (t) => [
     index('agent_job_agent_status_idx').on(t.agentUserId, t.status, t.createdAt),
@@ -1797,6 +1809,37 @@ export const projectMemberSettings = sqliteTable(
   (t) => [
     primaryKey({ columns: [t.userId, t.projectId] }),
     index('project_member_settings_project_idx').on(t.projectId),
+  ],
+);
+
+/**
+ * Who can start a person's agent (agent access): per team a default, per project an optional
+ * override (`project_id` set) that replaces it there. `rules.auto` start it without asking,
+ * `rules.ask` make a request the owner approves; anyone else can't start it. No row: the built-in
+ * default (only the owner starts it; everyone may ask).
+ */
+export const agentAccess = sqliteTable(
+  'agent_access',
+  {
+    ownerId: text('owner_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    teamId: text('team_id')
+      .notNull()
+      .references(() => team.id, { onDelete: 'cascade' }),
+    projectId: text('project_id').references(() => project.id, { onDelete: 'cascade' }),
+    rules: text('rules', { mode: 'json' }).$type<AgentAccessRules>().notNull(),
+    updatedAt: updatedAtColumn(),
+  },
+  (t) => [
+    uniqueIndex('agent_access_team_default_unique')
+      .on(t.ownerId, t.teamId)
+      .where(sql`${t.projectId} is null`),
+    uniqueIndex('agent_access_project_unique')
+      .on(t.ownerId, t.projectId)
+      .where(sql`${t.projectId} is not null`),
+    index('agent_access_team_idx').on(t.teamId),
+    index('agent_access_project_idx').on(t.projectId),
   ],
 );
 

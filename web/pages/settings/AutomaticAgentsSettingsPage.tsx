@@ -1,5 +1,5 @@
 import { DownloadIcon, MonitorIcon, PauseIcon } from 'lucide-react';
-import { useId, useState, type ReactNode } from 'react';
+import { useId, useState } from 'react';
 import { Link } from 'react-router';
 import { toast } from 'sonner';
 import {
@@ -8,21 +8,18 @@ import {
   type AgentUsageTotals,
   type Chain,
   type HarnessId,
-  type JobSourceMode,
 } from '@shared/schemas/agentRunner';
 import { MODEL_PRICES_AS_OF } from '@shared/modelPrices';
-import type { PrincipalRule } from '@shared/principals';
+import type { AgentAccessRules, TeamAgentAccess } from '@shared/schemas/agentAccess';
 import { EmptyState } from '@web/components/common/EmptyState';
 import { ErrorState } from '@web/components/common/ErrorState';
 import { HelpTip } from '@web/components/common/HelpTip';
 import { RelativeTime } from '@web/components/common/RelativeTime';
 import { Spinner } from '@web/components/common/Spinner';
-import { PrincipalRulePicker } from '@web/components/pickers/PrincipalRulePicker';
-import { EMPTY_RULE, type PrincipalOptions } from '@web/components/pickers/principals';
+import type { PrincipalOptions } from '@web/components/pickers/principals';
 import { Badge } from '@web/components/ui/badge';
 import { Button } from '@web/components/ui/button';
 import { Label } from '@web/components/ui/label';
-import { RadioGroup, RadioGroupItem } from '@web/components/ui/radio-group';
 import { Skeleton } from '@web/components/ui/skeleton';
 import { Switch } from '@web/components/ui/switch';
 import { errorMessage } from '@web/lib/api';
@@ -32,23 +29,23 @@ import { pluralize } from '@web/lib/format';
 import { useMembers, useRoles } from '../teams/api';
 import {
   useAgentStats,
-  useJobSources,
   useModelMappings,
   useRunners,
-  useSetJobSources,
   useSetModelMappings,
   useWaitingJobs,
 } from './automaticAgentsQueries';
 import { ChainEditor } from './ChainEditor';
 import { WaitingJobGroups } from './WaitingJobs';
+import { AgentAccessEditor } from '@web/components/agentRequests/AgentAccessEditor';
+import { useAgentAccess, useSetTeamAgentAccess } from '@web/components/agentRequests/queries';
 import { chainSummary } from './chainSummary';
 import { useAgentSettings, useUpdateAgentSettings } from './queries';
 import { SettingsCard, SettingsCardSkeleton, SettingsPage } from './SettingsCard';
 
 /**
  * Settings → Automatic agents (BAT-24): the Baton desktop app runs your agent's jobs in your own
- * harness (Claude Code, Codex, …). Here: your desktop apps, jobs waiting for your OK, whose jobs
- * run by themselves, your default models (each project's own are on its Your settings page,
+ * harness (Claude Code, Codex, …). Here: your desktop apps, stopped runs, who can start your agent
+ * (agent access, per team), your default models (each project's own are on its Your settings page,
  * BAT-29), usage stats and the global pause.
  */
 export default function AutomaticAgentsSettingsPage() {
@@ -60,7 +57,7 @@ export default function AutomaticAgentsSettingsPage() {
       <PauseCard />
       <DesktopCard />
       <WaitingCard />
-      <JobSourcesCard />
+      <AgentAccessCard />
       <ModelsCard />
       <StatsCard />
     </SettingsPage>
@@ -182,8 +179,8 @@ function WaitingCard() {
   if (waiting.isPending || waiting.isError || waiting.data.length === 0) return null;
   return (
     <SettingsCard
-      title="Jobs waiting on you"
-      description="Jobs from people outside “Whose jobs run”, and your agent’s runs that failed or that you stopped. None of them runs until you say so."
+      title="Runs waiting on you"
+      description="Your agent’s runs that failed or that you stopped. They don’t run again until you retry them. Requests from people who can ask you are on the Requests page."
     >
       <WaitingJobGroups jobs={waiting.data} />
     </SettingsCard>
@@ -191,7 +188,7 @@ function WaitingCard() {
 }
 
 // ---------------------------------------------------------------------------------------------
-// Whose jobs run
+// Who can start your agent
 // ---------------------------------------------------------------------------------------------
 
 function useTeamPrincipalOptions(teamId: string | undefined): PrincipalOptions {
@@ -210,101 +207,88 @@ function useTeamPrincipalOptions(teamId: string | undefined): PrincipalOptions {
   };
 }
 
-function JobSourcesCard() {
-  const sources = useJobSources();
-  const save = useSetJobSources();
-  const teams = useMe().data?.teams ?? [];
-  const [draft, setDraft] = useState<{ mode: JobSourceMode; rule: PrincipalRule | null } | null>(
-    null,
+/** Who can start your agent, per team (agent access): the team defaults. */
+function AgentAccessCard() {
+  const access = useAgentAccess();
+  return (
+    <div id="who-can-start" className="scroll-mt-4">
+      <SettingsCard
+        title="Who can start your agent"
+        description="For each team: who starts your agent without asking, and who can ask you first. Each project can override this on its Your settings page."
+      >
+        {access.isPending ? (
+          <Skeleton className="h-24" />
+        ) : access.isError ? (
+          <ErrorState
+            title="Couldn’t load who can start your agent"
+            error={access.error}
+            onRetry={() => void access.refetch()}
+          />
+        ) : access.data.length === 0 ? (
+          <p className="text-sm text-muted-foreground">
+            Join or create a team first: this is set per team.
+          </p>
+        ) : (
+          <div className="grid gap-6 divide-y">
+            {access.data.map((team) => (
+              <TeamAccess key={team.teamId} team={team} showName={access.data.length > 1} />
+            ))}
+          </div>
+        )}
+      </SettingsCard>
+    </div>
   );
-  const [teamId, setTeamId] = useState<string | undefined>(undefined);
-  const options = useTeamPrincipalOptions(teamId ?? teams[0]?.id);
-  const selectId = useId();
-  if (sources.isPending) return <SettingsCardSkeleton rows={2} />;
-  if (sources.isError) return null;
-  const value = draft ?? sources.data;
-  const dirty = draft !== null && JSON.stringify(draft) !== JSON.stringify(sources.data);
+}
+
+function TeamAccess({ team, showName }: { team: TeamAgentAccess; showName: boolean }) {
+  const save = useSetTeamAgentAccess();
+  const options = useTeamPrincipalOptions(team.teamId);
+  const [draft, setDraft] = useState<AgentAccessRules | null>(null);
+  const value = draft ?? team.rules;
+  const dirty = draft !== null && JSON.stringify(draft) !== JSON.stringify(team.rules);
   const submit = () =>
     save.mutate(
-      { mode: value.mode, rule: value.mode === 'custom' ? (value.rule ?? EMPTY_RULE) : null },
+      { teamId: team.teamId, rules: value },
       {
         onSuccess: () => {
           setDraft(null);
-          toast.success('Saved whose jobs run');
+          toast.success(`Saved who can start your agent in ${team.teamName}`);
         },
         onError: (cause) => toast.error(errorMessage(cause)),
       },
     );
   return (
-    <SettingsCard
-      title="Whose jobs run"
-      description="Jobs from anyone else wait under “Needs your OK” and never run by themselves."
-      footer={
-        <div className="flex justify-end">
-          <Button size="sm" onClick={submit} disabled={!dirty || save.isPending}>
-            {save.isPending ? <Spinner /> : null}
-            Save
-          </Button>
-        </div>
-      }
+    <section
+      aria-label={`Who can start your agent in ${team.teamName}`}
+      className="grid gap-3 pt-4 first:pt-0"
     >
-      <RadioGroup
-        value={value.mode}
-        onValueChange={(mode) => setDraft({ mode: mode as JobSourceMode, rule: value.rule })}
-        aria-label="Whose jobs run"
-        className="gap-2"
-      >
-        <Choice
-          value="me"
-          label="Only jobs I trigger"
-          help="Your own mentions, assignments and moves of your agent."
-        />
-        <Choice value="anyone" label="Anyone who can mention or assign my agent" />
-        <Choice value="custom" label="Only these people…" />
-      </RadioGroup>
-      {value.mode === 'custom' ? (
-        <div className="mt-3 grid gap-2 rounded-lg border p-3">
-          {teams.length > 1 ? (
-            <div className="flex items-center gap-2">
-              <Label htmlFor={selectId} className="text-xs">
-                Pick from
-              </Label>
-              <select
-                id={selectId}
-                value={teamId ?? teams[0]?.id ?? ''}
-                onChange={(event) => setTeamId(event.target.value)}
-                className="h-8 rounded-md border border-input bg-transparent px-2 text-sm dark:bg-input/30"
-              >
-                {teams.map((team) => (
-                  <option key={team.id} value={team.id}>
-                    {team.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-          ) : null}
-          <PrincipalRulePicker
-            label="Whose jobs run"
-            value={value.rule ?? EMPTY_RULE}
-            onChange={(rule) => setDraft({ mode: 'custom', rule })}
-            options={options}
-          />
-        </div>
-      ) : null}
-    </SettingsCard>
-  );
-}
-
-function Choice({ value, label, help }: { value: string; label: string; help?: ReactNode }) {
-  const id = useId();
-  return (
-    <div className="flex items-center gap-2">
-      <RadioGroupItem id={id} value={value} />
-      <Label htmlFor={id} className="font-normal">
-        {label}
-      </Label>
-      {help ? <HelpTip topic={label}>{help}</HelpTip> : null}
-    </div>
+      {showName ? <h3 className="text-sm font-semibold">{team.teamName}</h3> : null}
+      <AgentAccessEditor
+        label={
+          showName ? `Who can start your agent in ${team.teamName}` : 'Who can start your agent'
+        }
+        value={value}
+        onChange={setDraft}
+        options={options}
+        disabled={save.isPending}
+      />
+      <div className="flex items-center justify-end gap-2">
+        {team.isDefault && !dirty ? (
+          <span className="mr-auto text-xs text-muted-foreground">
+            The default: only you start it; everyone can ask.
+          </span>
+        ) : null}
+        {dirty ? (
+          <Button size="sm" variant="ghost" onClick={() => setDraft(null)}>
+            Discard
+          </Button>
+        ) : null}
+        <Button size="sm" onClick={submit} disabled={!dirty || save.isPending}>
+          {save.isPending ? <Spinner /> : null}
+          Save
+        </Button>
+      </div>
+    </section>
   );
 }
 

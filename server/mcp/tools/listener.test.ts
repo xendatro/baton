@@ -15,6 +15,7 @@ import {
   createTeam,
   createTestContext,
   createUser,
+  openAgentAccess,
   type TaskRow,
   type TestContext,
   type UserRow,
@@ -48,6 +49,8 @@ beforeEach(() => {
   const { project } = createProject(ctx.db, { teamId, key: 'BAT' });
   task = createTask(ctx.db, { project, authorId: caden.id, title: 'Fix it' });
   clients = [];
+  // Caden's jobs start Ethan's agent (agent access is tested in agentAccess.test.ts).
+  openAgentAccess(ctx.db, ethan.id, teamId);
 });
 
 afterEach(async () => {

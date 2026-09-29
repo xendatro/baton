@@ -234,6 +234,8 @@ range: { kind, count, fromReplyId, toReplyId } }`. The desktop brief contains th
   `submit_catch_up { jobId, summary }`, which stores it in `catch_up_summary` for the owner only
   (shown in the chat's Catch up panel; `agent_job.changed` refreshes it) and completes the job. It
   never posts in the chat.
+- Requests (agent access) are never handed out before their owner approves them; a listener
+  still gets stopped runs.
 - Loop guard: a reply by an agent queues no `mention`/`thread_reply` jobs when the item's last 5
   replies are all by agents; the first time, a system activity row `<type>.agent_loop_guard` is
   recorded. A person's reply resets it.
@@ -247,7 +249,10 @@ Schemas in `shared/schemas/agentRunner.ts`, chain resolution in `shared/agentCha
 endpoints need an API key (they act as the key owner's agent member); the owner endpoints under
 `/api/me/agent/*` accept the web session or the owner's key.
 
-- `POST /api/agent/runners { machineId, machineName, harnesses: [{ id, version }], projectIds }`
+- `POST /api/agent/runners { machineId, machineName, harnesses: [{ id, version, models?, efforts?
+}], projectIds }` (agent access: each harness may report `models: [{ id, label?, efforts: [] }]`
+  and `efforts: []`, read by the desktop app from the harness itself; kept on the runner and
+  offered by `GET /api/me/agent/model-options`; apps before 0.5 don't send them)
   → `RunnerState { runner: { id, machineId, machineName, harnesses, projectIds, running,
 lastSeenAt, online }, paused, pausedReason, waitingCount }`. One runner per (agent, machine):
   re-registering updates it. Only projects the agent can see are kept. `GET /api/agent/runners`
@@ -258,8 +263,8 @@ lastSeenAt, online }, paused, pausedReason, waitingCount }`. One runner per (age
   jobs running there; `cancelledJobIds` names those cancelled meanwhile (e.g. their task was
   deleted, BAT-33): the app kills their harness and releases them without holding them.
 - `POST /api/agent/runners/:runnerId/jobs/next?wait=50` (≤ 110) → `{ jobs: AgentJobContext[] }`:
-  claims up to 10 pending jobs of the runner's projects atomically, or waits for the first. Jobs
-  waiting for the owner's OK are skipped. `agents_paused` while the agent is paused. Job contexts
+  claims up to 10 pending jobs of the runner's projects atomically, or waits for the first.
+  Requests (waiting for the owner's OK) and stopped runs are skipped. `agents_paused` while the agent is paused. Job contexts
   also carry `triggeredBy` (username) and `needsOk`.
 - `GET /api/agent/jobs/:jobId/brief?runner=` → `{ jobId, kind, project, target, difficulty, chain:
 [{ harness, model, effort }], chainSource, resume: { harness: sessionId }, prompt }`. The chain
@@ -273,7 +278,10 @@ lastSeenAt, online }, paused, pausedReason, waitingCount }`. One runner per (age
   harness of the agent's most recent write there (creating it or replying), from the write's
   agent name ("Claude" → `claude`, "Codex" → `codex`) — with its chain entry's model and effort
   (empty for its defaults when the chain lacks it) and the rest of the chain after it;
-  `chainSource` then ends with "; <Harness> first: it has been working on this task".
+  `chainSource` then ends with "; <Harness> first: it has been working on this task". Agent
+  access: a request approved with a model (`modelOverride`) runs that chain instead, whatever the
+  difficulty or harness history (`chainSource`: "chosen by your owner when approving the
+  request").
 - `PUT /api/agent/jobs/:jobId/session { runnerId, harness, sessionId, items? }` stores the harness
   session a task's job ran in (per agent, task, machine and harness). `items` (BAT#28, at most 50
   refs or ids): tasks the run created or replied in, read by the app from the harness's Baton
@@ -307,17 +315,17 @@ taskInvolvesAgent? }`. `covered`: an online runner has the project in its `proje
   agent is assigned in the current stage, may claim it from the pool, matches the stage's hand-off
   or approvals rule, or has jobs there). The web shows "Your agent isn't connected … Connect now"
   from it; `agent_job.changed` (runners registering, listeners starting, jobs) refreshes it.
-- Whose jobs run: `GET/PUT /api/me/agent/job-sources { mode: me | anyone | custom, rule }` (default
-  `me`: jobs the owner or their agent caused; system jobs always run). Jobs caused by others get
-  `needsOk: true`: runners skip them until `POST /api/me/agent/jobs/:jobId/approve` (Approve, or
-  Retry for a stopped run); `…/dismiss` cancels (Decline, or Trash). Manual `start_listener`
-  sessions still get every job.
+- Deprecated: `GET/PUT /api/me/agent/job-sources` ("Whose jobs run") still answer but no longer
+  decide anything: agent access below replaced them (migration 0026 translated each owner's
+  setting). `POST /api/me/agent/jobs/:jobId/approve` retries a stopped run (and approves a request
+  without a model choice); `…/dismiss` trashes a stopped run (and declines a request).
 - Jobs waiting on the owner (BAT#22, BAT#29): `GET /api/me/agent/waiting` → `{ jobs: [{ jobId,
 kind, status, createdAt, triggeredBy, needsOk, project, target: { ref, title, url }, trigger:
 { body } | null, group: needs_ok | stopped | cleared, run: { outcome, error, harness, model,
 endedAt, hasOutput } | null, clearedAt, clearedReason: finished | deleted | resolved | moved |
-unassigned | null }] }`, oldest first. `needs_ok`: caused by someone outside the job sources;
-  `stopped`: held by a runner after a failed or killed run; `cleared`: a held or waiting job whose
+unassigned | null }] }`, oldest first: only held runs (requests are on `/api/me/agent/requests`;
+  `needs_ok` is only sent by older servers). `stopped`: held by a runner after a failed or killed
+  run; `cleared`: a held job whose
   item no longer needs it (its task entered a stage that doesn't block dependents or was deleted,
   its issue was resolved or deleted, the task left the stage the job was for, or an `assigned`
   job's agent isn't assigned to the current stage any more). Those are cancelled when the change
@@ -348,6 +356,45 @@ tokensReasoning, costUsd, costEstimatedUsd, unpricedRuns, durationMs }` (BAT#25)
   (`shared/modelPrices.ts`, dated) into `costEstimatedUsd`, or counted in `unpricedRuns` when their
   model has no known price. `byModel` groups by harness and the model the harness reported (else
   the chain's) as a canonical id: trimmed, lower-case, without a provider prefix, a date or `[1m]`.
+- Agent access (who can start your agent; `shared/schemas/agentAccess.ts`). Rules are `{ auto:
+PrincipalRule, ask: PrincipalRule }`: `auto` starts the agent, `ask` makes a request, anyone else
+  can't start it (their jobs aren't queued; a mention or assignment of theirs leaves a system note
+  `task|issue.agent_request_refused` on the item). A principal is in one list at most (a person
+  or role in both: 400); the owner and their own agent are never listed (dropped on save: they
+  always start it). Resolution for whoever caused a job: the project override, else the team
+  default, else the built-in default (`auto`: nobody else; `ask`: every person and every agent of
+  the team); a person named directly in a list wins over their roles, then `auto` over `ask`.
+  Jobs nobody caused (system) run. `GET /api/me/agent/access` → `{ teams: [{ teamId, teamName,
+teamSlug, rules, isDefault }] }` (one per team of the owner). `PUT
+/api/me/agent/access/teams/:teamId { rules }` → that team's entry. `GET
+/api/projects/:projectId/me/agent-access` → `{ projectId, teamId, override: rules | null,
+teamDefault }`; `PUT` the same path `{ override: rules | null }` (null: "Use team default").
+- Requests: `GET /api/me/agent/requests` → `{ requests: AgentRequest[] }`: open ones (oldest
+  first), then those decided or cleared in the last 24 h. `AgentRequest { jobId, kind, status:
+pending | approved | declined | cleared, agent, owner, requester: UserSummary | null, question
+("Can I reply to Caden’s message here?"), summary ("Reply to Caden’s message on BAT-40"), project,
+target: { type, id, ref, title, path }, message: { replyId, body, path } | null, stage,
+suggestedChain, suggestedSource, createdAt, decidedAt, reason, modelOverride }`
+  (`suggestedChain`: what the owner's mappings would run). `POST
+/api/me/agent/requests/:jobId/approve { model?: { harness, model, effort } | null }`: the job runs;
+  `model` becomes its `modelOverride` (without it the mappings decide). `POST …/decline {
+reason? }` (≤ 500 characters): cancelled; the item's history gets
+  `task|issue.agent_request_declined` by the owner with the reason. `POST
+/api/me/agent/requests/bulk { jobIds (≤ 100), decision: approve | decline, reason? }` → `{ requests,
+skipped }` (settled or foreign ids are skipped). Settled requests answer 409 `conflict`; others' 404. A new request notifies the owner (`agent_request`, `entityType: agent_job`, url
+  `/agent/requests`; a mention-like type for notification preferences); anything that settles it
+  marks that notification read. An `auto` trigger about the same pending request approves it.
+- `GET /api/agent-requests?itemType=task|issue&itemId=` (anyone who can see the item) → `{ mine:
+AgentRequest[], waiting: [{ jobId, status: pending | declined, agent, owner, requester, summary,
+createdAt, decidedAt, reason }] }`: `mine` are the viewer's own agent's open requests there (inline
+  cards), `waiting` every open request and those declined in the last day ("waiting for Ethan's
+  OK"; the reason only for the requester and the owner). MCP `get_task` / `get_issue` add
+  `pendingAgentRequests: [{ agent, owner, requester, kind }]`; MCP `list_requests` lists the key
+  owner's requests (read only).
+- `GET /api/me/agent/model-options` → `{ harnesses: [{ id, online, machines, reported, models: [{
+id, label, efforts, online }], efforts }] }`: the union of what the owner's desktop apps seen in
+  the last 30 days report (`reported: false`: an older app that doesn't list models). Every model
+  picker offers these; `shared/modelOptions.ts` says whether a step can run there.
 - `GET /api/teams/:teamId/presence` also lists online runners: `runners: [{ agentUserId,
 machineName, running }]`. Projects have an optional `repoUrl` (`PATCH` the project).
 
@@ -389,6 +436,8 @@ Core tools: `whoami`, `search`,
 (deprecated), `add_reaction` and `remove_reaction`. Listener tools (documented additions, see
 "Agent jobs" below): `start_listener`, `complete_job`, `release_job`, `list_jobs`,
 `submit_catch_up`.
+"Agent jobs" below): `start_listener`, `complete_job`, `release_job`, `list_jobs`, and
+`list_requests` (agent access: the key owner's requests, read only).
 
 Conventions shared by every tool:
 

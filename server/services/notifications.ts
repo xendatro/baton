@@ -246,6 +246,22 @@ function itemOfTarget(tx: Tx, target: NotificationTarget): NotificationItemRef {
     }
     case 'project':
       return { ...none, projectId: target.entityId };
+    case 'agent_job': {
+      // A request to start the owner's agent (agent access): about the job's task or issue.
+      const row = tx
+        .select({
+          projectId: s.agentJob.projectId,
+          targetType: s.agentJob.targetType,
+          targetId: s.agentJob.targetId,
+        })
+        .from(s.agentJob)
+        .where(eq(s.agentJob.id, target.entityId))
+        .get();
+      if (!row) return none;
+      return row.targetType === 'task' || row.targetType === 'issue'
+        ? { type: row.targetType, id: row.targetId, projectId: row.projectId }
+        : { ...none, projectId: row.projectId };
+    }
     default:
       return none;
   }
@@ -504,6 +520,7 @@ const notificationProjectId = sql<string | null>`(case ${s.notification.entityTy
   when 'issue' then (select i.project_id from ${s.issue} i where i.id = ${s.notification.entityId})
   when 'reply' then (select r.project_id from ${s.reply} r where r.id = ${s.notification.entityId})
   when 'project' then ${s.notification.entityId}
+  when 'agent_job' then (select j.project_id from ${s.agentJob} j where j.id = ${s.notification.entityId})
   else null end)`;
 
 /** Notifications about a task or issue itself, or about one of its replies. */

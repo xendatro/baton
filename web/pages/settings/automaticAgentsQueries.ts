@@ -2,11 +2,15 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { z } from 'zod';
 import {
   agentStatsSchema,
+  jobOutputSchema,
   jobSourcesSchema,
+  modelFailuresSchema,
   modelMappingsSchema,
+  ownerJobsSchema,
   runnerSchema,
   type JobSources,
   type ModelMappings,
+  type OwnerJob,
 } from '@shared/schemas/agentRunner';
 import { api } from '@web/lib/api';
 import { queryKeys } from '@web/lib/queryKeys';
@@ -15,20 +19,8 @@ import { queryKeys } from '@web/lib/queryKeys';
 
 const enc = encodeURIComponent;
 
-const waitingJobSchema = z.object({
-  jobId: z.string(),
-  kind: z.string(),
-  createdAt: z.string(),
-  triggeredBy: z.string().nullable(),
-  project: z.object({ id: z.string(), ref: z.string(), name: z.string() }).nullable(),
-  target: z.object({
-    ref: z.string().nullable(),
-    title: z.string().nullable(),
-    url: z.string().nullable(),
-  }),
-  trigger: z.object({ body: z.string() }).nullable(),
-});
-export type WaitingJob = z.infer<typeof waitingJobSchema>;
+/** A job waiting on you: needs your OK, a stopped run, or cleared (BAT#22, BAT#29). */
+export type WaitingJob = OwnerJob;
 
 export function useRunners() {
   return useQuery({
@@ -47,7 +39,7 @@ export function useWaitingJobs() {
     queryKey: queryKeys.account.agentWaiting(),
     queryFn: ({ signal }) =>
       api.get('/api/me/agent/waiting', {
-        schema: z.object({ jobs: z.array(waitingJobSchema) }),
+        schema: ownerJobsSchema,
         signal,
       }),
     select: (data) => data.jobs,
@@ -60,6 +52,26 @@ export function useDecideWaitingJob() {
     mutationFn: ({ jobId, decision }: { jobId: string; decision: 'approve' | 'dismiss' }) =>
       api.post(`/api/me/agent/jobs/${enc(jobId)}/${decision}`),
     onSettled: () => queryClient.invalidateQueries({ queryKey: queryKeys.account.agentWaiting() }),
+  });
+}
+
+/** The stored output tail of a job's last run (BAT#23), loaded when `enabled` (a dialog opens). */
+export function useJobOutput(jobId: string, enabled: boolean) {
+  return useQuery({
+    queryKey: queryKeys.account.agentJobOutput(jobId),
+    queryFn: ({ signal }) =>
+      api.get(`/api/me/agent/jobs/${enc(jobId)}/output`, { schema: jobOutputSchema, signal }),
+    enabled,
+  });
+}
+
+/** The latest failed run per harness and model (BAT#23), shown next to chain entries. */
+export function useModelFailures() {
+  return useQuery({
+    queryKey: queryKeys.account.agentModelFailures(),
+    queryFn: ({ signal }) =>
+      api.get('/api/me/agent/model-failures', { schema: modelFailuresSchema, signal }),
+    select: (data) => data.failures,
   });
 }
 

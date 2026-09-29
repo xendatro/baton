@@ -18,12 +18,36 @@ function text(value: unknown): string | null {
   return null;
 }
 
+/**
+ * Adds a usage report. `tokensIn` counts all input (cache included) and `tokensOut` all output
+ * (reasoning included), like Codex's own `input_tokens` / `output_tokens`; the cache and reasoning
+ * counts break them down (BAT#25).
+ */
 function addUsage(result: RunResult, usage: unknown) {
   const value = (usage ?? {}) as Record<string, unknown>;
   result.tokensIn += num(value.input_tokens) + num(value.inputTokens) + num(value.prompt_tokens);
   result.tokensOut +=
     num(value.output_tokens) + num(value.outputTokens) + num(value.completion_tokens);
+  result.cacheReadTokens =
+    (result.cacheReadTokens ?? 0) +
+    num(value.cached_input_tokens) +
+    num(value.cache_read_input_tokens) +
+    num(value.cached);
+  result.reasoningTokens = (result.reasoningTokens ?? 0) + num(value.reasoning_output_tokens);
   result.costUsd += num(value.cost_usd) + num(value.cost);
+}
+
+/** opencode's `tokens { input, output, reasoning, cache: { read, write } }`: separate counts. */
+function addOpencodeUsage(result: RunResult, tokens: unknown) {
+  const value = (tokens ?? {}) as Record<string, unknown>;
+  const cache = (value.cache ?? {}) as Record<string, unknown>;
+  const read = num(cache.read);
+  const write = num(cache.write);
+  result.tokensIn += num(value.input) + read + write;
+  result.tokensOut += num(value.output) + num(value.reasoning);
+  result.cacheReadTokens = (result.cacheReadTokens ?? 0) + read;
+  result.cacheWriteTokens = (result.cacheWriteTokens ?? 0) + write;
+  result.reasoningTokens = (result.reasoningTokens ?? 0) + num(value.reasoning);
 }
 
 /** Codex: `codex exec --json -` (prompt on stdin), `codex exec resume <thread> …`. */
@@ -233,7 +257,12 @@ export const opencodeAdapter = cliAdapter({
       if (message) emit({ type: 'output', text: message });
     }
     if (event.type === 'step_finish' || part.type === 'step-finish') {
-      addUsage(result, (part.tokens as Record<string, unknown> | undefined) ?? event.tokens);
+      const tokens = (part.tokens as Record<string, unknown> | undefined) ?? event.tokens;
+      if (tokens && typeof tokens === 'object' && 'input' in tokens) {
+        addOpencodeUsage(result, tokens);
+      } else {
+        addUsage(result, tokens);
+      }
       result.costUsd += num(part.cost);
     }
   },

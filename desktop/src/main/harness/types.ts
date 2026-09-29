@@ -67,6 +67,13 @@ export interface RunResult {
   resetAt: number | null;
   /** Failed: the last error the harness printed. */
   error: string | null;
+  /** BAT#25: of `tokensIn`, read from and written to the prompt cache (when reported). */
+  cacheReadTokens?: number;
+  cacheWriteTokens?: number;
+  /** BAT#25: of `tokensOut`, reasoning tokens (when reported). */
+  reasoningTokens?: number;
+  /** BAT#25: the model the harness said it ran, when it said. */
+  model?: string | null;
 }
 
 export interface HarnessAdapter {

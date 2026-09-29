@@ -21,7 +21,7 @@ import { desktopBridge, elapsed, useDesktopState } from '@web/lib/desktop';
 import { useDocumentTitle } from '@web/lib/title';
 import { useDecideWaitingJob, useWaitingJobs } from '../settings/automaticAgentsQueries';
 import { useAgentSettings, useUpdateAgentSettings } from '../settings/queries';
-import { WaitingJobsList } from '../settings/WaitingJobs';
+import { WaitingJobGroups } from '../settings/WaitingJobs';
 import { DesktopOnly } from './common';
 
 /**
@@ -238,27 +238,30 @@ const STATE_TEXT: Record<string, string> = {
   finishing: 'Finishing',
 };
 
-/** Stopped jobs (and others waiting for your OK), right here: Run again or Trash. */
+/**
+ * Jobs waiting on you, right here (BAT#22): others' jobs that need your OK (Approve / Decline),
+ * your stopped runs with why they stopped (Retry / Trash), and those cleared because their task
+ * finished.
+ */
 function WaitingHere() {
   const waiting = useWaitingJobs();
   if (!waiting.data?.length) return null;
   return (
-    <section className="rounded-lg border bg-card px-4 py-2" aria-label="Waiting for your OK">
-      <h2 className="pt-1 text-sm font-medium">Waiting for your OK ({waiting.data.length})</h2>
-      <WaitingJobsList jobs={waiting.data} />
-    </section>
+    <div className="rounded-lg border bg-card px-4 py-3">
+      <WaitingJobGroups jobs={waiting.data} />
+    </div>
   );
 }
 
 function JobCard({ job }: { job: DesktopJob }) {
   const now = useNow();
   const decide = useDecideWaitingJob();
-  // After Kill the job waits for your OK; the toast offers to trash it straight away.
+  // After Kill the job waits under Stopped runs; the toast offers to trash it straight away.
   const kill = () =>
     desktopBridge()
       ?.kill(job.jobId)
       .then(() =>
-        toast.success('Stopped. It waits for your OK before running again.', {
+        toast.success('Stopped. It waits under Stopped runs until you retry it.', {
           action: {
             label: 'Trash it',
             onClick: () =>

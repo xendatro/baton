@@ -160,6 +160,8 @@ export function claudeAdapter(): HarnessAdapter {
           result.sessionId = sessionId;
           options.onEvent({ type: 'session', sessionId });
         }
+        // BAT#25: the model it actually runs (an alias like `opus` resolved).
+        if (event.type === 'system' && str(event.model)) result.model = str(event.model);
         if (event.type === 'assistant') {
           const content = (event.message as { content?: unknown } | undefined)?.content;
           for (const block of Array.isArray(content) ? content : []) {
@@ -181,7 +183,12 @@ export function claudeAdapter(): HarnessAdapter {
             num(usage.cache_creation_input_tokens) +
             num(usage.cache_read_input_tokens);
           result.tokensOut = num(usage.output_tokens);
+          result.cacheReadTokens = num(usage.cache_read_input_tokens);
+          result.cacheWriteTokens = num(usage.cache_creation_input_tokens);
           result.costUsd = num(event.total_cost_usd);
+          if (!result.model && event.modelUsage && typeof event.modelUsage === 'object') {
+            result.model = Object.keys(event.modelUsage)[0] ?? null;
+          }
           const message = str(event.result) ?? '';
           if (event.is_error === true) {
             lastError = message || str(event.subtype) || 'Claude Code reported an error';

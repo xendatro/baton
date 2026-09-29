@@ -121,7 +121,10 @@ export function cliAdapter(spec: CliSpec): HarnessAdapter {
             const error =
               str((event.error as { message?: unknown } | undefined)?.message) ??
               str(event.message);
-            if (event.type === 'error' && error) lastError = error;
+            // BAT#23: Codex reports a rejected model as `turn.failed { error: { message } }`.
+            if ((event.type === 'error' || event.type === 'turn.failed') && error) {
+              lastError = error;
+            }
             return;
           }
           if (stream === 'stderr') {

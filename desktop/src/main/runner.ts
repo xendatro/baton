@@ -2,10 +2,12 @@ import { EventEmitter } from 'node:events';
 import { runnableChain } from '@shared/agentChains';
 import type {
   ChainEntry,
+  FinishJobInput,
   HarnessId,
   HarnessInfo,
   JobBrief,
   JobUsage,
+  RunOutcome,
 } from '@shared/schemas/agentRunner';
 import { ApiError, type BatonApi, type RunnerJob } from './api';
 import type { HarnessAdapter, RunResult } from './harness/types';
@@ -25,6 +27,8 @@ import { DEFAULT_BACKOFF_MS } from './harness/usageLimits';
 const HEARTBEAT_MS = 30_000;
 const POLL_WAIT_S = 50;
 const OUTPUT_LINES = 400;
+/** Output lines reported to Baton when a job ends (BAT#23). */
+const REPORTED_OUTPUT_LINES = 200;
 
 export interface RunnerStore {
   machineId(): string;
@@ -283,24 +287,38 @@ export class Runner extends EventEmitter {
       const folder = job.project ? this.store.folderFor(job.project.id) : null;
       if (!folder) {
         entry.note = 'Needs a folder: map its project in Projects & folders.';
-        await this.api.finish(job.jobId, 'release', { usage: [], hold: true });
+        await this.api.finish(job.jobId, 'release', {
+          usage: [],
+          hold: true,
+          ...this.report(entry, 'no_folder'),
+        });
         return;
       }
       const outcome = await this.runChain(entry, brief, folder, usage);
       entry.state = 'finishing';
       this.changed();
+      // BAT#23: how it ended, its last error and the output's tail go to Baton with the usage.
+      const report = this.report(entry, outcome);
       if (this.cancelled.has(job.jobId)) {
         entry.note = 'Cancelled on Baton; stopped.';
-        await this.api.finish(job.jobId, 'release', { usage });
+        await this.api.finish(job.jobId, 'release', { usage, ...report });
       } else if (outcome === 'done') {
-        await this.api.finish(job.jobId, 'complete', { usage });
+        await this.api.finish(job.jobId, 'complete', { usage, ...report });
       } else {
-        await this.api.finish(job.jobId, 'release', { usage, hold: outcome !== 'out_of_usage' });
+        await this.api.finish(job.jobId, 'release', {
+          usage,
+          hold: outcome !== 'out_of_usage',
+          ...report,
+        });
       }
     } catch (error) {
       entry.note = error instanceof Error ? error.message : String(error);
       await this.api
-        .finish(job.jobId, 'release', { usage, hold: !this.cancelled.has(job.jobId) })
+        .finish(job.jobId, 'release', {
+          usage,
+          hold: !this.cancelled.has(job.jobId),
+          ...this.report(entry, 'error'),
+        })
         .catch(() => undefined);
     } finally {
       this.running.delete(job.jobId);
@@ -308,6 +326,21 @@ export class Runner extends EventEmitter {
       this.changed();
       this.emit('finished', { ...entry, controller: undefined });
     }
+  }
+
+  /**
+   * BAT#23: what Baton keeps of a run: how it ended, its last error (the note shown here) and the
+   * tail of its output (the server keeps the last 200 lines); the full log stays in the app.
+   */
+  private report(
+    entry: RunningJob,
+    outcome: RunOutcome,
+  ): Pick<FinishJobInput, 'outcome' | 'error' | 'output'> {
+    return {
+      outcome,
+      error: outcome === 'done' ? null : entry.note,
+      output: entry.output.slice(-REPORTED_OUTPUT_LINES).join('\n'),
+    };
   }
 
   /**
@@ -355,6 +388,12 @@ export class Runner extends EventEmitter {
           costUsd: result.costUsd,
           durationMs: result.durationMs,
           outcome: result.outcome,
+          // BAT#25 / BAT#23: the breakdown, the model it reported and its error.
+          reportedModel: result.model ?? '',
+          tokensCacheRead: result.cacheReadTokens ?? 0,
+          tokensCacheWrite: result.cacheWriteTokens ?? 0,
+          tokensReasoning: result.reasoningTokens ?? 0,
+          error: result.outcome === 'done' ? null : result.error,
         });
         if (result.sessionId) {
           await this.api

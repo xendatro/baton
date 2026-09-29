@@ -25,8 +25,10 @@ import {
   getJobSources,
   getModelMappings,
   jobBrief,
+  jobOutput,
   listRunners,
   listWaitingJobs,
+  modelFailures,
   nextRunnerJobs,
   pauseAgentEverywhere,
   registerRunner,
@@ -142,6 +144,16 @@ agentRunnerRoutes.post('/me/agent/jobs/:jobId/approve', jobParams, (c) =>
 
 agentRunnerRoutes.post('/me/agent/jobs/:jobId/dismiss', jobParams, (c) =>
   c.json(dismissWaitingJob(c.var.deps, requireActor(c), c.req.valid('param').jobId)),
+);
+
+/** BAT#23: the stored output tail of a job's last run. */
+agentRunnerRoutes.get('/me/agent/jobs/:jobId/output', jobParams, (c) =>
+  c.json(jobOutput(c.var.deps, requireActor(c), c.req.valid('param').jobId)),
+);
+
+/** BAT#23: the latest failed run per harness and model, for the chain editors. */
+agentRunnerRoutes.get('/me/agent/model-failures', (c) =>
+  c.json(modelFailures(c.var.deps, requireActor(c))),
 );
 
 agentRunnerRoutes.get('/me/agent/job-sources', (c) =>

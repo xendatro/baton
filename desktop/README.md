@@ -48,9 +48,10 @@ it has loaded, then quits (for checking the UI without clicking).
 - `src/main/runner.ts`: registers this machine as a runner, heartbeats every 30 s and long-polls
   `POST /api/agent/runners/:id/jobs/next` for jobs of the mapped projects. Each job: its brief
   (prompt, model chain, session to resume) → the chain's runnable steps (installed, not out of
-  usage) → the harness in the mapped folder → usage reported on completion. Out of usage moves to
-  the next step (and skips that harness until its reset); a killed or failed run goes back to you
-  under "Waiting for your OK".
+  usage) → the harness in the mapped folder → usage (tokens by kind, the model the harness
+  reported), the outcome, the last error and the output's last 200 lines reported when it ends.
+  Out of usage moves to the next step (and skips that harness until its reset); a killed or failed
+  run goes back to you under "Stopped runs".
 - `src/main/harness/`: one adapter per harness (`detect`, `listModels`, `run`), and the
   out-of-usage heuristics.
 - `src/main/main.ts`: the window loads the Baton server (default https://www.passthebaton.dev) in a

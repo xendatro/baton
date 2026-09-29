@@ -10,6 +10,7 @@ import {
   type HarnessId,
   type JobSourceMode,
 } from '@shared/schemas/agentRunner';
+import { MODEL_PRICES_AS_OF } from '@shared/modelPrices';
 import type { PrincipalRule } from '@shared/principals';
 import { EmptyState } from '@web/components/common/EmptyState';
 import { ErrorState } from '@web/components/common/ErrorState';
@@ -39,7 +40,7 @@ import {
   useWaitingJobs,
 } from './automaticAgentsQueries';
 import { ChainEditor } from './ChainEditor';
-import { WaitingJobsList } from './WaitingJobs';
+import { WaitingJobGroups } from './WaitingJobs';
 import { chainSummary } from './chainSummary';
 import { useAgentSettings, useUpdateAgentSettings } from './queries';
 import { SettingsCard, SettingsCardSkeleton, SettingsPage } from './SettingsCard';
@@ -181,10 +182,10 @@ function WaitingCard() {
   if (waiting.isPending || waiting.isError || waiting.data.length === 0) return null;
   return (
     <SettingsCard
-      title={`Waiting for your OK (${waiting.data.length})`}
-      description="Jobs you stopped, and jobs from people outside “Whose jobs run”. They only run when you say so."
+      title="Jobs waiting on you"
+      description="Jobs from people outside “Whose jobs run”, and your agent’s runs that failed or that you stopped. None of them runs until you say so."
     >
-      <WaitingJobsList jobs={waiting.data} />
+      <WaitingJobGroups jobs={waiting.data} />
     </SettingsCard>
   );
 }
@@ -237,7 +238,7 @@ function JobSourcesCard() {
   return (
     <SettingsCard
       title="Whose jobs run"
-      description="Jobs from anyone else wait under “Waiting for your OK” and never run by themselves."
+      description="Jobs from anyone else wait under “Needs your OK” and never run by themselves."
       footer={
         <div className="flex justify-end">
           <Button size="sm" onClick={submit} disabled={!dirty || save.isPending}>
@@ -412,10 +413,45 @@ function ProjectsWithModels({ projectIds }: { projectIds: string[] }) {
 
 const money = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' });
 const count = new Intl.NumberFormat('en-US');
+const compact = new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 });
 
 function duration(ms: number): string {
   const minutes = Math.round(ms / 60_000);
   return minutes < 60 ? `${minutes} min` : `${(minutes / 60).toFixed(1)} h`;
+}
+
+const COST_HELP = `Claude Code reports what each run cost. For harnesses that don’t (Codex, Gemini CLI, …) the cost is estimated from the tokens at API list prices (as of ${MODEL_PRICES_AS_OF}), marked “≈ … est.”. Runs on a subscription have no real per-token charge: the estimate is what the same work would cost through the API. Models without a known price show “—”.`;
+
+/**
+ * BAT#25: the reported cost, "≈ $12.40 est." when some of it is estimated, "—" when nothing in
+ * the row has a known price. `detail` explains what is missing.
+ */
+function costText(row: AgentUsageTotals): { text: string; detail: string | null } {
+  const total = row.costUsd + row.costEstimatedUsd;
+  const unpriced =
+    row.unpricedRuns > 0
+      ? `${pluralize(row.unpricedRuns, 'run')} of models without a known price not included`
+      : null;
+  if (total === 0 && row.unpricedRuns > 0) return { text: '—', detail: unpriced };
+  if (row.costEstimatedUsd > 0 || row.unpricedRuns > 0) {
+    return {
+      text: `≈ ${money.format(total)} est.`,
+      detail: [
+        row.costEstimatedUsd > 0
+          ? `${money.format(row.costEstimatedUsd)} estimated at API prices`
+          : null,
+        unpriced,
+      ]
+        .filter(Boolean)
+        .join('; '),
+    };
+  }
+  return { text: money.format(total), detail: null };
+}
+
+/** Uncached input: all input minus cache reads and writes. */
+function uncachedInput(row: AgentUsageTotals): number {
+  return Math.max(0, row.tokensIn - row.tokensCacheRead - row.tokensCacheWrite);
 }
 
 function StatsCard() {
@@ -425,7 +461,7 @@ function StatsCard() {
   return (
     <SettingsCard
       title="Stats"
-      description="What your agent’s runs cost, as reported by your desktop apps."
+      description="Tokens and cost of your agent’s runs, as reported by your desktop apps."
       action={
         <div className="flex items-center gap-2">
           <Label htmlFor={selectId} className="sr-only">
@@ -460,9 +496,15 @@ function StatsCard() {
             <Tile label="Jobs" value={count.format(stats.data.totals.jobs)} />
             <Tile
               label="Tokens"
-              value={count.format(stats.data.totals.tokensIn + stats.data.totals.tokensOut)}
+              value={compact.format(stats.data.totals.tokensIn + stats.data.totals.tokensOut)}
+              detail={`${count.format(stats.data.totals.tokensIn)} in (${count.format(stats.data.totals.tokensCacheRead)} from the cache), ${count.format(stats.data.totals.tokensOut)} out`}
             />
-            <Tile label="Cost" value={money.format(stats.data.totals.costUsd)} />
+            <Tile
+              label="Cost"
+              value={costText(stats.data.totals).text}
+              detail={costText(stats.data.totals).detail}
+              help={COST_HELP}
+            />
             <Tile label="Time" value={duration(stats.data.totals.durationMs)} />
           </dl>
           <StatsTable
@@ -493,14 +535,58 @@ function StatsCard() {
   );
 }
 
-function Tile({ label, value }: { label: string; value: string }) {
+function Tile({
+  label,
+  value,
+  detail = null,
+  help,
+}: {
+  label: string;
+  value: string;
+  detail?: string | null;
+  help?: string;
+}) {
   return (
     <div className="rounded-md border p-3">
-      <dt className="text-xs text-muted-foreground">{label}</dt>
-      <dd className="text-lg font-semibold tabular-nums">{value}</dd>
+      <dt className="flex items-center gap-1 text-xs text-muted-foreground">
+        {label}
+        {help ? <HelpTip topic={label}>{help}</HelpTip> : null}
+      </dt>
+      <dd className="text-lg font-semibold tabular-nums" title={detail ?? undefined}>
+        {value}
+      </dd>
     </div>
   );
 }
+
+/** A token count, compact ("20.1M") with the exact number on hover. */
+function Tokens({ value }: { value: number }) {
+  return <span title={count.format(value)}>{value === 0 ? '0' : compact.format(value)}</span>;
+}
+
+const TOKEN_COLUMNS: Array<{
+  label: string;
+  help: string;
+  value: (row: AgentUsageTotals) => number;
+}> = [
+  { label: 'Input', help: 'Input not read from the cache', value: uncachedInput },
+  {
+    label: 'Cache read',
+    help: 'Input read from the prompt cache (cheaper)',
+    value: (row) => row.tokensCacheRead,
+  },
+  {
+    label: 'Cache write',
+    help: 'Input written to the prompt cache',
+    value: (row) => row.tokensCacheWrite,
+  },
+  { label: 'Output', help: 'Output, reasoning included', value: (row) => row.tokensOut },
+  {
+    label: 'Reasoning',
+    help: 'Of the output, reasoning tokens (when the harness reports them)',
+    value: (row) => row.tokensReasoning,
+  },
+];
 
 function StatsTable({
   title,
@@ -520,23 +606,43 @@ function StatsTable({
           <tr className="border-b text-left text-xs text-muted-foreground">
             <th className="py-1 pr-2 font-medium">Name</th>
             <th className="py-1 pr-2 text-right font-medium">Jobs</th>
-            <th className="py-1 pr-2 text-right font-medium">Tokens</th>
-            <th className="py-1 pr-2 text-right font-medium">Cost</th>
+            {TOKEN_COLUMNS.map((column) => (
+              <th
+                key={column.label}
+                className="py-1 pr-2 text-right font-medium whitespace-nowrap"
+                title={column.help}
+              >
+                {column.label}
+              </th>
+            ))}
+            <th className="py-1 pr-2 text-right font-medium whitespace-nowrap" title={COST_HELP}>
+              Cost (est.)
+            </th>
             <th className="py-1 text-right font-medium">Time</th>
           </tr>
         </thead>
         <tbody>
-          {rows.map((row) => (
-            <tr key={row.name} className="border-b last:border-b-0">
-              <td className="py-1 pr-2">{row.name}</td>
-              <td className="py-1 pr-2 text-right tabular-nums">{count.format(row.jobs)}</td>
-              <td className="py-1 pr-2 text-right tabular-nums">
-                {count.format(row.tokensIn + row.tokensOut)}
-              </td>
-              <td className="py-1 pr-2 text-right tabular-nums">{money.format(row.costUsd)}</td>
-              <td className="py-1 text-right tabular-nums">{duration(row.durationMs)}</td>
-            </tr>
-          ))}
+          {rows.map((row) => {
+            const cost = costText(row);
+            return (
+              <tr key={row.name} className="border-b last:border-b-0">
+                <td className="py-1 pr-2">{row.name}</td>
+                <td className="py-1 pr-2 text-right tabular-nums">{count.format(row.jobs)}</td>
+                {TOKEN_COLUMNS.map((column) => (
+                  <td key={column.label} className="py-1 pr-2 text-right tabular-nums">
+                    <Tokens value={column.value(row)} />
+                  </td>
+                ))}
+                <td
+                  className="py-1 pr-2 text-right whitespace-nowrap tabular-nums"
+                  title={cost.detail ?? undefined}
+                >
+                  {cost.text}
+                </td>
+                <td className="py-1 text-right tabular-nums">{duration(row.durationMs)}</td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>

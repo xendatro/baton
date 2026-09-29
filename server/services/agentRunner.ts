@@ -1,16 +1,22 @@
-import { and, asc, desc, eq, gte, isNull } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, inArray, isNull, or } from 'drizzle-orm';
 import { AGENT_LISTENER, PRIORITIES } from '@shared/constants';
 import { resolveChain } from '@shared/agentChains';
+import { canonicalModel, estimateCost } from '@shared/modelPrices';
 import {
   AGENT_RUNNER_LIMITS,
+  CLEARED_JOBS_SHOWN_MS,
   DEFAULT_CHAIN,
   type AgentStats,
   type AgentUsageTotals,
   type FinishJobInput,
   type HarnessSessionInput,
   type JobBrief,
+  type JobOutput,
+  type JobRun,
   type JobSources,
+  type ModelFailure,
   type ModelMappings,
+  type OwnerJob,
   type RegisterRunnerInput,
   type Runner,
   type RunnerHeartbeatInput,
@@ -26,6 +32,7 @@ import { newId } from '../lib/ids';
 import { canViewProject, getProjectAccess } from './access';
 import {
   cancelledJobIds,
+  clearSettledJobs,
   completeJob,
   jobChanged,
   jobContexts,
@@ -309,23 +316,91 @@ export function listRunners(deps: AppDeps, actor: Actor): { runners: Runner[] } 
 // Waiting for the owner's OK
 // ---------------------------------------------------------------------------------------------
 
-/** Jobs of the owner's agent caused by people outside their job sources. */
-export function listWaitingJobs(deps: AppDeps, actor: Actor): { jobs: AgentJobContext[] } {
+/** The last run of each job (BAT#23): its outcome and error, with the harness and model. */
+function jobRuns(db: DbExecutor, rows: readonly JobRow[]): Map<string, JobRun> {
+  const runs = new Map<string, JobRun>();
+  const ran = rows.filter((row) => row.runOutcome && row.runEndedAt);
+  if (ran.length === 0) return runs;
+  const usage = db
+    .select({
+      jobId: s.agentUsage.jobId,
+      harness: s.agentUsage.harness,
+      model: s.agentUsage.model,
+      reportedModel: s.agentUsage.reportedModel,
+    })
+    .from(s.agentUsage)
+    .where(
+      inArray(
+        s.agentUsage.jobId,
+        ran.map((row) => row.id),
+      ),
+    )
+    .orderBy(asc(s.agentUsage.createdAt), asc(s.agentUsage.id))
+    .all();
+  const last = new Map(usage.map((row) => [row.jobId, row]));
+  for (const row of ran) {
+    const entry = last.get(row.id);
+    runs.set(row.id, {
+      outcome: row.runOutcome ?? 'failed',
+      error: row.runError,
+      harness: entry?.harness ?? null,
+      model: entry ? entry.reportedModel || entry.model || null : null,
+      endedAt: (row.runEndedAt ?? row.createdAt).toISOString(),
+      hasOutput: Boolean(row.runOutput),
+    });
+  }
+  return runs;
+}
+
+/**
+ * `GET /api/me/agent/waiting`: the owner's jobs that wait on them (BAT#22) — jobs from people
+ * outside their job sources (`needs_ok`) and their own runs that failed or were killed
+ * (`stopped`) — plus those cleared in the last day because their item finished (BAT#29).
+ */
+export function listWaitingJobs(deps: AppDeps, actor: Actor): { jobs: OwnerJob[] } {
   const owner = requireOwner(deps, actor);
   if (!owner.agentId) return { jobs: [] };
-  const rows = deps.db.orm
+  const { orm } = deps.db;
+  const rows = orm
     .select()
     .from(s.agentJob)
     .where(
       and(
         eq(s.agentJob.agentUserId, owner.agentId),
-        eq(s.agentJob.status, 'pending'),
-        eq(s.agentJob.needsOk, true),
+        or(
+          and(eq(s.agentJob.status, 'pending'), eq(s.agentJob.needsOk, true)),
+          gte(s.agentJob.clearedAt, new Date(Date.now() - CLEARED_JOBS_SHOWN_MS)),
+        ),
       ),
     )
-    .orderBy(asc(s.agentJob.createdAt))
+    .orderBy(asc(s.agentJob.createdAt), asc(s.agentJob.id))
     .all();
-  return { jobs: jobContexts(deps, rows) };
+  const contexts = jobContexts(deps, rows);
+  const runs = jobRuns(orm, rows);
+  return {
+    jobs: rows.map((row, index) => {
+      const context = contexts[index] as AgentJobContext;
+      return {
+        jobId: row.id,
+        kind: row.kind,
+        status: row.status,
+        createdAt: context.createdAt,
+        triggeredBy: context.triggeredBy,
+        needsOk: row.needsOk,
+        project: context.project,
+        target: {
+          ref: context.target.ref,
+          title: context.target.title,
+          url: context.target.url,
+        },
+        trigger: context.trigger ? { body: context.trigger.body } : null,
+        group: row.clearedAt ? 'cleared' : row.heldAt ? 'stopped' : 'needs_ok',
+        run: runs.get(row.id) ?? null,
+        clearedAt: row.clearedAt?.toISOString() ?? null,
+        clearedReason: row.clearedReason ?? null,
+      };
+    }),
+  };
 }
 
 function requireOwnersJob(deps: AppDeps, owner: Owner, jobId: string): JobRow {
@@ -334,20 +409,40 @@ function requireOwnersJob(deps: AppDeps, owner: Owner, jobId: string): JobRow {
   return job;
 }
 
-/** Run: the job goes to the owner's runners like any other. */
+/**
+ * `GET /api/me/agent/jobs/:jobId/output` (BAT#23): the tail of the job's last run as the desktop
+ * app reported it, with its outcome and error. The full log stays on that computer.
+ */
+export function jobOutput(deps: AppDeps, actor: Actor, jobId: string): JobOutput {
+  const owner = requireOwner(deps, actor);
+  const job = requireOwnersJob(deps, owner, jobId);
+  return {
+    jobId: job.id,
+    run: jobRuns(deps.db.orm, [job]).get(job.id) ?? null,
+    output: job.runOutput ?? '',
+  };
+}
+
+/**
+ * Approve (someone else's job) or Retry (a stopped run): the job goes to the owner's runners like
+ * any other.
+ */
 export function approveWaitingJob(deps: AppDeps, actor: Actor, jobId: string): AgentJobContext {
   const owner = requireOwner(deps, actor);
   const job = requireOwnersJob(deps, owner, jobId);
   if (job.needsOk && job.status === 'pending') {
     deps.db.write((tx) => {
-      tx.update(s.agentJob).set({ needsOk: false }).where(eq(s.agentJob.id, job.id)).run();
+      tx.update(s.agentJob)
+        .set({ needsOk: false, heldAt: null })
+        .where(eq(s.agentJob.id, job.id))
+        .run();
       jobChanged(tx, job, owner.ownerId);
     });
   }
   return jobContexts(deps, [requireOwnersJob(deps, owner, jobId)])[0] as AgentJobContext;
 }
 
-/** Dismiss: the job is cancelled. */
+/** Decline (someone else's job) or Trash (a stopped run): the job is cancelled. */
 export function dismissWaitingJob(deps: AppDeps, actor: Actor, jobId: string): AgentJobContext {
   const owner = requireOwner(deps, actor);
   const job = requireOwnersJob(deps, owner, jobId);
@@ -843,7 +938,7 @@ export function recordUsage(
   job: JobRow,
   input: FinishJobInput,
 ) {
-  const usage = finishJobInputSchema.parse(input).usage;
+  const { usage } = finishJobInputSchema.parse(input);
   if (usage.length === 0) return;
   const { orm } = deps.db;
   const item = jobItem(orm, job);
@@ -865,7 +960,8 @@ export function recordUsage(
     : undefined;
   const now = new Date();
   deps.db.write((tx) => {
-    for (const entry of usage) {
+    // One row per harness run, in the order they ran (a millisecond apart).
+    for (const [index, entry] of usage.entries()) {
       tx.insert(s.agentUsage)
         .values({
           id: newId(),
@@ -876,13 +972,18 @@ export function recordUsage(
           difficulty: level?.name ?? null,
           harness: entry.harness,
           model: entry.model,
+          reportedModel: entry.reportedModel,
           effort: entry.effort,
           tokensIn: entry.tokensIn,
           tokensOut: entry.tokensOut,
+          tokensCacheRead: entry.tokensCacheRead,
+          tokensCacheWrite: entry.tokensCacheWrite,
+          tokensReasoning: entry.tokensReasoning,
           costMicros: Math.round(entry.costUsd * 1_000_000),
           durationMs: entry.durationMs,
           outcome: entry.outcome,
-          createdAt: now,
+          error: entry.error,
+          createdAt: new Date(now.getTime() + index),
         })
         .run();
     }
@@ -906,7 +1007,8 @@ export function recordJobUsage(
 /**
  * `POST /api/agent/jobs/:jobId/complete|release` from the app: records what each harness run
  * cost, then completes or releases the job like `complete_job` / `release_job` when it is still
- * claimed. `hold` puts a released job under "Waiting for your OK" (killed or failed runs).
+ * claimed. `hold` puts a released job under "Stopped runs" for the owner (killed or failed runs).
+ * How the run ended, its last error and the tail of its output are kept on the job (BAT#23).
  */
 export function finishJob(
   deps: AppDeps,
@@ -918,7 +1020,19 @@ export function finishJob(
   const agent = requireKeyAgent(actor);
   const job = deps.db.orm.select().from(s.agentJob).where(eq(s.agentJob.id, jobId)).get();
   if (!job || job.agentUserId !== agent.id) throw errors.notFound('Job');
+  const parsed = finishJobInputSchema.parse(input);
   recordUsage(deps, agent, job, input);
+  const lastRun = parsed.usage.at(-1);
+  deps.db.orm
+    .update(s.agentJob)
+    .set({
+      runOutcome: parsed.outcome ?? lastRun?.outcome ?? (mode === 'complete' ? 'done' : 'released'),
+      runError: parsed.error ?? lastRun?.error ?? null,
+      runOutput: parsed.output ?? null,
+      runEndedAt: new Date(),
+    })
+    .where(eq(s.agentJob.id, job.id))
+    .run();
   // The agent usually completes or releases the job itself (complete_job / release_job): only a
   // job still claimed is finished here.
   if (job.status !== 'claimed') return jobContexts(deps, [job])[0] as AgentJobContext;
@@ -928,8 +1042,14 @@ export function finishJob(
   const released = releaseJob(deps, actor, { jobId });
   if (!input.hold) return released;
   deps.db.write((tx) => {
-    tx.update(s.agentJob).set({ needsOk: true }).where(eq(s.agentJob.id, job.id)).run();
+    tx.update(s.agentJob)
+      .set({ needsOk: true, heldAt: new Date() })
+      .where(eq(s.agentJob.id, job.id))
+      .run();
     jobChanged(tx, job, agent.ownerId);
+    // BAT#29: the task may have finished while it ran (the agent moved it on, then failed).
+    const item = jobItem(tx, job);
+    if (item) clearSettledJobs(tx, { type: item.type, id: item.id });
   });
   return jobContexts(deps, [
     deps.db.orm.select().from(s.agentJob).where(eq(s.agentJob.id, job.id)).get() ?? job,
@@ -941,10 +1061,33 @@ export function finishJob(
 // ---------------------------------------------------------------------------------------------
 
 function emptyTotals(): AgentUsageTotals {
-  return { jobs: 0, tokensIn: 0, tokensOut: 0, costUsd: 0, durationMs: 0 };
+  return {
+    jobs: 0,
+    tokensIn: 0,
+    tokensOut: 0,
+    tokensCacheRead: 0,
+    tokensCacheWrite: 0,
+    tokensReasoning: 0,
+    costUsd: 0,
+    costEstimatedUsd: 0,
+    unpricedRuns: 0,
+    durationMs: 0,
+  };
 }
 
-/** `GET /api/me/agent/stats?days=`: the owner's agent usage per day, harness, model, level. */
+type UsageRow = typeof s.agentUsage.$inferSelect;
+
+/** The model a run used: what the harness reported, else the chain's (BAT#25). */
+function runModel(row: Pick<UsageRow, 'model' | 'reportedModel'>): string {
+  return canonicalModel(row.reportedModel || row.model);
+}
+
+/**
+ * `GET /api/me/agent/stats?days=`: the owner's agent usage per day, harness, model, level. Costs:
+ * what the harness reported, else an estimate at API prices (`shared/modelPrices.ts`, BAT#25);
+ * runs of models without a known price count in `unpricedRuns`. Models are grouped by their
+ * canonical id, so one model written several ways is one row.
+ */
 export function agentStats(deps: AppDeps, actor: Actor, days: number): AgentStats {
   const owner = requireOwner(deps, actor);
   const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
@@ -966,11 +1109,8 @@ export function agentStats(deps: AppDeps, actor: Actor, days: number): AgentStat
     model: new Map<string, Set<string>>(),
     difficulty: new Map<string, Set<string>>(),
   };
-  const add = (
-    target: AgentUsageTotals,
-    seen: Set<string>,
-    row: typeof s.agentUsage.$inferSelect,
-  ) => {
+  const estimates = new Map<string, number | null>();
+  const add = (target: AgentUsageTotals, seen: Set<string>, row: UsageRow) => {
     const jobKey = row.jobId ?? row.id;
     if (!seen.has(jobKey)) {
       seen.add(jobKey);
@@ -978,8 +1118,18 @@ export function agentStats(deps: AppDeps, actor: Actor, days: number): AgentStat
     }
     target.tokensIn += row.tokensIn;
     target.tokensOut += row.tokensOut;
-    target.costUsd += row.costMicros / 1_000_000;
+    target.tokensCacheRead += row.tokensCacheRead;
+    target.tokensCacheWrite += row.tokensCacheWrite;
+    target.tokensReasoning += row.tokensReasoning;
     target.durationMs += row.durationMs;
+    if (row.costMicros > 0) {
+      target.costUsd += row.costMicros / 1_000_000;
+      return;
+    }
+    if (!estimates.has(row.id)) estimates.set(row.id, estimateCost(runModel(row), row));
+    const estimate = estimates.get(row.id) ?? null;
+    if (estimate === null) target.unpricedRuns += 1;
+    else target.costEstimatedUsd += estimate;
   };
   const bucket = <T extends AgentUsageTotals>(
     map: Map<string, T>,
@@ -1004,11 +1154,12 @@ export function agentStats(deps: AppDeps, actor: Actor, days: number): AgentStat
     const day = row.createdAt.toISOString().slice(0, 10);
     add(...bucket(byDay, jobsSeen.day, day, emptyTotals), row);
     add(...bucket(byHarness, jobsSeen.harness, row.harness, emptyTotals), row);
+    const model = runModel(row);
     add(
-      ...bucket(byModel, jobsSeen.model, `${row.harness}\u0000${row.model}`, () => ({
+      ...bucket(byModel, jobsSeen.model, `${row.harness}\u0000${model}`, () => ({
         ...emptyTotals(),
         harness: row.harness,
-        model: row.model,
+        model,
       })),
       row,
     );
@@ -1025,6 +1176,50 @@ export function agentStats(deps: AppDeps, actor: Actor, days: number): AgentStat
     byModel: sorted(byModel).map(([, value]) => value),
     byDifficulty: sorted(byDifficulty).map(([difficulty, value]) => ({ difficulty, ...value })),
     byOutcome: sorted(byOutcome).map(([outcome, jobs]) => ({ outcome, jobs })),
+  };
+}
+
+/** How far back `modelFailures` looks. */
+const MODEL_FAILURES_DAYS = 30;
+
+/**
+ * `GET /api/me/agent/model-failures` (BAT#23): per harness and model as written in a chain
+ * (canonical), the error of its latest run when that run failed, so the chain editors can show
+ * "Last run failed: …" next to the entry (a model the harness rejects, say). Model lists are never
+ * hardcoded: this is what the harness itself said.
+ */
+export function modelFailures(deps: AppDeps, actor: Actor): { failures: ModelFailure[] } {
+  const owner = requireOwner(deps, actor);
+  const since = new Date(Date.now() - MODEL_FAILURES_DAYS * 24 * 60 * 60 * 1000);
+  const rows = deps.db.orm
+    .select({
+      harness: s.agentUsage.harness,
+      model: s.agentUsage.model,
+      outcome: s.agentUsage.outcome,
+      error: s.agentUsage.error,
+      createdAt: s.agentUsage.createdAt,
+    })
+    .from(s.agentUsage)
+    .where(and(eq(s.agentUsage.ownerId, owner.ownerId), gte(s.agentUsage.createdAt, since)))
+    .orderBy(desc(s.agentUsage.createdAt), desc(s.agentUsage.id))
+    .all();
+  const latest = new Map<string, (typeof rows)[number] & { canonical: string }>();
+  for (const row of rows) {
+    // Out of usage and kills say nothing about the model; the latest other run does.
+    if (row.outcome === 'out_of_usage' || row.outcome === 'killed') continue;
+    const canonical = canonicalModel(row.model);
+    const key = `${row.harness}\u0000${canonical}`;
+    if (!latest.has(key)) latest.set(key, { ...row, canonical });
+  }
+  return {
+    failures: [...latest.values()]
+      .filter((row) => row.outcome === 'failed' && row.error)
+      .map((row) => ({
+        harness: row.harness,
+        model: row.canonical,
+        error: row.error ?? '',
+        at: row.createdAt.toISOString(),
+      })),
   };
 }
 

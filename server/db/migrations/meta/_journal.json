@@ -155,6 +155,13 @@
       "when": 1790509918252,
       "tag": "0021_stage_allow_create",
       "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "6",
+      "when": 1790708150266,
+      "tag": "0022_agent_runs_usage_detail",
+      "breakpoints": true
     }
   ]
 }

@@ -240,11 +240,19 @@ lastSeenAt, online }, paused, pausedReason, waitingCount }`. One runner per (age
   chain); `resume` lists the harness sessions of that task on the runner's machine.
 - `PUT /api/agent/jobs/:jobId/session { runnerId, harness, sessionId }` stores the harness session
   a task's job ran in (per agent, task, machine and harness).
-- `POST /api/agent/jobs/:jobId/complete { usage: JobUsage[], agreeDone? }` and `…/release { usage }`
-  complete or release the job (release of a finished job returns it unchanged), recording usage
-  `{ harness, model, effort, tokensIn, tokensOut, costUsd, durationMs, outcome: done | released |
-killed | out_of_usage | failed | permission_denied }`. MCP `complete_job` / `release_job` take
-  the same optional `usage`.
+- `POST /api/agent/jobs/:jobId/complete { usage: JobUsage[], agreeDone?, outcome?, error?, output? }`
+  and `…/release { usage, hold?, outcome?, error?, output? }` complete or release the job (release
+  of a finished job returns it unchanged), recording usage per harness run `{ harness, model,
+reportedModel, effort, tokensIn, tokensOut, tokensCacheRead, tokensCacheWrite, tokensReasoning,
+costUsd, durationMs, outcome: done | released | killed | out_of_usage | failed | permission_denied,
+error }`. BAT#25: `tokensIn` is all input (cache reads and writes included), `tokensOut` all output
+  (reasoning included), `reportedModel` the model the harness said it ran, `costUsd` 0 when it
+  reported none; every new field has a default, so older apps still work. BAT#23: `outcome` (a
+  usage outcome, or `no_harness | no_folder | error`; default: the last usage entry's), `error`
+  (the last error line; 2 000 characters kept) and `output` (the output's tail: the last 200 lines
+  and 64 000 characters are kept, longer input is cut, never rejected) are stored on the job.
+  `hold: true` (a failed or killed run) puts a released job under Stopped runs. MCP
+  `complete_job` / `release_job` take the same optional `usage`.
 - Is your agent connected here? `GET /api/projects/:projectId/agent-connection?taskId=` (anyone
   who can see the project; the web session asks about the person's agent, a key about its own) →
   `{ agent: { id, username, name } | null, project: { id, ref, name, repoUrl }, paused,
@@ -260,9 +268,25 @@ taskInvolvesAgent? }`. `covered`: an online runner has the project in its `proje
   from it; `agent_job.changed` (runners registering, listeners starting, jobs) refreshes it.
 - Whose jobs run: `GET/PUT /api/me/agent/job-sources { mode: me | anyone | custom, rule }` (default
   `me`: jobs the owner or their agent caused; system jobs always run). Jobs caused by others get
-  `needsOk: true`: runners skip them until `POST /api/me/agent/jobs/:jobId/approve` (Run);
-  `…/dismiss` cancels. `GET /api/me/agent/waiting` → `{ jobs }`. Manual `start_listener` sessions
-  still get every job.
+  `needsOk: true`: runners skip them until `POST /api/me/agent/jobs/:jobId/approve` (Approve, or
+  Retry for a stopped run); `…/dismiss` cancels (Decline, or Trash). Manual `start_listener`
+  sessions still get every job.
+- Jobs waiting on the owner (BAT#22, BAT#29): `GET /api/me/agent/waiting` → `{ jobs: [{ jobId,
+kind, status, createdAt, triggeredBy, needsOk, project, target: { ref, title, url }, trigger:
+{ body } | null, group: needs_ok | stopped | cleared, run: { outcome, error, harness, model,
+endedAt, hasOutput } | null, clearedAt, clearedReason: finished | deleted | resolved | moved |
+unassigned | null }] }`, oldest first. `needs_ok`: caused by someone outside the job sources;
+  `stopped`: held by a runner after a failed or killed run; `cleared`: a held or waiting job whose
+  item no longer needs it (its task entered a stage that doesn't block dependents or was deleted,
+  its issue was resolved or deleted, the task left the stage the job was for, or an `assigned`
+  job's agent isn't assigned to the current stage any more). Those are cancelled when the change
+  happens (and by a 5-minute sweep), listed for 24 h, then no more. `GET
+/api/me/agent/jobs/:jobId/output` → `{ jobId, run, output }`: the stored tail of the job's last
+  run (the owner's jobs only, else 404); the full log stays on the computer.
+- `GET /api/me/agent/model-failures` → `{ failures: [{ harness, model, error, at }] }` (BAT#23):
+  per harness and chain model (canonical), the error of its latest run in 30 days when that run
+  failed (out-of-usage and killed runs don't count); the chain editors show it as "Last run
+  failed: …".
 - Model mappings: `GET/PUT /api/me/agent/models { default: { chain, levels: { levelName: chain } },
 projects: { projectId: { levels: { levelId: chain } } } }` (chains of up to 8 steps; project
   levels must be the project's; empty chains are dropped).
@@ -277,7 +301,12 @@ defaults: { notifications, agentNotifications, models } }` (null = "Use my defau
   project are filtered by the override: `mentions` keeps mentions and assignments, `none` keeps
   nothing, `all` drops the kinds switched off; agent sign-off requests always get through.
 - `GET /api/me/agent/stats?days=30` → `{ days, totals, byDay, byHarness, byModel, byDifficulty,
-byOutcome }` (jobs, tokens, cost, duration).
+byOutcome }`; each total is `{ jobs, tokensIn, tokensOut, tokensCacheRead, tokensCacheWrite,
+tokensReasoning, costUsd, costEstimatedUsd, unpricedRuns, durationMs }` (BAT#25). `costUsd` is what
+  the harnesses reported; runs without a reported cost are priced at API list prices
+  (`shared/modelPrices.ts`, dated) into `costEstimatedUsd`, or counted in `unpricedRuns` when their
+  model has no known price. `byModel` groups by harness and the model the harness reported (else
+  the chain's) as a canonical id: trimmed, lower-case, without a provider prefix, a date or `[1m]`.
 - `GET /api/teams/:teamId/presence` also lists online runners: `runners: [{ agentUserId,
 machineName, running }]`. Projects have an optional `repoUrl` (`PATCH` the project).
 

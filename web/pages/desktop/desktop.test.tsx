@@ -256,35 +256,77 @@ describe('desktop pages', () => {
     expect(screen.getByText('· Up to date')).toBeInTheDocument();
   });
 
-  it('lists stopped jobs on Running agents, with Run again and Trash', async () => {
+  it('splits jobs needing your OK from stopped runs on Running agents (BAT#22)', async () => {
     const user = userEvent.setup();
     const decisions: string[] = [];
+    const job = (jobId: string, ref: string, extra: Record<string, unknown>) => ({
+      jobId,
+      kind: 'mention',
+      status: 'pending',
+      createdAt: new Date().toISOString(),
+      triggeredBy: 'ethan',
+      needsOk: true,
+      project: { id: 'p1', ref: 'baton/BAT', name: 'Baton' },
+      target: { ref, title: 'Stage names', url: null },
+      trigger: { body: 'can you fill in the criteria' },
+      group: 'stopped',
+      run: null,
+      clearedAt: null,
+      clearedReason: null,
+      ...extra,
+    });
+    const decide = ({ url }: { url: URL }) => {
+      decisions.push(url.pathname);
+      return jsonResponse({ ok: true });
+    };
     mockApi({
       '/api/me': testMe(),
       '/api/me/agent/waiting': {
         jobs: [
-          {
-            jobId: 'job-9',
-            kind: 'mention',
-            createdAt: new Date().toISOString(),
-            triggeredBy: 'ethan',
-            project: { id: 'p1', ref: 'baton/BAT', name: 'Baton' },
-            target: { ref: 'baton/BAT-35', title: 'Stage names', url: null },
-            trigger: { body: 'can you fill in the criteria' },
-          },
+          job('job-9', 'baton/BAT-35', {
+            run: {
+              outcome: 'failed',
+              error: 'The luna model is not supported',
+              harness: 'codex',
+              model: 'luna',
+              endedAt: new Date().toISOString(),
+              hasOutput: true,
+            },
+          }),
+          job('job-10', 'baton/BAT-36', { group: 'needs_ok', triggeredBy: 'caden' }),
         ],
       },
-      'POST /api/me/agent/jobs/job-9/dismiss': ({ url }: { url: URL }) => {
-        decisions.push(url.pathname);
-        return jsonResponse({ ok: true });
+      '/api/me/agent/jobs/job-9/output': {
+        jobId: 'job-9',
+        run: null,
+        output: 'error: unsupported model',
       },
+      'POST /api/me/agent/jobs/job-9/dismiss': decide,
+      'POST /api/me/agent/jobs/job-10/approve': decide,
     });
     mockBridge();
     renderPage(<DesktopAgentsPage />);
-    const waiting = await screen.findByRole('region', { name: 'Waiting for your OK' });
-    expect(within(waiting).getByText(/BAT-35/)).toBeInTheDocument();
-    expect(within(waiting).getByRole('button', { name: 'Run again' })).toBeInTheDocument();
-    await user.click(within(waiting).getByRole('button', { name: 'Trash baton/BAT-35' }));
-    await waitFor(() => expect(decisions).toEqual(['/api/me/agent/jobs/job-9/dismiss']));
+    const stopped = await screen.findByRole('region', { name: 'Stopped runs' });
+    expect(within(stopped).getByText(/BAT-35/)).toBeInTheDocument();
+    expect(
+      within(stopped).getByText(/Failed: The luna model is not supported/),
+    ).toBeInTheDocument();
+    expect(within(stopped).getByRole('button', { name: 'Retry baton/BAT-35' })).toBeInTheDocument();
+    await user.click(within(stopped).getByRole('button', { name: 'Show output of baton/BAT-35' }));
+    expect(await screen.findByLabelText('Output')).toHaveTextContent('error: unsupported model');
+    await user.keyboard('{Escape}');
+    await user.click(within(stopped).getByRole('button', { name: 'Trash baton/BAT-35' }));
+
+    const needsOk = screen.getByRole('region', { name: 'Needs your OK' });
+    expect(
+      within(needsOk).getByRole('button', { name: 'Decline baton/BAT-36' }),
+    ).toBeInTheDocument();
+    await user.click(within(needsOk).getByRole('button', { name: 'Approve baton/BAT-36' }));
+    await waitFor(() =>
+      expect(decisions).toEqual([
+        '/api/me/agent/jobs/job-9/dismiss',
+        '/api/me/agent/jobs/job-10/approve',
+      ]),
+    );
   });
 });

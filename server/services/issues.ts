@@ -35,6 +35,7 @@ import {
   type Membership,
 } from './access';
 import { recordActivity } from './activity';
+import { clearSettledJobs } from './agentJobs';
 import { attachmentsByParent, attachToParent, referencedPendingUploads } from './attachments';
 import { emitAfterCommit } from './events';
 import { queueLinkedTaskEvents } from './linkEvents';
@@ -783,6 +784,8 @@ function setResolved(deps: AppDeps, actor: Actor, issueId: string, resolved: boo
       action: resolved ? 'issue.resolved' : 'issue.reopened',
       meta: meta(next, context),
     });
+    // BAT#29: its agent jobs held or waiting for the owner's OK are done with.
+    if (resolved) clearSettledJobs(tx, { type: 'issue', id: issue.id });
     notifyUsers(
       tx,
       actor,
@@ -839,6 +842,7 @@ export function deleteIssue(deps: AppDeps, actor: Actor, issueId: string): { ok:
       action: 'issue.deleted',
       meta: meta(issue, contextOf(access)),
     });
+    clearSettledJobs(tx, { type: 'issue', id: issue.id }, 'deleted');
     emitAfterCommit(tx, issueEvent('issue.deleted', issue, actor));
     queueLinkedTaskEvents(tx, actor, [issue.id]);
   });

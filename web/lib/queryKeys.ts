@@ -152,6 +152,10 @@ export const queryKeys = {
     /** Automatic agents (BAT-24): desktop runners, jobs waiting for your OK, settings, stats. */
     agentRunners: () => ['account', 'agent', 'runners'] as const,
     agentWaiting: () => ['account', 'agent', 'waiting'] as const,
+    /** The stored output tail of a job's last run (BAT#23), refreshed with the waiting jobs. */
+    agentJobOutput: (jobId: string) => ['account', 'agent', 'waiting', 'output', jobId] as const,
+    /** The latest failed run per harness and model, for the chain editors (BAT#23). */
+    agentModelFailures: () => ['account', 'agent', 'model-failures'] as const,
     agentJobSources: () => ['account', 'agent', 'job-sources'] as const,
     agentModels: () => ['account', 'agent', 'models'] as const,
     agentStats: (days: number) => ['account', 'agent', 'stats', days] as const,

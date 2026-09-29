@@ -209,9 +209,23 @@ manual fallback.
   90 s is swept like a listener session and its claimed jobs return to the queue. Runners count
   for presence; the Members tab shows them ("Ethan's desktop — 1 job").
 - **Whose jobs run.** `agent_job.triggered_by_id` records who caused a job. Jobs the owner (or
-  their agent, or the system) caused run by themselves; by default others wait in the app under
-  "Waiting for your OK" (`needs_ok`) until the owner says Run or Dismiss. The owner can widen it to
-  anyone or to a who-rule. Manual listeners still get every job.
+  their agent, or the system) caused run by themselves; by default others wait under "Needs your
+  OK" (`needs_ok`) until the owner says Approve or Decline. The owner can widen it to anyone or to
+  a who-rule. Manual listeners still get every job.
+- **Stopped runs (BAT#22, BAT#23).** A run that fails or that the owner kills is held
+  (`agent_job.held_at`) under "Stopped runs", apart from others' jobs, with why it stopped (the
+  harness's last error, killed by you, out of usage) and Retry / Trash. When a run ends the app
+  reports its outcome, its last error and the tail of its output (the last 200 lines, 64 KB) with
+  the usage; Baton keeps them on the job (`run_outcome`, `run_error`, `run_output`) so the web
+  shows them too ("Show output"), and each usage row keeps its run's error, so the chain editors
+  show "Last run failed: …" next to a model the harness rejected. The full log stays on the
+  computer.
+- **Cleared jobs (BAT#29).** A held or waiting job whose item no longer needs it — its task
+  finished (a stage that doesn't block dependents) or was deleted, its issue was resolved or
+  deleted, the task left the stage the job was for, or an `assigned` job's agent is no longer
+  assigned — is cancelled with `cleared_at` / `cleared_reason` when that happens (stage entry,
+  resolve, delete, a finished run, and a 5-minute sweep for the rest). It shows muted under
+  "Cleared — task finished" with only Open for 24 h, then drops out of the list.
 - **Difficulty and models.** Tasks have a difficulty level (per project, like labels), which
   belongs to the task in a stage like its assignments (BAT-28): each stage has an optional default
   difficulty for a task's first visit (none: it keeps the one it came with), returning to a stage
@@ -231,7 +245,12 @@ manual fallback.
   process per job; a follow-up job on the same task resumes the same harness thread.
 - **Usage.** Completing, releasing or killing a job reports each harness run's usage; the stats
   page sums it by day, harness, model, level and outcome. The global pause is the owner's agent
-  pause.
+  pause. BAT#25: usage separates input, cache reads, cache writes, output and reasoning tokens,
+  and records the model the harness reported (Claude Code's init event), falling back to the
+  chain's text; models are grouped by a canonical id. Costs are the harness's own when it reports
+  one (Claude Code); otherwise an estimated API cost from a dated price table in
+  `shared/modelPrices.ts` ("≈ $12.40 est.", with a tooltip: subscription usage has no real
+  per-token charge), and "—" for models without a known price.
 
 ## Waves
 

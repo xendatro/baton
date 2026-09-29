@@ -54,11 +54,12 @@ test('models, whose jobs run and a job waiting for my OK', async ({ page, browse
   await page.goto('/settings/automatic-agents');
   await expect(page.getByRole('heading', { name: 'Automatic agents' })).toBeVisible();
 
-  // The job waits for the owner's OK; Run clears it.
-  const waiting = page.getByRole('list', { name: 'Jobs waiting for your OK' });
+  // The job needs the owner's OK (BAT#22); Approve clears it.
+  const waiting = page.getByRole('region', { name: 'Needs your OK' });
   await expect(waiting.getByText('Wire the runner')).toBeVisible();
-  await waiting.getByRole('button', { name: 'Run again' }).click();
-  await expect(page.getByText('Your agent will run it')).toBeVisible();
+  await expect(waiting.getByRole('button', { name: /^Decline / })).toBeVisible();
+  await waiting.getByRole('button', { name: /^Approve / }).click();
+  await expect(page.getByText('Approved: your agent will run it')).toBeVisible();
   await expect(waiting).toBeHidden();
 
   // Whose jobs run: anyone.

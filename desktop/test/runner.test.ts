@@ -170,9 +170,11 @@ describe('runner', () => {
         args: [
           'job-1',
           'complete',
-          {
+          expect.objectContaining({
             usage: [expect.objectContaining({ harness: 'claude', model: 'opus', outcome: 'done' })],
-          },
+            outcome: 'done',
+            error: null,
+          }),
         ],
       },
     ]);
@@ -211,7 +213,20 @@ describe('runner', () => {
     await runner.runJob(job);
     expect(seen).toEqual([]);
     expect(calls).toEqual([
-      { call: 'finish', args: ['job-1', 'release', { usage: [], hold: true }] },
+      {
+        call: 'finish',
+        args: [
+          'job-1',
+          'release',
+          expect.objectContaining({
+            usage: [],
+            hold: true,
+            // BAT#23: why, for Stopped runs.
+            outcome: 'no_harness',
+            error: expect.stringContaining('None of this job’s harnesses are installed here'),
+          }),
+        ],
+      },
     ]);
   });
 
@@ -230,7 +245,11 @@ describe('runner', () => {
     const finish = calls.find((call) => call.call === 'finish');
     expect(finish?.args.slice(1)).toEqual([
       'release',
-      { usage: [expect.objectContaining({ outcome: 'killed' })], hold: true },
+      expect.objectContaining({
+        usage: [expect.objectContaining({ outcome: 'killed' })],
+        hold: true,
+        outcome: 'killed',
+      }),
     ]);
     expect(runner.snapshot().jobs).toEqual([]);
   });
@@ -257,7 +276,12 @@ describe('runner', () => {
     const finish = calls.find((call) => call.call === 'finish');
     expect(finish?.args.slice(1)).toEqual([
       'release',
-      { usage: [expect.objectContaining({ outcome: 'killed' })] },
+      {
+        usage: [expect.objectContaining({ outcome: 'killed' })],
+        outcome: 'killed',
+        error: null,
+        output: expect.stringContaining('cancelled on Baton'),
+      },
     ]);
     expect(runner.snapshot().jobs).toEqual([]);
   });
@@ -271,7 +295,14 @@ describe('runner', () => {
     await ready(runner);
     await runner.runJob(job);
     expect(calls).toEqual([
-      { call: 'finish', args: ['job-1', 'release', { usage: [], hold: true }] },
+      {
+        call: 'finish',
+        args: [
+          'job-1',
+          'release',
+          { usage: [], hold: true, outcome: 'no_folder', error: expect.any(String), output: '' },
+        ],
+      },
     ]);
   });
 });

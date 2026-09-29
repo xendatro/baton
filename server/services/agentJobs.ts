@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, isNotNull, isNull, lt, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNotNull, isNull, lt, or, sql, type SQL } from 'drizzle-orm';
 import {
   AGENT_LISTENER,
   type AgentJobKind,
@@ -12,7 +12,11 @@ import type {
   AgentJobSummary,
   AgentSession,
 } from '@shared/schemas/agentJobs';
-import { DEFAULT_JOB_SOURCES, type JobSources } from '@shared/schemas/agentRunner';
+import {
+  DEFAULT_JOB_SOURCES,
+  type ClearedReason,
+  type JobSources,
+} from '@shared/schemas/agentRunner';
 import type { Actor, AppDeps } from '../context';
 import type { DbExecutor, Tx } from '../db';
 import * as s from '../db/schema';
@@ -280,7 +284,9 @@ export function cancelJobs(
  * heartbeat reports them cancelled. Restoring the item doesn't bring them back.
  */
 export function cancelItemJobs(tx: Tx, item: { type: 'task' | 'issue'; id: string }): number {
-  let count = cancelJobs(tx, { targetType: item.type, targetId: item.id });
+  // Its held and waiting jobs show as cleared for a day rather than vanishing (BAT#29).
+  let count = clearSettledJobs(tx, item, 'deleted');
+  count += cancelJobs(tx, { targetType: item.type, targetId: item.id });
   const replies = tx
     .select({ id: s.reply.id })
     .from(s.reply)
@@ -288,6 +294,104 @@ export function cancelItemJobs(tx: Tx, item: { type: 'task' | 'issue'; id: strin
     .all();
   for (const reply of replies) count += cancelJobs(tx, { targetType: 'reply', targetId: reply.id });
   return count;
+}
+
+/**
+ * BAT#29: why a held or waiting job no longer needs doing, or null while it still does. Its task
+ * finished (entered a stage that doesn't block its dependents) or was deleted, its issue was
+ * resolved or deleted, the task left the stage the job was for, or (an `assigned` job) the agent
+ * isn't assigned to the task's current stage any more.
+ */
+function settledReason(db: DbExecutor, job: JobRow): ClearedReason | null {
+  const item = jobItem(db, job);
+  if (!item) return 'deleted';
+  if (item.type === 'issue') {
+    const issue = db
+      .select({ resolved: s.issue.resolved })
+      .from(s.issue)
+      .where(eq(s.issue.id, item.id))
+      .get();
+    return issue?.resolved ? 'resolved' : null;
+  }
+  const task = db
+    .select({ statusId: s.task.statusId, completedAt: s.task.completedAt })
+    .from(s.task)
+    .where(eq(s.task.id, item.id))
+    .get();
+  if (!task) return 'deleted';
+  if (task.completedAt) return 'finished';
+  const statusId = typeof job.payload.statusId === 'string' ? job.payload.statusId : null;
+  if (statusId && statusId !== task.statusId) return 'moved';
+  if (job.kind === 'assigned' && !statusId) {
+    const assigned = db
+      .select({ userId: s.taskAssigneeUser.userId })
+      .from(s.taskAssigneeUser)
+      .where(
+        and(
+          eq(s.taskAssigneeUser.taskId, item.id),
+          eq(s.taskAssigneeUser.statusId, task.statusId),
+          eq(s.taskAssigneeUser.userId, job.agentUserId),
+        ),
+      )
+      .get();
+    if (!assigned) return 'unassigned';
+  }
+  return null;
+}
+
+/**
+ * BAT#29: clears the held and waiting jobs (pending, waiting for the owner's OK) that no longer
+ * need doing — of one item (its replies' jobs included) or, without `item`, all of them (the
+ * sweep). They are cancelled and marked cleared, so the owner sees them for a day under "Cleared"
+ * instead of Retry or Approve buttons. `reason` forces the reason (the item is being deleted).
+ * Runs inside the caller's transaction; returns how many were cleared.
+ */
+export function clearSettledJobs(
+  tx: Tx,
+  item: { type: 'task' | 'issue'; id: string } | null,
+  reason: ClearedReason | null = null,
+): number {
+  let target: SQL | undefined;
+  if (item) {
+    const replyIds = tx
+      .select({ id: s.reply.id })
+      .from(s.reply)
+      .where(and(eq(s.reply.parentType, item.type), eq(s.reply.parentId, item.id)))
+      .all()
+      .map((row) => row.id);
+    target = or(
+      and(eq(s.agentJob.targetType, item.type), eq(s.agentJob.targetId, item.id)),
+      replyIds.length > 0
+        ? and(eq(s.agentJob.targetType, 'reply'), inArray(s.agentJob.targetId, replyIds))
+        : undefined,
+    );
+  }
+  const rows = tx
+    .select()
+    .from(s.agentJob)
+    .where(and(eq(s.agentJob.status, 'pending'), eq(s.agentJob.needsOk, true), target))
+    .all();
+  const now = new Date();
+  let cleared = 0;
+  for (const row of rows) {
+    const why = reason ?? settledReason(tx, row);
+    if (!why) continue;
+    tx.update(s.agentJob)
+      .set({ status: 'cancelled', completedAt: now, clearedAt: now, clearedReason: why })
+      .where(and(eq(s.agentJob.id, row.id), eq(s.agentJob.status, 'pending')))
+      .run();
+    const agent = agentRow(tx, row.agentUserId);
+    if (agent) jobChanged(tx, row, agent.ownerId);
+    cleared += 1;
+  }
+  return cleared;
+}
+
+/** The sweep of `clearSettledJobs` (every few minutes, jobs/agents.ts), for moves it missed. */
+export function sweepSettledJobs(deps: AppDeps): number {
+  const cleared = deps.db.write((tx) => clearSettledJobs(tx, null));
+  if (cleared > 0) deps.logger.info({ cleared }, 'held agent jobs of finished items cleared');
+  return cleared;
 }
 
 /** Of `jobIds`, those of the agent that were cancelled (a runner kills their harness, BAT-33). */

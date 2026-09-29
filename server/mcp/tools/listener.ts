@@ -20,8 +20,36 @@ const usageField = z
       harness: z.enum(HARNESS_IDS).describe('Harness that ran it'),
       model: z.string().max(100).optional().describe('Model (alias or id)'),
       effort: z.string().max(40).optional().describe('Effort level'),
-      tokensIn: z.number().int().nonnegative().optional().describe('Input tokens'),
-      tokensOut: z.number().int().nonnegative().optional().describe('Output tokens'),
+      tokensIn: z
+        .number()
+        .int()
+        .nonnegative()
+        .optional()
+        .describe('Input tokens, cache reads and writes included'),
+      tokensOut: z
+        .number()
+        .int()
+        .nonnegative()
+        .optional()
+        .describe('Output tokens, reasoning included'),
+      tokensCacheRead: z
+        .number()
+        .int()
+        .nonnegative()
+        .optional()
+        .describe('Of the input, tokens read from the prompt cache'),
+      tokensCacheWrite: z
+        .number()
+        .int()
+        .nonnegative()
+        .optional()
+        .describe('Of the input, tokens written to the prompt cache'),
+      tokensReasoning: z
+        .number()
+        .int()
+        .nonnegative()
+        .optional()
+        .describe('Of the output, reasoning tokens'),
       costUsd: z.number().nonnegative().optional().describe('Cost in US dollars'),
       durationMs: z.number().int().nonnegative().optional().describe('Run time in milliseconds'),
       outcome: z.enum(JOB_OUTCOMES).describe('How the run ended'),

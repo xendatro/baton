@@ -20,7 +20,23 @@ export const AGENT_RUNNER_LIMITS = {
   /** Replies included in a job brief. */
   briefReplies: 12,
   statsDays: 365,
+  /** A run's last error (BAT#23), in characters. */
+  error: 2_000,
+  /** The tail of a run's output kept on Baton (BAT#23): lines and characters. */
+  outputLines: 200,
+  outputChars: 64_000,
 } as const;
+
+/** The last `max` characters of `text` (whole, when it fits). */
+function tailOf(text: string, max: number): string {
+  return text.length <= max ? text : text.slice(text.length - max);
+}
+
+/** Trimmed, at most `max` characters (its end), or null when empty. */
+function lastError(value: string | null | undefined, max: number): string | null {
+  const text = value?.trim() ?? '';
+  return text ? tailOf(text, max) : null;
+}
 
 /** Harnesses with a headless mode the desktop app has adapters for. */
 export const HARNESS_IDS = ['claude', 'codex', 'gemini', 'cursor', 'opencode'] as const;
@@ -215,16 +231,49 @@ export const JOB_OUTCOMES = [
 ] as const;
 export type JobOutcome = (typeof JOB_OUTCOMES)[number];
 
-/** What a run cost, reported when a job completes, is released or killed. */
+/**
+ * How a job's run ended on the desktop app (BAT#23): a harness outcome, or `no_harness` (none of
+ * the chain's harnesses is installed there), `no_folder` (its project has no folder there) or
+ * `error` (the app itself failed).
+ */
+export const RUN_OUTCOMES = [...JOB_OUTCOMES, 'no_harness', 'no_folder', 'error'] as const;
+export type RunOutcome = (typeof RUN_OUTCOMES)[number];
+
+const tokenCount = z.number().int().nonnegative().default(0);
+
+/**
+ * What a run cost, reported when a job completes, is released or killed. `tokensIn` is all input
+ * (cache reads and writes included) and `tokensOut` all output (reasoning included); the cache and
+ * reasoning counts break them down (BAT#25; 0 from older apps).
+ */
 export const jobUsageSchema = z.object({
   harness: harnessIdSchema,
+  /** The chain's model (alias or id) as written; empty for the harness's default. */
   model: z.string().trim().max(AGENT_RUNNER_LIMITS.model).default(''),
+  /** The model the harness said it ran (e.g. Claude Code's init event), when it said. */
+  reportedModel: z
+    .string()
+    .default('')
+    .transform((value) => value.trim().slice(0, AGENT_RUNNER_LIMITS.model)),
   effort: z.string().trim().max(AGENT_RUNNER_LIMITS.effort).default(''),
-  tokensIn: z.number().int().nonnegative().default(0),
-  tokensOut: z.number().int().nonnegative().default(0),
+  tokensIn: tokenCount,
+  tokensOut: tokenCount,
+  /** Cached input read (Claude's cache_read_input_tokens, Codex's cached_input_tokens). */
+  tokensCacheRead: tokenCount,
+  /** Cache writes (Claude's cache_creation_input_tokens). */
+  tokensCacheWrite: tokenCount,
+  /** Reasoning output (Codex's reasoning_output_tokens), part of `tokensOut`. */
+  tokensReasoning: tokenCount,
+  /** What the harness reported it cost (0: it didn't, and the stats estimate it). */
   costUsd: z.number().nonnegative().default(0),
   durationMs: z.number().int().nonnegative().default(0),
   outcome: z.enum(JOB_OUTCOMES),
+  /** The last error the harness printed, when the run didn't finish (BAT#23). */
+  error: z
+    .string()
+    .nullable()
+    .default(null)
+    .transform((value) => lastError(value, AGENT_RUNNER_LIMITS.error)),
 });
 export type JobUsage = z.input<typeof jobUsageSchema>;
 
@@ -233,12 +282,116 @@ export const finishJobInputSchema = z.object({
   usage: z.array(jobUsageSchema).max(AGENT_RUNNER_LIMITS.chain).default([]),
   agreeDone: z.boolean().optional(),
   /**
-   * Release only: put it under "Waiting for your OK" instead of back in the queue (a killed or
-   * failed run), so the same runner doesn't take it again at once.
+   * Release only: put it under "Stopped runs" for the owner instead of back in the queue (a
+   * killed or failed run), so the same runner doesn't take it again at once.
    */
   hold: z.boolean().optional(),
+  /** How the run ended (BAT#23; from older apps it is taken from the last usage entry). */
+  outcome: z.enum(RUN_OUTCOMES).optional(),
+  /** The last error line, when it didn't finish. */
+  error: z
+    .string()
+    .nullable()
+    .optional()
+    .transform((value) => lastError(value, AGENT_RUNNER_LIMITS.error)),
+  /**
+   * The tail of the run's output: Baton keeps at most the last 200 lines and 64 000 characters.
+   * The full log stays on the computer.
+   */
+  output: z
+    .string()
+    .optional()
+    .transform((value) =>
+      value === undefined
+        ? undefined
+        : tailOf(
+            value.split(/\r?\n/).slice(-AGENT_RUNNER_LIMITS.outputLines).join('\n'),
+            AGENT_RUNNER_LIMITS.outputChars,
+          ),
+    ),
 });
 export type FinishJobInput = z.input<typeof finishJobInputSchema>;
+
+// ---------------------------------------------------------------------------------------------
+// The owner's jobs: needing their OK, stopped runs, cleared ones (BAT#22, BAT#29, BAT#23)
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * `needs_ok`: from someone outside "Whose jobs run" (Approve / Decline); `stopped`: the owner's
+ * own run that failed or was killed (Retry / Trash); `cleared`: either, whose item finished
+ * meanwhile, listed for a day and then dropped.
+ */
+export const OWNER_JOB_GROUPS = ['needs_ok', 'stopped', 'cleared'] as const;
+export type OwnerJobGroup = (typeof OWNER_JOB_GROUPS)[number];
+
+/**
+ * Why a job was cleared: its task finished (a stage that doesn't block dependents), was deleted,
+ * its issue was resolved, the task left the stage the job was for, or the agent isn't assigned
+ * any more.
+ */
+export const CLEARED_REASONS = ['finished', 'deleted', 'resolved', 'moved', 'unassigned'] as const;
+export type ClearedReason = (typeof CLEARED_REASONS)[number];
+
+/** Cleared jobs stay listed this long. */
+export const CLEARED_JOBS_SHOWN_MS = 24 * 60 * 60 * 1000;
+
+export const jobRunSchema = z.object({
+  outcome: z.string(),
+  error: z.string().nullable(),
+  harness: z.string().nullable(),
+  model: z.string().nullable(),
+  endedAt: timestampSchema,
+  /** An output tail is stored (`GET /api/me/agent/jobs/:jobId/output`). */
+  hasOutput: z.boolean(),
+});
+export type JobRun = z.infer<typeof jobRunSchema>;
+
+/** One entry of `GET /api/me/agent/waiting`. */
+export const ownerJobSchema = z.object({
+  jobId: z.string(),
+  kind: z.string(),
+  status: z.string(),
+  createdAt: z.string(),
+  triggeredBy: z.string().nullable(),
+  needsOk: z.boolean(),
+  project: z.object({ id: z.string(), ref: z.string(), name: z.string() }).nullable(),
+  target: z.object({
+    ref: z.string().nullable(),
+    title: z.string().nullable(),
+    url: z.string().nullable(),
+  }),
+  trigger: z.object({ body: z.string() }).nullable(),
+  group: z.enum(OWNER_JOB_GROUPS),
+  /** The last run (null before anything ran). */
+  run: jobRunSchema.nullable(),
+  clearedAt: timestampSchema.nullable(),
+  clearedReason: z.enum(CLEARED_REASONS).nullable(),
+});
+export type OwnerJob = z.infer<typeof ownerJobSchema>;
+
+export const ownerJobsSchema = z.object({ jobs: z.array(ownerJobSchema) });
+
+/** `GET /api/me/agent/jobs/:jobId/output`: the stored tail of the job's last run. */
+export const jobOutputSchema = z.object({
+  jobId: z.string(),
+  run: jobRunSchema.nullable(),
+  output: z.string(),
+});
+export type JobOutput = z.infer<typeof jobOutputSchema>;
+
+/**
+ * `GET /api/me/agent/model-failures`: per harness and model (as written in a chain), the error of
+ * its latest run when that run failed, shown next to the chain entry ("Last run failed: …").
+ */
+export const modelFailureSchema = z.object({
+  harness: z.string(),
+  /** `canonicalModel` of the chain's model ('' for the harness's default). */
+  model: z.string(),
+  error: z.string(),
+  at: timestampSchema,
+});
+export type ModelFailure = z.infer<typeof modelFailureSchema>;
+export const modelFailuresSchema = z.object({ failures: z.array(modelFailureSchema) });
 
 // ---------------------------------------------------------------------------------------------
 // Stats
@@ -248,12 +401,24 @@ export const agentStatsQuerySchema = z.object({
   days: z.coerce.number().int().min(1).max(AGENT_RUNNER_LIMITS.statsDays).default(30),
 });
 
+const count = z.number().int().nonnegative();
+
 const totalsSchema = z.object({
-  jobs: z.number().int().nonnegative(),
-  tokensIn: z.number().int().nonnegative(),
-  tokensOut: z.number().int().nonnegative(),
+  jobs: count,
+  /** All input tokens, cache reads and writes included (uncached input: the difference). */
+  tokensIn: count,
+  /** All output tokens, reasoning included. */
+  tokensOut: count,
+  tokensCacheRead: count,
+  tokensCacheWrite: count,
+  tokensReasoning: count,
+  /** What the harnesses reported the runs cost. */
   costUsd: z.number().nonnegative(),
-  durationMs: z.number().int().nonnegative(),
+  /** Estimated API cost of the runs without a reported cost (`shared/modelPrices.ts`). */
+  costEstimatedUsd: z.number().nonnegative(),
+  /** Runs with neither a reported cost nor a known price: not in either cost. */
+  unpricedRuns: count,
+  durationMs: count,
 });
 export type AgentUsageTotals = z.infer<typeof totalsSchema>;
 
@@ -263,6 +428,7 @@ export const agentStatsSchema = z.object({
   totals: totalsSchema,
   byDay: z.array(totalsSchema.extend({ day: z.string() })),
   byHarness: z.array(totalsSchema.extend({ harness: z.string() })),
+  /** The model the harness reported, else the chain's, as `canonicalModel` ('' = default). */
   byModel: z.array(totalsSchema.extend({ harness: z.string(), model: z.string() })),
   byDifficulty: z.array(totalsSchema.extend({ difficulty: z.string() })),
   byOutcome: z.array(z.object({ outcome: z.string(), jobs: z.number().int().nonnegative() })),

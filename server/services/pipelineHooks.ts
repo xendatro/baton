@@ -4,7 +4,7 @@ import type { StageRules } from '@shared/schemas/pipelines';
 import type { Actor } from '../context';
 import type { Tx } from '../db';
 import * as s from '../db/schema';
-import { cancelJobs, queueJobs, type QueueJobInput } from './agentJobs';
+import { cancelJobs, clearSettledJobs, queueJobs, type QueueJobInput } from './agentJobs';
 import { expandRule } from './principals';
 
 /**
@@ -52,6 +52,8 @@ export function onTaskEnteredStage(
   actor: Actor | null,
   details: StageEntryDetails,
 ): void {
+  // BAT#29: held and waiting jobs for the stage it left, or of a task now finished, are done with.
+  clearSettledJobs(tx, { type: 'task', id: task.id });
   const instructions = details.rules.instructions || undefined;
   const returned = details.returned ?? null;
   const jobs: QueueJobInput[] = [];

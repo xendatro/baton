@@ -57,6 +57,7 @@ import type {
 } from '../../shared/schemas/pipelines';
 import type { ReadmeSource } from '../../shared/schemas/github';
 import type {
+  ClearedReason,
   DefaultMapping,
   HarnessInfo,
   JobSources,
@@ -1226,7 +1227,7 @@ export const agentJob = sqliteTable(
     status: text('status', { enum: AGENT_JOB_STATUSES }).notNull().default('pending'),
     /**
      * Caused by someone outside the owner's job sources (BAT-24): the desktop app runs it only
-     * after the owner's OK ("Waiting for your OK"). Manual listeners still get it.
+     * after the owner's OK ("Needs your OK"). Manual listeners still get it.
      */
     needsOk: bool('needs_ok').notNull().default(false),
     /** The listener session holding a claimed job. */
@@ -1234,6 +1235,22 @@ export const agentJob = sqliteTable(
     createdAt: createdAtColumn(),
     claimedAt: timestamp('claimed_at'),
     completedAt: timestamp('completed_at'),
+    /**
+     * BAT#22: the desktop app held it after a failed or killed run ("Stopped runs"), as opposed to
+     * a job waiting for the owner's OK because someone else caused it. Cleared by Retry.
+     */
+    heldAt: timestamp('held_at'),
+    /** BAT#23: how the last run on a desktop app ended, its last error and its output's tail. */
+    runOutcome: text('run_outcome'),
+    runError: text('run_error'),
+    runOutput: text('run_output'),
+    runEndedAt: timestamp('run_ended_at'),
+    /**
+     * BAT#29: a held or waiting job whose item finished meanwhile (cancelled then): listed as
+     * "Cleared" for a day, then no more.
+     */
+    clearedAt: timestamp('cleared_at'),
+    clearedReason: text('cleared_reason').$type<ClearedReason>(),
   },
   (t) => [
     index('agent_job_agent_status_idx').on(t.agentUserId, t.status, t.createdAt),
@@ -1686,14 +1703,24 @@ export const agentUsage = sqliteTable(
     /** The task's level when it ran (name, kept if the level is renamed or deleted). */
     difficulty: text('difficulty'),
     harness: text('harness').notNull(),
+    /** The chain's model as written ('' = the harness's default). */
     model: text('model').notNull().default(''),
+    /** BAT#25: the model the harness said it ran ('' when it didn't say). */
+    reportedModel: text('reported_model').notNull().default(''),
     effort: text('effort').notNull().default(''),
+    /** All input, cache reads and writes included. */
     tokensIn: integer('tokens_in').notNull().default(0),
+    /** All output, reasoning included. */
     tokensOut: integer('tokens_out').notNull().default(0),
-    /** Micro-dollars (integer). */
+    tokensCacheRead: integer('tokens_cache_read').notNull().default(0),
+    tokensCacheWrite: integer('tokens_cache_write').notNull().default(0),
+    tokensReasoning: integer('tokens_reasoning').notNull().default(0),
+    /** Micro-dollars (integer), as the harness reported it (0: it didn't). */
     costMicros: integer('cost_micros').notNull().default(0),
     durationMs: integer('duration_ms').notNull().default(0),
     outcome: text('outcome').notNull(),
+    /** BAT#23: the run's last error, when it didn't finish. */
+    error: text('error'),
     createdAt: createdAtColumn(),
   },
   (t) => [

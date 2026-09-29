@@ -69,9 +69,9 @@ const run = async (permissionMode = 'auto', resumeId: string | null = null) => {
 describe.skipIf(process.platform === 'win32')('claude adapter', () => {
   it('runs claude -p with the model, effort, resume and the Baton MCP, and reads the result', async () => {
     fakeClaude(`
-console.log(JSON.stringify({ type: 'system', subtype: 'init', session_id: 'sess-42' }));
+console.log(JSON.stringify({ type: 'system', subtype: 'init', session_id: 'sess-42', model: 'claude-opus-4-6' }));
 console.log(JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'Working on it' }, { type: 'tool_use', name: 'Bash' }] } }));
-console.log(JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: 'Done.', session_id: 'sess-42', total_cost_usd: 0.12, usage: { input_tokens: 100, cache_read_input_tokens: 50, output_tokens: 20 } }));
+console.log(JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: 'Done.', session_id: 'sess-42', total_cost_usd: 0.12, usage: { input_tokens: 100, cache_read_input_tokens: 50, cache_creation_input_tokens: 10, output_tokens: 20 } }));
 `);
     const { result, events, call } = await run('auto', 'sess-41');
     expect(call.stdin).toBe('Do the job');
@@ -95,9 +95,13 @@ console.log(JSON.stringify({ type: 'result', subtype: 'success', is_error: false
     expect(result).toMatchObject({
       outcome: 'done',
       sessionId: 'sess-42',
-      tokensIn: 150,
+      tokensIn: 160,
       tokensOut: 20,
       costUsd: 0.12,
+      // BAT#25: the breakdown, and the model it resolved opus to.
+      cacheReadTokens: 50,
+      cacheWriteTokens: 10,
+      model: 'claude-opus-4-6',
     });
     expect(events).toEqual(
       expect.arrayContaining([

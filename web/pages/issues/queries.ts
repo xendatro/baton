@@ -14,12 +14,14 @@ import {
   type Issue,
   type IssueSort,
   type IssueState,
+  type IssueSummary,
   type LabelMatch,
   type UpdateIssueInput,
 } from '@shared/schemas/issues';
-import { taskSchema } from '@shared/schemas/tasks';
 import { api } from '@web/lib/api';
 import { queryKeys } from '@web/lib/queryKeys';
+import { runShellAction } from '@web/lib/shellActions';
+import { prefillFromIssue } from '@web/lib/taskPrefill';
 
 /**
  * Data hooks of the issues module (`/api/projects/:projectId/issues`, `/api/issues/:id`). Live
@@ -213,23 +215,33 @@ export function useRestoreIssue() {
 }
 
 /**
- * `POST /api/projects/:projectId/tasks/from-issue` (tasks module): creates a task from the issue
- * (title, a link back, labels) linked with kind `fixes`, and answers the new task.
+ * "Create task" on an issue (its page and its row's menu): opens the New task dialog prefilled
+ * from the issue (title, a link back plus its body), in the issue's project, linked as `fixes`
+ * (`relates` for those who may not resolve it). The dialog creates it through
+ * `POST /api/projects/:projectId/tasks/from-issue` with the chosen pipeline, stage and fields.
  */
-
-export function useCreateTaskFromIssue(issue: Issue) {
+export function useOpenCreateTaskFromIssue() {
   const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: () =>
-      api.post(
-        `/api/projects/${enc(issue.projectId)}/tasks/from-issue`,
-        { issueId: issue.id },
-        { schema: taskSchema },
-      ),
-    onSuccess: () =>
-      Promise.all([
-        queryClient.invalidateQueries({ queryKey: queryKeys.issues.all(issue.projectId) }),
-        queryClient.invalidateQueries({ queryKey: queryKeys.tasks.all(issue.projectId) }),
-      ]),
-  });
+  return async (issue: IssueSummary, kind: 'fixes' | 'relates') => {
+    const full = await queryClient.fetchQuery({
+      queryKey: queryKeys.issues.detail(issue.projectId, issue.number),
+      queryFn: ({ signal }) =>
+        api.get(`/api/projects/${enc(issue.projectId)}/issues/${issue.number}`, {
+          schema: issueSchema,
+          signal,
+        }),
+      staleTime: 10_000,
+    });
+    runShellAction('task.create', {
+      projectId: full.projectId,
+      prefill: prefillFromIssue({
+        id: full.id,
+        ref: full.ref,
+        title: full.title,
+        body: full.body,
+        path: full.path,
+        kind,
+      }),
+    });
+  };
 }

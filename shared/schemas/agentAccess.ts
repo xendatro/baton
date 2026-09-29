@@ -222,8 +222,8 @@ export type BulkAgentRequestsInput = z.infer<typeof bulkAgentRequestsInputSchema
 /**
  * `GET /api/agent-requests?itemType=&itemId=`: requests about one task or issue. `mine` are the
  * viewer's own agent's (full cards, for inline Approve / Decline); `waiting` is what anyone who
- * can see the item may know: whose agent waits for its owner's OK, or was declined (with the
- * reason, only for the requester and the owner).
+ * can see the item may know: whose agent waits for its owner's OK, was approved (and with which
+ * model), or was declined (with the reason, only for the requester and the owner).
  */
 export const itemAgentRequestsQuerySchema = z.object({
   itemType: z.enum(['task', 'issue']),
@@ -232,7 +232,12 @@ export const itemAgentRequestsQuerySchema = z.object({
 
 export const itemAgentRequestStatusSchema = z.object({
   jobId: z.string(),
-  status: z.enum(['pending', 'declined']),
+  /** `approved`: decided in the last day (the conversation's "Ethan approved (…)" line). */
+  status: z.enum(['pending', 'approved', 'declined']),
+  /** The message that asked (a reply of the item), so a conversation shows it right under it. */
+  replyId: z.string().nullable().default(null),
+  /** Approved: the model it runs with (the one chosen, else the owner's mapping). */
+  model: chainEntrySchema.nullable().default(null),
   agent: personSchema,
   owner: personSchema,
   requester: personSchema.nullable(),

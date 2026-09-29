@@ -1,4 +1,12 @@
-import { ArrowDownIcon, BotIcon, MessageCircleIcon, SparklesIcon, XIcon } from 'lucide-react';
+import {
+  ArrowDownIcon,
+  BotIcon,
+  ListChecksIcon,
+  ListPlusIcon,
+  MessageCircleIcon,
+  SparklesIcon,
+  XIcon,
+} from 'lucide-react';
 import {
   Fragment,
   useCallback,
@@ -10,6 +18,7 @@ import {
 } from 'react';
 import { CHAT_LIMITS, type ReplyParentType } from '@shared/constants';
 import type { Reply } from '@shared/schemas/core';
+import { ItemAgentRequests } from '@web/components/agentRequests/ItemAgentRequests';
 import { ErrorState } from '@web/components/common/ErrorState';
 import { Spinner } from '@web/components/common/Spinner';
 import { threadAgents, type ThreadWrite } from '@web/components/replies/threadAgents';
@@ -24,6 +33,7 @@ import { useMembers } from '@web/pages/teams/api';
 import { CatchUpPanel } from './CatchUpPanel';
 import { ChatComposer } from './ChatComposer';
 import { ChatMessage, type QuotedMessage } from './ChatMessage';
+import { useMakeTask } from './conversationItem';
 import { chatMessages, continuesGroup, typingText } from './chatLayout';
 import { useChatMessages, useTypingPing } from './queries';
 import { useTypingPeople } from './useTypingPeople';
@@ -54,6 +64,23 @@ export function ChatView({ parentType, parentId, teamId, projectId, item }: Chat
   const scroller = useRef<HTMLDivElement>(null);
   const [replyTo, setReplyTo] = useState<Reply | null>(null);
   const [catchUpOpen, setCatchUpOpen] = useState(false);
+  // "Select messages" (Make task from N messages); null when not selecting.
+  const [selected, setSelected] = useState<ReadonlySet<string> | null>(null);
+  const makeTask = useMakeTask();
+  const toggleSelected = useCallback((replyId: string) => {
+    setSelected((current) => {
+      const next = new Set(current ?? []);
+      if (next.has(replyId)) next.delete(replyId);
+      else next.add(replyId);
+      return next;
+    });
+  }, []);
+  const makeTaskFromOne = useCallback(
+    (message: Reply) => {
+      makeTask?.([message]);
+    },
+    [makeTask],
+  );
   const [stripHidden, setStripHidden] = useState(false);
   const [atBottom, setAtBottom] = useState(true);
   const [unseen, setUnseen] = useState(0);
@@ -235,6 +262,10 @@ export function ChatView({ parentType, parentId, teamId, projectId, item }: Chat
                   link={`${window.location.origin}${item.path}#reply-${message.id}`}
                   onReply={setReplyTo}
                   onJumpTo={jumpTo}
+                  onMakeTask={makeTask ? makeTaskFromOne : undefined}
+                  selecting={selected !== null}
+                  selected={selected?.has(message.id) ?? false}
+                  onToggleSelected={toggleSelected}
                 />
               </li>
             </Fragment>
@@ -256,10 +287,23 @@ export function ChatView({ parentType, parentId, teamId, projectId, item }: Chat
             </span>
           ) : null}
         </h2>
-        <Button variant="ghost" size="sm" onClick={() => setCatchUpOpen(true)}>
-          <SparklesIcon aria-hidden="true" />
-          Catch up
-        </Button>
+        <div className="flex items-center gap-1">
+          {makeTask && messages.length > 0 ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              aria-pressed={selected !== null}
+              onClick={() => setSelected((current) => (current ? null : new Set()))}
+            >
+              <ListChecksIcon aria-hidden="true" />
+              {selected ? 'Done selecting' : 'Select messages'}
+            </Button>
+          ) : null}
+          <Button variant="ghost" size="sm" onClick={() => setCatchUpOpen(true)}>
+            <SparklesIcon aria-hidden="true" />
+            Catch up
+          </Button>
+        </div>
       </div>
       {showStrip && unread ? (
         <div
@@ -326,6 +370,36 @@ export function ChatView({ parentType, parentId, teamId, projectId, item }: Chat
           </span>
         ))}
       </div>
+      {/* Requests no message made (an @mention in the description, an assignment). */}
+      <ItemAgentRequests item={{ type: parentType, id: parentId }} replyId={null} />
+      {selected && makeTask ? (
+        <div
+          className="flex flex-wrap items-center gap-2 rounded-md border bg-muted/40 px-3 py-2 text-sm"
+          data-testid="chat-selection"
+        >
+          <span className="flex-1" aria-live="polite">
+            {selected.size === 0
+              ? 'Select the messages to make a task from.'
+              : `${pluralize(selected.size, 'message')} selected`}
+          </span>
+          <Button
+            size="sm"
+            disabled={selected.size === 0}
+            onClick={() => {
+              makeTask(messages.filter((message) => selected.has(message.id)));
+              setSelected(null);
+            }}
+          >
+            <ListPlusIcon aria-hidden="true" />
+            {selected.size > 1
+              ? `Make task from ${selected.size} messages`
+              : 'Make task from this message'}
+          </Button>
+          <Button size="sm" variant="ghost" onClick={() => setSelected(null)}>
+            Cancel
+          </Button>
+        </div>
+      ) : null}
       <ChatComposer
         parentType={parentType}
         parentId={parentId}

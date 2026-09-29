@@ -1,6 +1,6 @@
 import { BellIcon, BellOffIcon, KanbanSquareIcon, PlusIcon, SettingsIcon } from 'lucide-react';
-import type { ReactNode } from 'react';
-import { Link, useNavigate } from 'react-router';
+import { useState, type ReactNode } from 'react';
+import { Link } from 'react-router';
 import { toast } from 'sonner';
 import type { Issue } from '@shared/schemas/issues';
 import { LabelChip } from '@web/components/common/LabelChip';
@@ -8,11 +8,13 @@ import { Spinner } from '@web/components/common/Spinner';
 import { StatusIcon } from '@web/components/common/StatusBadge';
 import { LabelPicker } from '@web/components/pickers/LabelPicker';
 import { Button } from '@web/components/ui/button';
+import { errorMessage } from '@web/lib/api';
 import type { TeamAccess } from '@web/lib/permissions';
+import { useShellActionAvailable } from '@web/lib/shellActions';
 import { cn } from '@web/lib/utils';
 import { useLabels } from '@web/pages/projects/queries';
 import { useCreateLabelOption } from './labels';
-import { useCreateTaskFromIssue, useSetIssueLabels, useSetIssueSubscription } from './queries';
+import { useOpenCreateTaskFromIssue, useSetIssueLabels, useSetIssueSubscription } from './queries';
 
 /** Labels, the tasks addressing the issue, and the reply-notification toggle. */
 export function IssueSidebar({
@@ -37,7 +39,7 @@ export function IssueSidebar({
         open={labelsOpen}
         onOpenChange={onLabelsOpenChange}
       />
-      <AddressedBySection issue={issue} access={access} />
+      <AddressedBySection issue={issue} access={access} canTriage={canTriage} />
       <SubscriptionSection issue={issue} />
     </div>
   );
@@ -127,17 +129,25 @@ function LabelsSection({
   );
 }
 
-function AddressedBySection({ issue, access }: { issue: Issue; access: TeamAccess }) {
-  const navigate = useNavigate();
-  const createTask = useCreateTaskFromIssue(issue);
-  const canCreateTask = access.has('CREATE_TASKS');
-  const create = () =>
-    createTask.mutate(undefined, {
-      onSuccess: (task) => {
-        toast.success(`Task ${task.ref} created`);
-        void navigate(task.path);
-      },
-    });
+function AddressedBySection({
+  issue,
+  access,
+  canTriage,
+}: {
+  issue: Issue;
+  access: TeamAccess;
+  canTriage: boolean;
+}) {
+  const openCreateTask = useOpenCreateTaskFromIssue();
+  const dialogAvailable = useShellActionAvailable('task.create');
+  const canCreateTask = access.has('CREATE_TASKS') && dialogAvailable;
+  const [opening, setOpening] = useState(false);
+  const create = () => {
+    setOpening(true);
+    openCreateTask(issue, canTriage ? 'fixes' : 'relates')
+      .catch((error: unknown) => toast.error(errorMessage(error)))
+      .finally(() => setOpening(false));
+  };
   return (
     <Section id="issue-addressed-by" title="Addressed by">
       {issue.linkedTasks.length > 0 ? (
@@ -184,9 +194,9 @@ function AddressedBySection({ issue, access }: { issue: Issue; access: TeamAcces
           size="sm"
           className="justify-start justify-self-start lg:justify-self-stretch"
           onClick={create}
-          disabled={createTask.isPending}
+          disabled={opening}
         >
-          {createTask.isPending ? <Spinner /> : <PlusIcon aria-hidden="true" />}
+          {opening ? <Spinner /> : <PlusIcon aria-hidden="true" />}
           Create task
         </Button>
       ) : null}

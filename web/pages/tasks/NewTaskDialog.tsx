@@ -15,6 +15,7 @@ import { useMe } from '@web/lib/auth';
 import { useHotkey } from '@web/lib/hotkeys';
 import { findProject, findTeam } from '@web/lib/routeContext';
 import { useShellActionHandler } from '@web/lib/shellActions';
+import type { TaskPrefill } from '@web/lib/taskPrefill';
 import type { ProjectChoice } from './NewTaskForm';
 
 /**
@@ -25,8 +26,16 @@ const NewTaskForm = lazy(() => import('./NewTaskForm'));
 
 declare module '@web/lib/shellActions' {
   interface ShellActionPayloads {
-    /** Open the "New task" dialog, in a project (and a status column) or with a project picker. */
-    'task.create': { projectId?: string; statusId?: string; pipelineId?: string };
+    /**
+     * Open the "New task" dialog, in a project (and a status column) or with a project picker;
+     * `prefill` starts it from an issue or messages (Create task, Make task from this).
+     */
+    'task.create': {
+      projectId?: string;
+      statusId?: string;
+      pipelineId?: string;
+      prefill?: TaskPrefill;
+    };
   }
 }
 
@@ -49,6 +58,7 @@ export default function NewTaskDialog() {
     projectId?: string;
     statusId?: string;
     pipelineId?: string;
+    prefill?: TaskPrefill;
   }>({});
 
   const choices: ProjectChoice[] = (me?.teams ?? []).flatMap((team) =>
@@ -61,8 +71,16 @@ export default function NewTaskDialog() {
   const routeProject = findProject(routeTeam, match?.params.key);
   const routeChoice = choices.find((choice) => choice.project.id === routeProject?.id);
 
-  const show = (next: { projectId?: string; statusId?: string; pipelineId?: string } = {}) => {
+  const show = (
+    next: {
+      projectId?: string;
+      statusId?: string;
+      pipelineId?: string;
+      prefill?: TaskPrefill;
+    } = {},
+  ) => {
     setPreset({
+      prefill: next.prefill,
       projectId: next.projectId ?? routeChoice?.project.id,
       statusId: next.statusId,
       // The board's pipeline (BAT-25), when `c` is pressed on it.
@@ -104,6 +122,7 @@ export default function NewTaskDialog() {
               initialProjectId={preset.projectId}
               initialStatusId={preset.statusId}
               initialPipelineId={preset.pipelineId}
+              prefill={preset.prefill}
               onDone={() => setOpen(false)}
             />
           </Suspense>

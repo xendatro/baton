@@ -12,7 +12,6 @@ import type { ReactNode } from 'react';
 import { useNavigate } from 'react-router';
 import { toast } from 'sonner';
 import { issueSchema, type IssueSummary } from '@shared/schemas/issues';
-import { taskSchema } from '@shared/schemas/tasks';
 import { MenuRow } from '@web/components/layout/SidebarMenus';
 import {
   ContextMenu,
@@ -24,20 +23,23 @@ import { api, errorMessage } from '@web/lib/api';
 import { canOpenNewTab, copyLink, copyToClipboard, openInNewTab } from '@web/lib/links';
 import { useProjectAccess } from '@web/lib/permissions';
 import { queryKeys } from '@web/lib/queryKeys';
+import { useShellActionAvailable } from '@web/lib/shellActions';
+import { useOpenCreateTaskFromIssue } from './queries';
 
 const enc = encodeURIComponent;
 
 /**
  * An issue row's right-click menu: open it (here or in a new tab), copy its link or ref, resolve
  * or reopen it (its author, or `RESOLVE_ISSUES`), and create a task from it (`CREATE_TASKS`, like
- * the issue page's "Create task"). A normal click still opens the issue.
+ * the issue page's "Create task": the New task dialog, prefilled). A normal click still opens it.
  */
 export function IssueRowMenu({ issue, children }: { issue: IssueSummary; children: ReactNode }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const access = useProjectAccess(issue.teamId, issue.projectId);
   const canTriage = issue.author?.id === access.userId || access.has('RESOLVE_ISSUES');
-  const canCreateTask = access.has('CREATE_TASKS');
+  const dialogAvailable = useShellActionAvailable('task.create');
+  const canCreateTask = access.has('CREATE_TASKS') && dialogAvailable;
   const refresh = () =>
     queryClient.invalidateQueries({ queryKey: queryKeys.issues.all(issue.projectId) });
 
@@ -53,20 +55,11 @@ export function IssueRowMenu({ issue, children }: { issue: IssueSummary; childre
     onError: (error) => toast.error(errorMessage(error)),
     meta: { suppressErrorToast: true },
   });
-  const createTask = useMutation({
-    mutationFn: () =>
-      api.post(
-        `/api/projects/${enc(issue.projectId)}/tasks/from-issue`,
-        { issueId: issue.id },
-        { schema: taskSchema },
-      ),
-    onSuccess: (task) => {
-      toast.success(`Task ${task.ref} created`);
-      void queryClient.invalidateQueries({ queryKey: queryKeys.tasks.all(issue.projectId) });
-      void refresh();
-      void navigate(task.path);
-    },
-  });
+  const openCreateTask = useOpenCreateTaskFromIssue();
+  const createTask = () =>
+    void openCreateTask(issue, canTriage ? 'fixes' : 'relates').catch((error: unknown) =>
+      toast.error(errorMessage(error)),
+    );
 
   return (
     <ContextMenu>
@@ -100,7 +93,7 @@ export function IssueRowMenu({ issue, children }: { issue: IssueSummary; childre
           />
         ) : null}
         {canCreateTask ? (
-          <MenuRow icon={SquarePenIcon} label="Create task" onSelect={() => createTask.mutate()} />
+          <MenuRow icon={SquarePenIcon} label="Create task…" onSelect={createTask} />
         ) : null}
       </ContextMenuContent>
     </ContextMenu>

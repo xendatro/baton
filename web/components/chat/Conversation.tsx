@@ -1,13 +1,15 @@
 import { MessageCircleIcon, MessagesSquareIcon } from 'lucide-react';
-import type { ReactNode } from 'react';
+import { useMemo, type ReactNode } from 'react';
 import { toast } from 'sonner';
 import type { ConversationMode, ReplyParentType } from '@shared/constants';
+import { ItemAgentRequests } from '@web/components/agentRequests/ItemAgentRequests';
 import { ReplyComposer } from '@web/components/replies/ReplyComposer';
 import type { ThreadWrite } from '@web/components/replies/threadAgents';
 import { Timeline } from '@web/components/replies/Timeline';
 import { DropdownMenuItem } from '@web/components/ui/dropdown-menu';
 import { errorMessage } from '@web/lib/api';
 import { ChatView } from './ChatView';
+import { ConversationItemContext, type ConversationItem } from './conversationItem';
 import { useSetConversationMode } from './queries';
 
 export interface ConversationProps {
@@ -32,29 +34,48 @@ export function Conversation({
   item,
   forumHeading,
 }: ConversationProps) {
+  const authorId = item.author?.id ?? null;
+  const context = useMemo<ConversationItem>(
+    () => ({
+      type: parentType,
+      id: parentId,
+      ref: item.ref,
+      path: item.path,
+      teamId,
+      projectId,
+      authorId,
+    }),
+    [parentType, parentId, item.ref, item.path, teamId, projectId, authorId],
+  );
   if (mode === 'chat') {
     return (
-      <ChatView
-        parentType={parentType}
-        parentId={parentId}
-        teamId={teamId}
-        projectId={projectId}
-        item={item}
-      />
+      <ConversationItemContext.Provider value={context}>
+        <ChatView
+          parentType={parentType}
+          parentId={parentId}
+          teamId={teamId}
+          projectId={projectId}
+          item={item}
+        />
+      </ConversationItemContext.Provider>
     );
   }
   return (
-    <div className="grid content-start gap-4">
-      {forumHeading}
-      <Timeline parentType={parentType} parentId={parentId} />
-      <ReplyComposer
-        parentType={parentType}
-        parentId={parentId}
-        teamId={teamId}
-        projectId={projectId}
-        item={item}
-      />
-    </div>
+    <ConversationItemContext.Provider value={context}>
+      <div className="grid content-start gap-4">
+        {forumHeading}
+        {/* Requests not asked by a reply (an @mention in the description, an assignment). */}
+        <ItemAgentRequests item={{ type: parentType, id: parentId }} replyId={null} />
+        <Timeline parentType={parentType} parentId={parentId} />
+        <ReplyComposer
+          parentType={parentType}
+          parentId={parentId}
+          teamId={teamId}
+          projectId={projectId}
+          item={item}
+        />
+      </div>
+    </ConversationItemContext.Provider>
   );
 }
 

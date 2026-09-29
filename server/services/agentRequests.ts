@@ -106,6 +106,12 @@ export function requestWording(
         question: `Can I summarize the recent messages on ${on}?`,
         summary: `Summarize recent messages on ${on}`,
       };
+    case 'draft_task':
+      // Likewise only the owner's own request.
+      return {
+        question: `Can I draft a task from ${on}?`,
+        summary: `Draft a task from ${on}`,
+      };
   }
 }
 
@@ -394,7 +400,8 @@ function settledError(job: JobRow): never {
 
 /**
  * Approve: the job runs like any other. `model` ("Run with") becomes the job's model override,
- * which its brief uses instead of the owner's mappings; without it the mappings decide.
+ * which its brief uses instead of the owner's mappings; without it the mappings decide. Recorded
+ * on the item as `task|issue.agent_request_approved` (its conversation shows "Ethan approved").
  */
 export function approveAgentRequest(
   deps: AppDeps,
@@ -417,6 +424,26 @@ export function approveAgentRequest(
       .where(and(eq(s.agentJob.id, job.id), eq(s.agentJob.status, 'pending')))
       .run();
     clearRequestNotifications(tx, [job.id]);
+    // The item's history (and, through its live event, everyone's "Ethan approved" line).
+    const item = jobItem(tx, job);
+    if (item) {
+      const names = getUserSummaries(tx, [job.agentUserId, job.triggeredById]);
+      recordActivity(tx, personActor(actor), {
+        teamId: item.teamId,
+        projectId: item.projectId,
+        entityType: item.type,
+        entityId: item.id,
+        action: `${item.type}.agent_request_approved`,
+        meta: {
+          ref: item.ref,
+          title: item.title,
+          agent: names.get(job.agentUserId)?.username ?? null,
+          requester: job.triggeredById ? (names.get(job.triggeredById)?.username ?? null) : null,
+          kind: job.kind,
+          model: input.model ?? null,
+        },
+      });
+    }
     jobChanged(tx, job, owner.ownerId);
   });
   return oneRequest(deps, owner, job.id);
@@ -510,7 +537,8 @@ function aboutItem(item: { type: 'task' | 'issue'; id: string }) {
 /**
  * Requests about one task or issue. `mine`: the viewer's own agent's (full cards, for inline
  * Approve / Decline in a conversation). `waiting`: everyone's open requests ("waiting for Ethan's
- * OK") plus those declined in the last day, whose reason only the requester and the owner see.
+ * OK") plus those approved (with the model) or declined in the last day; only the requester and
+ * the owner see a decline's reason. Each names the message that asked (`replyId`).
  */
 export function itemAgentRequests(
   deps: AppDeps,
@@ -532,7 +560,10 @@ export function itemAgentRequests(
         isNull(s.agentJob.heldAt),
         or(
           and(eq(s.agentJob.status, 'pending'), eq(s.agentJob.needsOk, true)),
-          and(eq(s.agentJob.requestDecision, 'declined'), gte(s.agentJob.requestDecidedAt, since)),
+          and(
+            inArray(s.agentJob.requestDecision, ['declined', 'approved']),
+            gte(s.agentJob.requestDecidedAt, since),
+          ),
         ),
       ),
     )
@@ -562,9 +593,18 @@ export function itemAgentRequests(
     const ownerId = agents.get(job.agentUserId) ?? null;
     const requester = job.triggeredById ? users.get(job.triggeredById) : undefined;
     const sees = viewer.userId === ownerId || viewer.userId === job.triggeredById;
+    const approved = job.requestDecision === 'approved';
     return {
       jobId: job.id,
-      status: job.requestDecision === 'declined' ? 'declined' : 'pending',
+      status: job.requestDecision ?? 'pending',
+      replyId: job.triggerReplyId ?? null,
+      model: approved
+        ? (job.modelOverride?.[0] ??
+          (ownerId
+            ? (resolveModelForJob(deps, { ownerId, agentId: job.agentUserId }, job).chain[0] ??
+              null)
+            : null))
+        : null,
       agent: person(users.get(job.agentUserId), 'An agent'),
       owner: person(ownerId ? users.get(ownerId) : undefined, 'its owner'),
       requester: requester ? person(requester, '') : null,

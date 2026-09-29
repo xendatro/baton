@@ -757,14 +757,40 @@ const createFromIssueTool = defineTool({
   input: toolInput({
     issue: z.string().min(1).describe('Issue: KEY#51, team-slug/KEY#51, or issue id'),
     project: projectRef.optional().describe("Project for the task (default: the issue's project)"),
+    title: z
+      .string()
+      .min(1)
+      .max(LIMITS.title.max)
+      .optional()
+      .describe("Title (default: the issue's title)"),
+    description: z
+      .string()
+      .max(LIMITS.body.max)
+      .optional()
+      .describe("Markdown (default: a link back to the issue plus the issue's body)"),
+    pipeline: pipelineRef
+      .optional()
+      .describe('Pipeline it starts in (default: the project’s default pipeline)'),
+    status: statusRef
+      .optional()
+      .describe(
+        'Stage it starts in, one that accepts new tasks (default: the default stage of its pipeline)',
+      ),
   }),
   annotations: { destructiveHint: false },
   handler: (ctx, input) => {
     const { issue, project: issueProject } = resolveIssue(ctx.deps, ctx.actor, input.issue);
     const project = input.project ? projectOf(ctx, input.project).project : issueProject;
+    const pipeline = pipelineId(ctx, project.id, input.pipeline);
     return taskOut(
       ctx,
-      createTaskFromIssue(ctx.deps, ctx.actor, project.id, { issueId: issue.id }),
+      createTaskFromIssue(ctx.deps, ctx.actor, project.id, {
+        issueId: issue.id,
+        title: input.title,
+        description: input.description,
+        pipelineId: pipeline,
+        statusId: statusId(ctx, project.id, input.status, pipeline),
+      }),
     );
   },
 });

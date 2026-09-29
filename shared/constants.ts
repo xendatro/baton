@@ -162,7 +162,9 @@ export type AgentNotificationLevel = (typeof AGENT_NOTIFICATION_LEVELS)[number];
  * `thread_reply` — someone else replied where it authored, replied or is assigned; `pool` — a
  * task it may claim entered a stage (pipelines); `approval` — it may approve a task's stage;
  * `action_result` — a person decided on an action it asked for (sign-off); `catch_up` — its owner
- * asked it to summarize a chat's recent messages for them (private, `catch_up_summary`).
+ * asked it to summarize a chat's recent messages for them (private, `catch_up_summary`);
+ * `draft_task` — its owner asked it to turn an issue or chat messages into a task title and
+ * description for them to review (private, stored on the job; never creates the task).
  */
 export const AGENT_JOB_KINDS = [
   'mention',
@@ -172,6 +174,7 @@ export const AGENT_JOB_KINDS = [
   'approval',
   'action_result',
   'catch_up',
+  'draft_task',
 ] as const;
 export type AgentJobKind = (typeof AGENT_JOB_KINDS)[number];
 
@@ -402,6 +405,8 @@ export const CHAT_LIMITS = {
   catchUpSummaryMax: 20_000,
   /** Summaries shown per item. */
   catchUpShown: 5,
+  /** Messages one "Make task from this" (and its agent draft) takes at most. */
+  taskFromMessagesMax: 50,
 } as const;
 
 export const ATTACHMENT_PARENT_TYPES = [

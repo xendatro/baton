@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isOutOfUsage, parseResetAt } from '../src/main/harness/usageLimits';
+import { isOutOfUsage, parseResetAt, usageLimitOf } from '../src/main/harness/usageLimits';
 import { normalizeRepoUrl, sameRepo } from '../src/main/git';
 
 describe('usage limits', () => {
@@ -22,6 +22,37 @@ describe('usage limits', () => {
       new Date('2026-09-28T09:00:00').getTime(),
     );
     expect(parseResetAt('Usage limit reached', now)).toBeNull();
+  });
+
+  it('decides out of usage only for runs that failed, from the harness’s own errors (BAT#30)', () => {
+    const now = new Date('2026-09-27T10:00:00').getTime();
+    // A run that succeeded never is, whatever its errors said on the way.
+    expect(
+      usageLimitOf({ succeeded: true, errors: ['429 Too Many Requests'], stderr: [] }, now),
+    ).toMatchObject({ limited: false });
+    expect(
+      usageLimitOf(
+        {
+          succeeded: false,
+          errors: ['You’ve hit your usage limit. Try again in 2 hours.'],
+          stderr: [],
+        },
+        now,
+      ),
+    ).toEqual({
+      limited: true,
+      resetAt: now + 2 * 3_600_000,
+      message: 'You’ve hit your usage limit. Try again in 2 hours.',
+    });
+    expect(
+      usageLimitOf(
+        { succeeded: false, errors: ['sandbox denied: write outside the workspace'], stderr: [] },
+        now,
+      ),
+    ).toMatchObject({ limited: false });
+    expect(
+      usageLimitOf({ succeeded: false, errors: [], stderr: ['Error: 429 Too Many Requests'] }, now),
+    ).toMatchObject({ limited: true, resetAt: null });
   });
 });
 

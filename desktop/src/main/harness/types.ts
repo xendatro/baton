@@ -38,7 +38,24 @@ export type HarnessEvent =
   /** The harness's own diagnostics on stderr (not the agent's work): shown only if the run fails. */
   | { type: 'log'; text: string }
   | { type: 'session'; sessionId: string }
-  | { type: 'status'; text: string };
+  | { type: 'status'; text: string }
+  /** A message sent with `RunControls.send` was taken into the session (BAT#31). */
+  | { type: 'delivered' }
+  /**
+   * A Baton task or issue the run created or replied in (id or ref, from the harness's own
+   * tool-call events), so a later job about it can resume this session (BAT#28).
+   */
+  | { type: 'touched'; item: string };
+
+/** What a running harness session offers besides being killed. */
+export interface RunControls {
+  /**
+   * Hands the running session a new user message, picked up at its next turn boundary (after
+   * the current tool call); a `delivered` event follows once it has. False when the session can't
+   * take one any more (it is finishing): run it afterwards instead.
+   */
+  send(text: string): boolean;
+}
 
 export interface RunOptions {
   cwd: string;
@@ -52,6 +69,11 @@ export interface RunOptions {
   mcp: McpInjection | null;
   signal: AbortSignal;
   onEvent: (event: HarnessEvent) => void;
+  /**
+   * Called once the session runs, by harnesses that take messages mid-run (Claude Code's
+   * streaming input); harnesses without it never call it.
+   */
+  attach?: (controls: RunControls) => void;
 }
 
 export type RunOutcome = 'done' | 'failed' | 'out_of_usage' | 'killed' | 'permission_denied';
@@ -65,7 +87,10 @@ export interface RunResult {
   durationMs: number;
   /** Out of usage: when the harness said it resets (ms since epoch), if it did. */
   resetAt: number | null;
-  /** Failed: the last error the harness printed. */
+  /**
+   * Not done: the harness's own last error (an error event, or stderr of a failed exit), e.g. a
+   * sandbox refusal or the usage-limit message.
+   */
   error: string | null;
 }
 

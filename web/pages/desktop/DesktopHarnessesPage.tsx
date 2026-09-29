@@ -6,6 +6,7 @@ import type { DesktopHarness, DesktopTestResult } from '@shared/desktopBridge';
 import { Spinner } from '@web/components/common/Spinner';
 import { PageContainer } from '@web/components/common/PageContainer';
 import { PageHeader } from '@web/components/common/PageHeader';
+import { useNow } from '@web/components/common/useNow';
 import { Badge } from '@web/components/ui/badge';
 import { Button } from '@web/components/ui/button';
 import { Label } from '@web/components/ui/label';
@@ -13,7 +14,7 @@ import { Skeleton } from '@web/components/ui/skeleton';
 import { errorMessage } from '@web/lib/api';
 import { desktopBridge, useDesktopState } from '@web/lib/desktop';
 import { useDocumentTitle } from '@web/lib/title';
-import { DesktopOnly } from './common';
+import { DesktopOnly, UsageLimit } from './common';
 
 /**
  * `/desktop/harnesses`: the coding agents installed on this computer (BAT-26) and how each one
@@ -68,6 +69,9 @@ function HarnessCard({ harness }: { harness: DesktopHarness }) {
   // A test run uses this computer's agent key, so it needs step 1 of the setup first.
   const connected = Boolean(state?.connected);
   const tested = state?.testedHarnesses?.includes(harness.id) ?? false;
+  const now = useNow();
+  // BAT#30: out of usage here, with Clear usage limit.
+  const exhaustedUntil = state?.exhaustedUntil?.[harness.id];
   const [mode, setMode] = useState(harness.mode ?? '');
   const [testing, setTesting] = useState(false);
   const [test, setTest] = useState<DesktopTestResult | null>(null);
@@ -97,6 +101,9 @@ function HarnessCard({ harness }: { harness: DesktopHarness }) {
       </div>
       {harness.installed ? (
         <div className="mt-3 grid gap-2">
+          {exhaustedUntil && exhaustedUntil > now ? (
+            <UsageLimit harness={harness.id} until={exhaustedUntil} />
+          ) : null}
           <div className="flex flex-wrap items-center gap-2">
             <Label htmlFor={selectId}>Permissions</Label>
             <select

@@ -10,9 +10,23 @@ import { useDecideWaitingJob, type WaitingJob } from './automaticAgentsQueries';
  * outside "Whose jobs run". "Run again" queues it for the agent; "Trash" drops it for good.
  * Shown in Settings → Automatic agents and on the desktop app's Running agents page.
  */
-export function WaitingJobsList({ jobs }: { jobs: readonly WaitingJob[] }) {
+export function WaitingJobsList({
+  jobs,
+  notes = {},
+  beforeRunAgain,
+  runLabel = 'Run again',
+}: {
+  jobs: readonly WaitingJob[];
+  /** Job id → why it stopped (the desktop app knows for jobs it ran). */
+  notes?: Readonly<Record<string, string>>;
+  /** Runs before "Run again" approves the job (the desktop app's Retry now, BAT#30). */
+  beforeRunAgain?: (jobId: string) => Promise<void> | void;
+  runLabel?: string;
+}) {
   const decide = useDecideWaitingJob();
-  const act = (jobId: string, decision: 'approve' | 'dismiss') =>
+  const act = async (jobId: string, decision: 'approve' | 'dismiss') => {
+    if (decision === 'approve')
+      await Promise.resolve(beforeRunAgain?.(jobId)).catch(() => undefined);
     decide.mutate(
       { jobId, decision },
       {
@@ -21,6 +35,7 @@ export function WaitingJobsList({ jobs }: { jobs: readonly WaitingJob[] }) {
         onError: (cause) => toast.error(errorMessage(cause)),
       },
     );
+  };
   return (
     <ul className="divide-y" aria-label="Jobs waiting for your OK">
       {jobs.map((job) => (
@@ -40,15 +55,22 @@ export function WaitingJobsList({ jobs }: { jobs: readonly WaitingJob[] }) {
               <RelativeTime value={job.createdAt} />
               {job.trigger ? ` · “${job.trigger.body.slice(0, 80)}”` : ''}
             </p>
+            {notes[job.jobId] ? (
+              <p className="text-xs break-words text-muted-foreground">{notes[job.jobId]}</p>
+            ) : null}
           </div>
-          <Button size="sm" onClick={() => act(job.jobId, 'approve')} disabled={decide.isPending}>
+          <Button
+            size="sm"
+            onClick={() => void act(job.jobId, 'approve')}
+            disabled={decide.isPending}
+          >
             <PlayIcon aria-hidden="true" />
-            Run again
+            {runLabel}
           </Button>
           <Button
             size="sm"
             variant="outline"
-            onClick={() => act(job.jobId, 'dismiss')}
+            onClick={() => void act(job.jobId, 'dismiss')}
             disabled={decide.isPending}
             aria-label={`Trash ${job.target.ref ?? 'job'}`}
           >

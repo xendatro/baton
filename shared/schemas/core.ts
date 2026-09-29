@@ -274,6 +274,19 @@ export const updateMyTeamInputSchema = z
   });
 export type UpdateMyTeamInput = z.infer<typeof updateMyTeamInputSchema>;
 
+/**
+ * `PUT /api/me/teams/:teamId/projects/order` (BAT#27): the team's projects you can see, top first,
+ * each at most once. Projects only move within their team; any left out follow, by name.
+ */
+export const reorderMyProjectsInputSchema = z.object({
+  projectIds: z
+    .array(idSchema)
+    .min(1)
+    .max(1000)
+    .refine((ids) => new Set(ids).size === ids.length, { message: 'A project is listed twice' }),
+});
+export type ReorderMyProjectsInput = z.infer<typeof reorderMyProjectsInputSchema>;
+
 export const meResponseSchema = z.object({
   user: meUserSchema,
   teams: z.array(meTeamSchema),

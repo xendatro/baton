@@ -37,7 +37,7 @@ import { EmptyState } from '@web/components/common/EmptyState';
 import { ErrorState } from '@web/components/common/ErrorState';
 import { Spinner } from '@web/components/common/Spinner';
 import { FinishedMark } from '@web/components/common/FinishedMark';
-import { NoStartStageNotice, StartMark } from '@web/components/common/NewTaskStages';
+import { NoStartStageNotice, StartHereSwitch } from '@web/components/common/NewTaskStages';
 import { StatusIcon } from '@web/components/common/StatusBadge';
 import { STATUS_ICON_SHAPES } from '@web/components/common/statusIcons';
 import { StatusIconPicker } from '@web/components/pickers/StatusIconPicker';
@@ -343,11 +343,12 @@ function Statuses({ teamId, projectId }: { teamId: string; projectId: string }) 
         {newStage}
       </div>
       <SettingsCard>
-        <div className="hidden grid-cols-[2rem_2rem_minmax(0,1fr)_4.5rem_5rem_4.5rem] items-center gap-2 border-b px-3 py-2 text-xs font-medium text-muted-foreground sm:grid">
+        <div className="hidden grid-cols-[2rem_2rem_minmax(0,1fr)_4.5rem_5.5rem_4.5rem_4.5rem] items-center gap-2 border-b px-3 py-2 text-xs font-medium text-muted-foreground sm:grid">
           <span />
           <span />
           <span>Name</span>
           <span className="text-center">Default</span>
+          <span className="text-center">Start here</span>
           <span className="text-right">Tasks</span>
           <span />
         </div>
@@ -551,7 +552,7 @@ function StatusRow({
       ref={setNodeRef}
       style={{ transform: CSS.Transform.toString(transform), transition }}
       className={cn(
-        'grid grid-cols-[2rem_2rem_minmax(0,1fr)_4.5rem] items-center gap-x-2 gap-y-2 border-b bg-card px-3 py-2 last:border-b-0 sm:grid-cols-[2rem_2rem_minmax(0,1fr)_4.5rem_5rem_4.5rem]',
+        'grid grid-cols-[2rem_2rem_minmax(0,1fr)_4.5rem] items-center gap-x-2 gap-y-2 border-b bg-card px-3 py-2 last:border-b-0 sm:grid-cols-[2rem_2rem_minmax(0,1fr)_4.5rem_5.5rem_4.5rem_4.5rem]',
         isDragging && 'relative z-10 rounded-md shadow-lg ring-1 ring-border',
         highlight && 'bg-primary/5 ring-2 ring-primary/40 ring-inset',
       )}
@@ -596,8 +597,6 @@ function StatusRow({
         className="h-8 border-transparent bg-transparent px-2 shadow-none hover:border-input focus-visible:border-ring disabled:cursor-default disabled:opacity-100 dark:bg-transparent"
       />
       <div className="flex items-center justify-end gap-0.5 sm:order-last">
-        <StartMark status={status} className="mr-1" />
-        <FinishedMark status={status} className="mr-1" />
         <Button
           type="button"
           variant="ghost"
@@ -643,7 +642,19 @@ function StatusRow({
           />
           <span className="text-muted-foreground sm:sr-only">Default</span>
         </label>
-        <span className="text-sm text-muted-foreground tabular-nums sm:text-right">
+        {/* BAT#20: "New tasks can start here" (the stage rule `allowCreate`); several may be on. */}
+        <StartHereSwitch
+          status={status}
+          name={status.name}
+          disabled={!canManage}
+          // Optimistic; a failure rolls back and toasts (the query client's mutation handler).
+          onCheckedChange={(allowCreate) =>
+            update.mutate({ id: status.id, input: { rules: { allowCreate } } })
+          }
+          className="sm:justify-center"
+        />
+        <span className="flex items-center gap-2 text-sm text-muted-foreground tabular-nums sm:justify-end">
+          <FinishedMark status={status} />
           <span className="sm:hidden">{pluralize(status.taskCount, 'task')}</span>
           <span className="hidden sm:inline" aria-label={pluralize(status.taskCount, 'task')}>
             {status.taskCount}

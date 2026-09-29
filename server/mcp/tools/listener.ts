@@ -35,9 +35,9 @@ const startListenerTool = defineTool({
   name: 'start_listener',
   title: 'Start listener',
   description: [
-    'Manual listener for your agent member (the Baton desktop app does this automatically, with no tokens spent while idle). Returns jobs in the given projects: someone @mentioned you, assigned you a task, replied in a thread you take part in, handed you a task from a pipeline stage (pool), asked for your approval, or decided on an action you requested.',
+    'Manual listener for your agent member. For automatic runs, use the Baton desktop app instead: it runs every job for you and spends no tokens while idle. Returns jobs in the given projects: someone @mentioned you, assigned you a task, replied in a thread you take part in, handed you a task from a pipeline stage (pool), asked for your approval, or decided on an action you requested.',
     'Returns at once with the pending jobs (claimed by this session, at most 10), or waits up to timeoutSeconds for the first one. Pass the returned sessionId back on every call.',
-    "Protocol, exactly: (1) call start_listener; (2) for EACH job, spawn one subagent and give it the job (never do the work inline in the listening session, which must stay free to listen); the subagent follows the job's instructions and ends with complete_job { jobId } (or release_job { jobId } when it cannot do it); (3) call start_listener again right away with the same sessionId (an empty result only means nothing happened yet); repeat.",
+    "Strict protocol. The listening session only claims and dispatches; it never handles a job itself. (1) Call start_listener. (2) For EACH job, spawn exactly one subagent (one subagent per job, never one for several) and pass it the job's jobId and its full brief: the whole job object as returned (instructions, target, trigger, stageInstructions, payload), not a summary. (3) The subagent does the work, writes its own replies with add_reply and ends with complete_job { jobId } (or release_job { jobId } when it cannot do it). The listening session never calls add_reply or complete_job for a job, and never relays or rewrites a subagent's answer. (4) Call start_listener again right away with the same sessionId, without waiting for the subagents to finish where your client can run them in the background (an empty result only means nothing happened yet); repeat.",
     "Claimed jobs stay yours until you complete or release them; if your listener stops calling for 90 s, they go back to the queue. Projects you don't listen to keep their jobs until a listener or the desktop app for them runs.",
     'Done handshake: a reply with add_reply { closing: true } means "no further discussion needed". A job from another agent\'s closing reply has closing: true; if you agree, call complete_job { agreeDone: true } without replying.',
   ].join(' '),
@@ -69,7 +69,7 @@ const completeJobTool = defineTool({
   name: 'complete_job',
   title: 'Complete job',
   description:
-    "Marks one of your jobs done once you handled it (replied, did the work, or decided it needs nothing). agreeDone: true on a job with closing: true (another agent's closing reply) means you agree no further discussion is needed: do not reply; the thread then wakes no agent for agent replies until a person replies.",
+    "Marks one of your jobs done once it is handled (replied, did the work, or decided it needs nothing). Called by whoever did the work: with start_listener, the subagent the job was given to, never the listening session. agreeDone: true on a job with closing: true (another agent's closing reply) means you agree no further discussion is needed: do not reply; the thread then wakes no agent for agent replies until a person replies.",
   input: toolInput({
     jobId,
     agreeDone: z
@@ -92,7 +92,7 @@ const releaseJobTool = defineTool({
   name: 'release_job',
   title: 'Release job',
   description:
-    'Hands a claimed job back to the queue without doing it, so another listener session of yours can take it (for example when you are shutting down).',
+    "Hands a claimed job back to the queue without doing it, so another listener session of yours (or the desktop app) can take it. With start_listener, the job's subagent calls it when it cannot do the job; the listening session only for jobs it has not handed out (for example when shutting down).",
   input: toolInput({ jobId, usage: usageField }),
   annotations: { destructiveHint: false, idempotentHint: true },
   handler: (ctx, input) => {

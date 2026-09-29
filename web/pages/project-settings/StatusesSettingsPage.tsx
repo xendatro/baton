@@ -21,6 +21,7 @@ import {
   CopyPlusIcon,
   GripVerticalIcon,
   KanbanSquareIcon,
+  ListIcon,
   PencilIcon,
   PlusIcon,
   Trash2Icon,
@@ -89,8 +90,10 @@ import { CopyPipelineDialog } from './CopyPipelineDialog';
 import { CreateFromExistingDialog } from './CreateFromExistingDialog';
 import { useDifficulties } from '../projects/difficultyQueries';
 import { PipelineDiagram } from './PipelineDiagram';
+import { PipelineEditor } from './PipelineEditor';
 import { PipelinesBar } from './PipelinesBar';
 import { usePrincipalOptions } from './pipelineQueries';
+import { StagePanel } from './StagePanel';
 import { StatusDialog, type StatusDialogState } from './StatusDialog';
 import { countRules, suggestColor } from './stageRules';
 
@@ -104,8 +107,13 @@ import { countRules, suggestColor } from './stageRules';
  * basics, instructions, arrival, while here, exit criteria, moving on, as each row's edit button
  * opens it) and "Create from existing…" (basics, then a stage whose settings it copies). "Copy
  * pipeline from…" copies another project's statuses and rules.
- * `?status=<id>` (a board column's "Edit stage") scrolls to that status and highlights it;
- * `?new=pipeline` (the board's "New pipeline") opens the New pipeline dialog.
+ * `?status=<id>` (a board column's "Edit stage") opens that stage's panel (in the list: scrolls
+ * to it and highlights it); `?new=pipeline` (the board's "New pipeline") opens the New pipeline
+ * dialog.
+ *
+ * Two views of the stages (2026-09-29): the visual editor (default: stages as a flow with arrows,
+ * each opening a simple panel, see PipelineEditor and StagePanel) and the list (`?view=list`, the
+ * table above with rename in place and the full dialog).
  */
 
 export default function StatusesSettingsPage() {
@@ -127,6 +135,17 @@ function Statuses({ teamId, projectId }: { teamId: string; projectId: string }) 
   const pipelines = usePipelines(projectId);
   const [searchParams, setSearchParams] = useSearchParams();
   const targetId = searchParams.get('status');
+  const view = searchParams.get('view') === 'list' ? 'list' : 'visual';
+  const setView = (next: 'list' | 'visual') =>
+    setSearchParams(
+      (current) => {
+        const params = new URLSearchParams(current);
+        if (next === 'list') params.set('view', 'list');
+        else params.delete('view');
+        return params;
+      },
+      { replace: true },
+    );
   // The pipeline whose stages are shown (BAT-25): `?pipeline=`, the targeted status's, or the default.
   const allStatuses = statuses.data ?? [];
   const pipelineList = pipelines.data ?? [];
@@ -158,6 +177,10 @@ function Statuses({ teamId, projectId }: { teamId: string; projectId: string }) 
   const [creatingFrom, setCreatingFrom] = useState(false);
   /** The stage "Create" just added: its name is focused for renaming once it shows. */
   const [renameId, setRenameId] = useState<string | null>(null);
+  /** The visual editor's open stage panel (`?status=` opens it too), and whether to focus its name. */
+  const [panel, setPanel] = useState<{ id: string; focusName: boolean } | null>(() =>
+    targetId && view === 'visual' ? { id: targetId, focusName: false } : null,
+  );
   // After "Create" from the menu, the new stage's name takes the focus, not the menu's trigger.
   const keepMenuFocus = useRef(false);
   const principals = usePrincipalOptions(teamId, projectId);
@@ -193,8 +216,9 @@ function Statuses({ teamId, projectId }: { teamId: string; projectId: string }) 
   const items = allStatuses.filter(
     (status) => !selected || !status.pipelineId || status.pipelineId === selected.id,
   );
-  // "Create": a plain stage at the end, named "New stage" (2, 3…), renamed in place.
-  const createNow = () => {
+  // "Create": a plain stage, named "New stage" (2, 3…), at the end or (the visual editor's +) at
+  // `index`; renamed in place (the list) or in its panel (the visual editor).
+  const createNow = (index?: number) => {
     const name = nextNewStageName(items.map((status) => status.name));
     create.mutate(
       {
@@ -204,18 +228,25 @@ function Statuses({ teamId, projectId }: { teamId: string; projectId: string }) 
       },
       {
         onSuccess: (created) => {
-          setRenameId(created.id);
+          if (index !== undefined && index < items.length) {
+            const ids = items.map((status) => status.id);
+            ids.splice(index, 0, created.id);
+            reorder.mutate(ids);
+          }
+          if (view === 'visual') setPanel({ id: created.id, focusName: true });
+          else setRenameId(created.id);
           toast.success(`Added ${created.name}: type its name`);
         },
         onError: (cause) => toast.error(errorMessage(cause)),
       },
     );
   };
+  const panelStatus = panel ? (items.find((status) => status.id === panel.id) ?? null) : null;
   const newStage = canManage ? (
     <div className="flex">
       <Button
         size="sm"
-        onClick={createNow}
+        onClick={() => createNow()}
         disabled={create.isPending}
         className="rounded-r-none"
         title="Add a plain stage at the end and rename it here"
@@ -336,79 +367,169 @@ function Statuses({ teamId, projectId }: { teamId: string; projectId: string }) 
           className="mb-5"
         />
       ) : null}
-      <div className="mb-2 flex items-center justify-between gap-3">
-        <h3 className="text-sm font-semibold">
-          {selected ? `Stages of ${selected.name}` : 'Stages'}
-        </h3>
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-3">
+          <h3 className="text-sm font-semibold">
+            {selected ? `Stages of ${selected.name}` : 'Stages'}
+          </h3>
+          <div
+            role="group"
+            aria-label="View"
+            className="inline-flex rounded-md border p-0.5 text-xs"
+          >
+            {(
+              [
+                ['visual', 'Visual', WorkflowIcon],
+                ['list', 'List', ListIcon],
+              ] as const
+            ).map(([value, label, Icon]) => (
+              <button
+                key={value}
+                type="button"
+                aria-pressed={view === value}
+                onClick={() => setView(value)}
+                className={cn(
+                  'inline-flex items-center gap-1 rounded px-2 py-1 outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                  view === value
+                    ? 'bg-accent font-medium text-accent-foreground'
+                    : 'text-muted-foreground hover:text-foreground',
+                )}
+              >
+                <Icon className="size-3.5" aria-hidden="true" />
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
         {newStage}
       </div>
-      <SettingsCard>
-        <div className="hidden grid-cols-[2rem_2rem_minmax(0,1fr)_4.5rem_5.5rem_4.5rem_4.5rem] items-center gap-2 border-b px-3 py-2 text-xs font-medium text-muted-foreground sm:grid">
-          <span />
-          <span />
-          <span>Name</span>
-          <span className="text-center">Default</span>
-          <span className="text-center">Start here</span>
-          <span className="text-right">Tasks</span>
-          <span />
-        </div>
-        {statuses.isPending ? (
-          <StatusesSkeleton />
-        ) : items.length === 0 ? (
-          <EmptyState
-            icon={KanbanSquareIcon}
-            title="No stages"
-            description="Add a stage to give this pipeline's board a column."
-            action={newStage ?? undefined}
-            className="m-4"
-          />
-        ) : (
-          <DndContext
-            sensors={sensors}
-            collisionDetection={closestCenter}
-            onDragEnd={onDragEnd}
-            accessibility={{
-              screenReaderInstructions: {
-                draggable:
-                  'To reorder a status, press Space or Enter to pick it up, use the arrow keys to move it, and press Space or Enter again to drop it. Press Escape to cancel.',
-              },
-            }}
-          >
-            <SortableContext
-              items={items.map((status) => status.id)}
-              strategy={verticalListSortingStrategy}
+      {view === 'visual' ? (
+        <SettingsCard className="p-4">
+          {statuses.isPending ? (
+            <div role="status" aria-label="Loading stages" className="flex gap-3">
+              {[0, 1, 2].map((index) => (
+                <Skeleton key={index} className="h-20 w-48" />
+              ))}
+            </div>
+          ) : items.length === 0 ? (
+            <EmptyState
+              icon={KanbanSquareIcon}
+              title="No stages"
+              description="Add a stage to give this pipeline's board a column."
+              action={newStage ?? undefined}
+            />
+          ) : (
+            <PipelineEditor
+              stages={items}
+              options={principals.options}
+              canManage={canManage}
+              selectedId={panelStatus?.id ?? null}
+              onSelect={(status) => setPanel({ id: status.id, focusName: false })}
+              onAddAt={(index) => createNow(index)}
+              adding={create.isPending}
+              onReorder={(ids) => reorder.mutate(ids)}
+            />
+          )}
+        </SettingsCard>
+      ) : null}
+      {view === 'list' ? (
+        <SettingsCard>
+          <div className="hidden grid-cols-[2rem_2rem_minmax(0,1fr)_4.5rem_5.5rem_4.5rem_4.5rem] items-center gap-2 border-b px-3 py-2 text-xs font-medium text-muted-foreground sm:grid">
+            <span />
+            <span />
+            <span>Name</span>
+            <span className="text-center">Default</span>
+            <span className="text-center">Start here</span>
+            <span className="text-right">Tasks</span>
+            <span />
+          </div>
+          {statuses.isPending ? (
+            <StatusesSkeleton />
+          ) : items.length === 0 ? (
+            <EmptyState
+              icon={KanbanSquareIcon}
+              title="No stages"
+              description="Add a stage to give this pipeline's board a column."
+              action={newStage ?? undefined}
+              className="m-4"
+            />
+          ) : (
+            <DndContext
+              sensors={sensors}
+              collisionDetection={closestCenter}
+              onDragEnd={onDragEnd}
+              accessibility={{
+                screenReaderInstructions: {
+                  draggable:
+                    'To reorder a status, press Space or Enter to pick it up, use the arrow keys to move it, and press Space or Enter again to drop it. Press Escape to cancel.',
+                },
+              }}
             >
-              {/* The radio group wraps the list (a radiogroup can't be the list itself: its items
-                  would lose their list parent). */}
-              <RadioGroup
-                value={defaultId}
-                onValueChange={(id) => update.mutate({ id, input: { isDefault: true } })}
-                aria-label="Default status for new tasks"
-                disabled={!canManage}
-                className="gap-0"
+              <SortableContext
+                items={items.map((status) => status.id)}
+                strategy={verticalListSortingStrategy}
               >
-                <ul>
-                  {items.map((status) => (
-                    <StatusRow
-                      key={status.id}
-                      status={status}
-                      projectId={projectId}
-                      canManage={canManage}
-                      isOnly={items.length === 1}
-                      targeted={status.id === targetId}
-                      renaming={status.id === renameId}
-                      onRenamed={() => setRenameId(null)}
-                      onDelete={() => setDeleting(status)}
-                      onEditRules={() => setDialog({ mode: 'edit', status })}
-                    />
-                  ))}
-                </ul>
-              </RadioGroup>
-            </SortableContext>
-          </DndContext>
-        )}
-      </SettingsCard>
-      <PipelineDiagram statuses={items} />
+                {/* The radio group wraps the list (a radiogroup can't be the list itself: its items
+                  would lose their list parent). */}
+                <RadioGroup
+                  value={defaultId}
+                  onValueChange={(id) => update.mutate({ id, input: { isDefault: true } })}
+                  aria-label="Default status for new tasks"
+                  disabled={!canManage}
+                  className="gap-0"
+                >
+                  <ul>
+                    {items.map((status) => (
+                      <StatusRow
+                        key={status.id}
+                        status={status}
+                        projectId={projectId}
+                        canManage={canManage}
+                        isOnly={items.length === 1}
+                        targeted={status.id === targetId}
+                        renaming={status.id === renameId}
+                        onRenamed={() => setRenameId(null)}
+                        onDelete={() => setDeleting(status)}
+                        onEditRules={() => setDialog({ mode: 'edit', status })}
+                      />
+                    ))}
+                  </ul>
+                </RadioGroup>
+              </SortableContext>
+            </DndContext>
+          )}
+        </SettingsCard>
+      ) : null}
+      {view === 'list' ? <PipelineDiagram statuses={items} /> : null}
+      <StagePanel
+        projectId={projectId}
+        status={panelStatus}
+        stages={items}
+        options={principals.options}
+        canManage={canManage}
+        focusName={panel?.focusName ?? false}
+        onClose={() => {
+          setPanel(null);
+          if (searchParams.has('status')) {
+            setSearchParams(
+              (current) => {
+                const next = new URLSearchParams(current);
+                next.delete('status');
+                return next;
+              },
+              { replace: true },
+            );
+          }
+        }}
+        onOpenFull={(status) => {
+          setPanel(null);
+          setDialog({ mode: 'edit', status });
+        }}
+        onDelete={(status) => {
+          setPanel(null);
+          setDeleting(status);
+        }}
+      />
       <DeleteStatusDialog
         projectId={projectId}
         status={deleting}

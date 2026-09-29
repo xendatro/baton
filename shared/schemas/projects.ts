@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { principalRuleSchema } from '../principals';
 import { readmeSourceSchema } from './github';
 import { LIMITS, STATUS_CATEGORIES, STATUS_ICONS } from '../constants';
+import { PIPELINE_TEMPLATE_IDS } from '../pipelineTemplates';
 import { PROJECT_KEY_PATTERN } from '../refs';
 import { emojiSchema, hexColorSchema, idSchema, projectKeySchema, timestampSchema } from './common';
 import { userSummarySchema } from './core';
@@ -188,7 +189,7 @@ export type Pipeline = z.infer<typeof pipelineSchema>;
 export const pipelineListResponseSchema = z.object({ items: z.array(pipelineSchema) });
 export type PipelineListResponse = z.infer<typeof pipelineListResponseSchema>;
 
-export const createPipelineInputSchema = z.object({
+const pipelineFieldsSchema = z.object({
   name: pipelineNameSchema,
   color: hexColorSchema.nullable().optional(),
   icon: z.string().max(16).nullable().optional(),
@@ -196,9 +197,17 @@ export const createPipelineInputSchema = z.object({
   createRule: principalRuleSchema.nullable().optional(),
   manageRule: principalRuleSchema.nullable().optional(),
 });
+
+/** A pipeline template (shared/pipelineTemplates.ts): the stages a new pipeline starts with. */
+export const pipelineTemplateSchema = z.enum(PIPELINE_TEMPLATE_IDS);
+
+export const createPipelineInputSchema = pipelineFieldsSchema.extend({
+  /** The stages it starts with (default `simple`: Backlog, To do, In progress, In review, Done). */
+  template: pipelineTemplateSchema.optional(),
+});
 export type CreatePipelineInput = z.infer<typeof createPipelineInputSchema>;
 
-export const updatePipelineInputSchema = createPipelineInputSchema
+export const updatePipelineInputSchema = pipelineFieldsSchema
   .partial()
   .refine((value) => Object.values(value).some((field) => field !== undefined), {
     message: 'Nothing to update',
@@ -341,6 +350,8 @@ export const createProjectInputSchema = z.object({
    * `DEFAULT_PIPELINE_NAME` then.
    */
   pipelineName: pipelineNameSchema.optional(),
+  /** The stages of its first pipeline (default `simple`). */
+  pipelineTemplate: pipelineTemplateSchema.optional(),
 });
 export type CreateProjectInput = z.infer<typeof createProjectInputSchema>;
 

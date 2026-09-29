@@ -1,5 +1,10 @@
 import { and, asc, count, eq, inArray, isNotNull, isNull } from 'drizzle-orm';
-import { DEFAULT_STATUSES, type StatusSeed } from '@shared/constants';
+import { DEFAULT_STATUSES } from '@shared/constants';
+import {
+  DEFAULT_PIPELINE_TEMPLATE,
+  PIPELINE_TEMPLATES,
+  type PipelineTemplateStage,
+} from '@shared/pipelineTemplates';
 import type { PrincipalRule } from '@shared/principals';
 import {
   DEFAULT_PIPELINE_NAME,
@@ -374,7 +379,7 @@ export function insertPipelineWithStages(
   projectId: string,
   values: NewPipeline,
   now = new Date(),
-  seeds: ReadonlyArray<StatusSeed> = DEFAULT_STATUSES,
+  seeds: ReadonlyArray<PipelineTemplateStage> = DEFAULT_STATUSES,
 ): { pipeline: PipelineRow; statuses: StatusRow[] } {
   const row = insertPipeline(tx, projectId, values, now);
   const statuses = seeds.map((seed, position) =>
@@ -410,7 +415,7 @@ export function seedDefaultPipeline(
   projectId: string,
   now = new Date(),
   name: string = DEFAULT_PIPELINE_NAME,
-  seeds: ReadonlyArray<StatusSeed> = DEFAULT_STATUSES,
+  seeds: ReadonlyArray<PipelineTemplateStage> = DEFAULT_STATUSES,
 ) {
   return insertPipelineWithStages(
     tx,
@@ -468,7 +473,10 @@ function requireUniqueName(db: DbExecutor, projectId: string, name: string, exce
   if (clash) throw errors.conflict(`There is already a pipeline named "${clash.name}"`);
 }
 
-/** Adds a pipeline (`MANAGE_STATUSES`) at the end, with the default stages to start from. */
+/**
+ * Adds a pipeline (`MANAGE_STATUSES`) at the end, with the stages of `template` (default `simple`:
+ * the default stages) to start from.
+ */
 export function createPipeline(
   deps: AppDeps,
   actor: Actor,
@@ -485,18 +493,21 @@ export function createPipeline(
       throw errors.validation(`A project can have at most ${PROJECT_LIMITS.pipelines} pipelines`);
     }
     requireUniqueName(tx, projectId, input.name);
-    const { pipeline } = insertPipelineWithStages(tx, projectId, {
-      ...input,
-      isDefault: false,
-      position: rows.length,
-    });
+    const { template = DEFAULT_PIPELINE_TEMPLATE, ...values } = input;
+    const { pipeline } = insertPipelineWithStages(
+      tx,
+      projectId,
+      { ...values, isDefault: false, position: rows.length },
+      new Date(),
+      PIPELINE_TEMPLATES[template].stages,
+    );
     recordActivity(tx, actor, {
       teamId: project.teamId,
       projectId,
       entityType: 'project',
       entityId: projectId,
       action: 'pipeline.created',
-      meta: { name: project.name, key: project.key, pipeline: pipeline.name },
+      meta: { name: project.name, key: project.key, pipeline: pipeline.name, template },
     });
     emitAfterCommit(tx, pipelineEvent(project, actor, pipeline.id));
     return pipeline.id;

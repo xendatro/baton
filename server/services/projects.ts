@@ -1,5 +1,6 @@
 import { and, asc, count, desc, eq, inArray, isNotNull, isNull, ne } from 'drizzle-orm';
 import { DEFAULT_PROJECT_COLOR } from '@shared/constants';
+import { DEFAULT_PIPELINE_TEMPLATE, PIPELINE_TEMPLATES } from '@shared/pipelineTemplates';
 import { formatProjectRef, parseRef } from '@shared/refs';
 import { projectKeySchema } from '@shared/schemas/common';
 import {
@@ -474,7 +475,8 @@ function projectEvent(
 
 /**
  * Creates a project (`MANAGE_PROJECTS`) with its first pipeline (`pipelineName`, else "Main") and
- * that pipeline's stages Backlog (default), To do, In progress, In review and Done. Without a key,
+ * that pipeline's stages: those of `pipelineTemplate`, by default Backlog (default), To do, In
+ * progress, In review and Done. Without a key,
  * one is derived from the name and made unique within the team.
  */
 export function createProject(
@@ -512,7 +514,13 @@ export function createProject(
       })
       .returning()
       .get();
-    seedDefaultPipeline(tx, id, now, input.pipelineName);
+    seedDefaultPipeline(
+      tx,
+      id,
+      now,
+      input.pipelineName,
+      PIPELINE_TEMPLATES[input.pipelineTemplate ?? DEFAULT_PIPELINE_TEMPLATE].stages,
+    );
     seedDifficulties(tx, id);
     if (readme) {
       attachToParent(tx, actor, referencedPendingUploads(tx, actor, teamId, readme), {

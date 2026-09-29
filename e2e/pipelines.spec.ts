@@ -71,7 +71,7 @@ test('a task moves through a pipeline stage with a criterion and an approval', a
   });
 
   // Configure In Review: one criterion and one approval from the reviewer.
-  await page.goto(`/t/${slug}/p/PIP/settings/statuses`);
+  await page.goto(`/t/${slug}/p/PIP/settings/pipelines?view=list`);
   await page.getByRole('button', { name: 'Edit In Review' }).click();
   const dialog = page.getByRole('dialog', { name: 'Edit In Review' });
   await dialog.getByRole('button', { name: /Exit criteria/ }).click();

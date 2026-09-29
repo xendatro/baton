@@ -287,6 +287,16 @@ describe('StatusDialog', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled());
   });
 
+  it('offers "Next stage" without naming it, since columns can be rearranged', () => {
+    renderDialog({ state: { mode: 'edit', status: statuses[1] as Status, section: 'moving' } });
+    const forward = screen.getByRole('combobox', { name: 'Forward' });
+    expect(
+      within(forward)
+        .getAllByRole('option')
+        .map((option) => option.textContent),
+    ).toEqual(['Next stage', 'Open', 'Done']);
+  });
+
   it('keeps the claim only for the last stage’s assignees, and checks custom lists', async () => {
     const user = userEvent.setup();
     const onUpdate = vi.fn((_id: string, _input: UpdateStatusInput) => Promise.resolve());

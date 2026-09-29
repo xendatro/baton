@@ -1043,9 +1043,6 @@ function CanMoveTo({
   statusId: string | null;
 }) {
   const nextId = useId();
-  const index = statusId ? statuses.findIndex((other) => other.id === statusId) : -1;
-  // A new stage goes last: no next column.
-  const nextColumn = index === -1 ? undefined : statuses[index + 1];
   const others = statuses.filter((other) => other.id !== statusId);
   const earlier = earlierStages(statuses, statusId);
   const checked = new Set(rules.sendBackTo);
@@ -1070,16 +1067,13 @@ function CanMoveTo({
           value={rules.nextStatusId ?? ''}
           onChange={(value) => setRules('nextStatusId', value || null)}
         >
-          <option value="">
-            {nextColumn ? `Next stage (${nextColumn.name})` : 'None (last stage)'}
-          </option>
-          {others
-            .filter((other) => other.id !== nextColumn?.id)
-            .map((other) => (
-              <option key={other.id} value={other.id}>
-                {other.name}
-              </option>
-            ))}
+          {/* Not named (BAT-35): the next column changes when stages are rearranged. */}
+          <option value="">Next stage</option>
+          {others.map((other) => (
+            <option key={other.id} value={other.id}>
+              {other.name}
+            </option>
+          ))}
         </NativeSelect>
       </div>
       <fieldset className="grid gap-1.5">

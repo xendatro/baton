@@ -1,37 +1,20 @@
 import { PencilIcon, PlusIcon, SearchIcon, TagsIcon, Trash2Icon } from 'lucide-react';
-import { useState, type FormEvent } from 'react';
+import { useState } from 'react';
 import { toast } from 'sonner';
-import { COLOR_PALETTE, LIMITS } from '@shared/constants';
-import {
-  createLabelInputSchema,
-  type CreateLabelInput,
-  type Label as LabelEntity,
-} from '@shared/schemas/projects';
-import { FormError, FormField } from '@web/components/auth/FormField';
+import type { Label as LabelEntity } from '@shared/schemas/projects';
 import { ConfirmDialog } from '@web/components/common/ConfirmDialog';
 import { EmptyState } from '@web/components/common/EmptyState';
 import { ErrorState } from '@web/components/common/ErrorState';
 import { LabelChip } from '@web/components/common/LabelChip';
-import { Spinner } from '@web/components/common/Spinner';
-import { ColorPicker } from '@web/components/pickers/ColorPicker';
 import { Button } from '@web/components/ui/button';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@web/components/ui/dialog';
 import { Input } from '@web/components/ui/input';
 import { Skeleton } from '@web/components/ui/skeleton';
-import { errorMessage, isApiError } from '@web/lib/api';
 import { pluralize } from '@web/lib/format';
-import { fieldErrors } from '@web/lib/forms';
 import { useProjectAccess } from '@web/lib/permissions';
 import { useRouteContext } from '@web/lib/routeContext';
 import { useDocumentTitle } from '@web/lib/title';
-import { useCreateLabel, useDeleteLabel, useLabels, useUpdateLabel } from '../projects/queries';
+import { useDeleteLabel, useLabels } from '../projects/queries';
+import { LabelDialog, type LabelEditing as Editing } from './LabelDialog';
 import { BoardBackLink, ReadOnlyNotice, SettingsCard, SettingsHeader } from './common';
 
 /**
@@ -49,8 +32,6 @@ export default function LabelsSettingsPage() {
     </>
   );
 }
-
-type Editing = { mode: 'create' } | { mode: 'edit'; label: LabelEntity } | null;
 
 function usage(label: LabelEntity): string {
   const parts = [];
@@ -217,171 +198,6 @@ function Labels({ teamId, projectId }: { teamId: string; projectId: string }) {
         }}
       />
     </div>
-  );
-}
-
-function nextColor(existing: readonly LabelEntity[]): string {
-  const used = new Set(existing.map((label) => label.color));
-  return (COLOR_PALETTE.slice(1).find((color) => !used.has(color.hex)) ?? COLOR_PALETTE[0]).hex;
-}
-
-function LabelDialog({
-  projectId,
-  editing,
-  existing,
-  onClose,
-}: {
-  projectId: string;
-  editing: Editing;
-  existing: LabelEntity[];
-  onClose: () => void;
-}) {
-  return (
-    <Dialog open={editing !== null} onOpenChange={(open) => (open ? undefined : onClose())}>
-      <DialogContent className="sm:max-w-md">
-        {editing ? (
-          <LabelForm
-            projectId={projectId}
-            editing={editing}
-            existing={existing}
-            onClose={onClose}
-          />
-        ) : null}
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-type Field = 'name' | 'description' | 'color';
-
-function LabelForm({
-  projectId,
-  editing,
-  existing,
-  onClose,
-}: {
-  projectId: string;
-  editing: NonNullable<Editing>;
-  existing: LabelEntity[];
-  onClose: () => void;
-}) {
-  const create = useCreateLabel(projectId);
-  const update = useUpdateLabel(projectId);
-  const initial = editing.mode === 'edit' ? editing.label : null;
-  const [name, setName] = useState(initial?.name ?? '');
-  const [description, setDescription] = useState(initial?.description ?? '');
-  const [color, setColor] = useState(initial?.color ?? nextColor(existing));
-  const [errors, setErrors] = useState<Partial<Record<Field, string>>>({});
-  const [formError, setFormError] = useState<string | null>(null);
-  const pending = create.isPending || update.isPending;
-
-  const submit = (event: FormEvent) => {
-    event.preventDefault();
-    if (pending) return;
-    setFormError(null);
-    const input: CreateLabelInput = { name, description, color };
-    const parsed = createLabelInputSchema.safeParse(input);
-    if (!parsed.success) {
-      setErrors(fieldErrors<Field>(parsed.error));
-      return;
-    }
-    setErrors({});
-    const onError = (cause: Error) => {
-      if (isApiError(cause) && cause.code === 'conflict') setErrors({ name: cause.message });
-      else setFormError(errorMessage(cause));
-    };
-    if (initial) {
-      update.mutate(
-        { id: initial.id, input: parsed.data },
-        {
-          onSuccess: (label) => {
-            toast.success(`Saved ${label.name}`);
-            onClose();
-          },
-          onError,
-        },
-      );
-    } else {
-      create.mutate(parsed.data, {
-        onSuccess: (label) => {
-          toast.success(`Created ${label.name}`);
-          onClose();
-        },
-        onError,
-      });
-    }
-  };
-
-  return (
-    <form onSubmit={submit} className="grid gap-4" noValidate>
-      <DialogHeader>
-        <DialogTitle>{initial ? 'Edit label' : 'New label'}</DialogTitle>
-        <DialogDescription>
-          {initial
-            ? `Changes apply everywhere ${initial.name} is used.`
-            : 'Available to every issue and task in this project.'}
-        </DialogDescription>
-      </DialogHeader>
-      <div className="flex min-h-10 items-center justify-center rounded-md border border-dashed bg-muted/30 px-3 py-3">
-        <LabelChip label={{ name: name.trim() || 'Label preview', color }} />
-      </div>
-      <div className="flex items-end gap-3">
-        <FormField label="Name" error={errors.name} className="min-w-0 flex-1">
-          {(field) => (
-            <Input
-              {...field}
-              value={name}
-              onChange={(event) => setName(event.target.value)}
-              maxLength={LIMITS.labelName.max}
-              placeholder="bug"
-              autoFocus
-              autoComplete="off"
-            />
-          )}
-        </FormField>
-        <div className="grid gap-1.5 pb-px">
-          <span className="text-sm leading-none font-medium" aria-hidden="true">
-            Color
-          </span>
-          <ColorPicker value={color} onChange={setColor} label="Label color">
-            <Button
-              type="button"
-              variant="outline"
-              size="icon"
-              aria-label={`Label color: ${color}`}
-            >
-              <span className="size-4 rounded-full border" style={{ backgroundColor: color }} />
-            </Button>
-          </ColorPicker>
-        </div>
-      </div>
-      <FormField
-        label="Description"
-        error={errors.description}
-        hint={`Optional · shown when hovering the label (${description.length}/${LIMITS.labelDescription.max})`}
-      >
-        {(field) => (
-          <Input
-            {...field}
-            value={description}
-            onChange={(event) => setDescription(event.target.value)}
-            maxLength={LIMITS.labelDescription.max}
-            placeholder="Something isn’t working"
-            autoComplete="off"
-          />
-        )}
-      </FormField>
-      <FormError message={formError} />
-      <DialogFooter>
-        <Button type="button" variant="outline" onClick={onClose} disabled={pending}>
-          Cancel
-        </Button>
-        <Button type="submit" disabled={pending || !name.trim()}>
-          {pending ? <Spinner /> : null}
-          {initial ? 'Save label' : 'Create label'}
-        </Button>
-      </DialogFooter>
-    </form>
   );
 }
 

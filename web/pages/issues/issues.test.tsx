@@ -1,5 +1,6 @@
 import { QueryClientProvider } from '@tanstack/react-query';
-import { render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { createMemoryRouter, RouterProvider } from 'react-router';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { PERMISSIONS, type Permission } from '@shared/permissions';
@@ -8,7 +9,8 @@ import type { Issue, IssueListResponse, IssueSummary } from '@shared/schemas/iss
 import type { Label, Project } from '@shared/schemas/projects';
 import { createQueryClient } from '@web/lib/queryClient';
 import { routes } from '@web/router';
-import { mockApi, testConfig, testMe, testSession } from '@web/test/mockApi';
+import { jsonResponse, mockApi, testConfig, testMe, testSession } from '@web/test/mockApi';
+import { requestUrl } from '@web/pages/my-tasks/testing';
 import { labelColorFor } from './labels';
 
 const LAZY = { timeout: 15_000 };
@@ -177,6 +179,55 @@ describe('issue list', { timeout: 20_000 }, () => {
     renderAt('/t/acme/p/WEB/issues');
     expect(await screen.findByRole('heading', { name: 'No issues yet' }, LAZY)).toBeVisible();
     expect(screen.queryByRole('link', { name: /New issue/ })).toBeNull();
+  });
+
+  it('removes a label from the row’s right-click menu (BAT-40)', async () => {
+    const user = userEvent.setup();
+    const patches: unknown[] = [];
+    let current: IssueSummary = summary;
+    mockIssueApi([...PERMISSIONS], {
+      items: [summary],
+      nextCursor: null,
+      counts: { open: 1, resolved: 0, all: 1 },
+    });
+    // The list follows the server's answer once refreshed.
+    const base = vi.mocked(fetch).getMockImplementation();
+    vi.mocked(fetch).mockImplementation((input, init) => {
+      const url = new URL(requestUrl(input), 'http://localhost');
+      if (url.pathname === '/api/issues/i1' && init?.method === 'PATCH') {
+        patches.push(JSON.parse(init.body as string));
+        current = { ...summary, labels: [] };
+        return Promise.resolve(jsonResponse({ ...issue, labels: [] }));
+      }
+      if (url.pathname === '/api/projects/p1/issues') {
+        return Promise.resolve(
+          jsonResponse({
+            items: [current],
+            nextCursor: null,
+            counts: { open: 1, resolved: 0, all: 1 },
+          }),
+        );
+      }
+      return base!(input, init);
+    });
+    renderAt('/t/acme/p/WEB/issues');
+    const rows = await screen.findByRole('list', { name: 'Issues' }, LAZY);
+    const row = within(rows).getByRole('listitem');
+    expect(within(row).getByText('Bug')).toBeInTheDocument();
+    fireEvent.contextMenu(
+      within(row).getByRole('link', { name: 'Export fails for large projects' }),
+    );
+    await user.click(await screen.findByRole('menuitem', { name: 'Labels' }));
+    const item = await screen.findByRole('menuitemcheckbox', { name: 'Bug' });
+    expect(item).toHaveAttribute('aria-checked', 'true');
+    item.focus();
+    await user.keyboard('{Enter}');
+    await waitFor(() => expect(patches).toEqual([{ labels: { remove: ['l1'] } }]));
+    await waitFor(() => expect(within(row).queryByText('Bug')).toBeNull());
+    expect(screen.getByRole('menuitemcheckbox', { name: 'Bug' })).toHaveAttribute(
+      'aria-checked',
+      'false',
+    );
   });
 });
 

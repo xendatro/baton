@@ -81,6 +81,7 @@ import { pipelineBoardPath } from './pipelineTab';
 import { ClaimPanel } from './ClaimPanel';
 import { ForceMoveDialog } from './ForceMoveDialog';
 import { SendBackDialog, type SendBackResult } from './SendBackDialog';
+import { useTaskLabelsMenu } from './taskLabelsMenu';
 import { StagePanel } from './StagePanel';
 import {
   restoreDeletedTask,
@@ -473,6 +474,7 @@ function TaskView({ task, team, project }: { task: Task; team: MeTeam; project: 
             <TaskMenu
               task={task}
               canEditText={canEditText}
+              canUpdate={canUpdate}
               canDelete={canDelete}
               onEditTitle={() => setEditingTitle(true)}
               onToggleSubscription={() => subscription.mutate(!task.subscribed)}
@@ -1083,6 +1085,7 @@ function DeleteTaskButton({ onDelete }: { onDelete: () => void }) {
 function TaskMenu({
   task,
   canEditText,
+  canUpdate,
   canDelete,
   onEditTitle,
   onToggleSubscription,
@@ -1091,64 +1094,71 @@ function TaskMenu({
 }: {
   task: Task;
   canEditText: boolean;
+  canUpdate: boolean;
   canDelete: boolean;
   onEditTitle: () => void;
   onToggleSubscription: () => void;
   onDelete: () => void;
   url: string;
 }) {
+  // BAT-40: Labels › here too.
+  const labels = useTaskLabelsMenu(task, 'dropdown', canUpdate);
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button
-          variant="outline"
-          size="icon"
-          aria-label="Task actions"
-          title="More actions"
-          className="mt-4 shrink-0"
-        >
-          <MoreHorizontalIcon aria-hidden="true" />
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-56">
-        {canEditText ? (
-          <DropdownMenuItem onSelect={onEditTitle}>
-            <PencilIcon aria-hidden="true" />
-            Edit title
-            <Kbd keys="e" className="ml-auto" />
-          </DropdownMenuItem>
-        ) : null}
-        <DropdownMenuItem onSelect={() => void copyText(task.ref, task.ref)}>
-          <CopyIcon aria-hidden="true" />
-          Copy {task.ref}
-        </DropdownMenuItem>
-        <DropdownMenuItem onSelect={() => void copyText(url)}>
-          <LinkIcon aria-hidden="true" />
-          Copy link
-        </DropdownMenuItem>
-        <DropdownMenuItem onSelect={onToggleSubscription}>
-          {task.subscribed ? <BellOffIcon aria-hidden="true" /> : <BellIcon aria-hidden="true" />}
-          {task.subscribed ? 'Unsubscribe' : 'Subscribe'}
-        </DropdownMenuItem>
-        {canEditText ? (
-          <ConversationModeMenuItem
-            parentType="task"
-            parentId={task.id}
-            projectId={task.projectId}
-            mode={task.conversationMode}
-          />
-        ) : null}
-        {canDelete ? (
-          <>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem variant="destructive" onSelect={onDelete}>
-              <Trash2Icon aria-hidden="true" />
-              Delete task
+    <>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button
+            variant="outline"
+            size="icon"
+            aria-label="Task actions"
+            title="More actions"
+            className="mt-4 shrink-0"
+          >
+            <MoreHorizontalIcon aria-hidden="true" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-56">
+          {canEditText ? (
+            <DropdownMenuItem onSelect={onEditTitle}>
+              <PencilIcon aria-hidden="true" />
+              Edit title
+              <Kbd keys="e" className="ml-auto" />
             </DropdownMenuItem>
-          </>
-        ) : null}
-      </DropdownMenuContent>
-    </DropdownMenu>
+          ) : null}
+          <DropdownMenuItem onSelect={() => void copyText(task.ref, task.ref)}>
+            <CopyIcon aria-hidden="true" />
+            Copy {task.ref}
+          </DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => void copyText(url)}>
+            <LinkIcon aria-hidden="true" />
+            Copy link
+          </DropdownMenuItem>
+          <DropdownMenuItem onSelect={onToggleSubscription}>
+            {task.subscribed ? <BellOffIcon aria-hidden="true" /> : <BellIcon aria-hidden="true" />}
+            {task.subscribed ? 'Unsubscribe' : 'Subscribe'}
+          </DropdownMenuItem>
+          {labels.submenu}
+          {canEditText ? (
+            <ConversationModeMenuItem
+              parentType="task"
+              parentId={task.id}
+              projectId={task.projectId}
+              mode={task.conversationMode}
+            />
+          ) : null}
+          {canDelete ? (
+            <>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem variant="destructive" onSelect={onDelete}>
+                <Trash2Icon aria-hidden="true" />
+                Delete task
+              </DropdownMenuItem>
+            </>
+          ) : null}
+        </DropdownMenuContent>
+      </DropdownMenu>
+      {labels.dialog}
+    </>
   );
 }
 

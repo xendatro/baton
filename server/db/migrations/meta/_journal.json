@@ -204,6 +204,13 @@
       "when": 1790721195512,
       "tag": "0028_model_choice",
       "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "6",
+      "when": 1790724991172,
+      "tag": "0029_team_member_settings",
+      "breakpoints": true
     }
   ]
 }

@@ -1829,6 +1829,30 @@ export const projectMemberSettings = sqliteTable(
 );
 
 /**
+ * A person's own settings for one team (BAT-34): notification overrides for the team's projects
+ * (and its team-level notifications). Resolution: the project's override, else this, else the
+ * account's settings. Null columns (and a missing row) fall through.
+ */
+export const teamMemberSettings = sqliteTable(
+  'team_member_settings',
+  {
+    userId: text('user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    teamId: text('team_id')
+      .notNull()
+      .references(() => team.id, { onDelete: 'cascade' }),
+    notifications: text('notifications', { mode: 'json' }).$type<ProjectNotifications>(),
+    agentNotifications: text('agent_notifications', { enum: AGENT_NOTIFICATION_LEVELS }),
+    updatedAt: updatedAtColumn(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.userId, t.teamId] }),
+    index('team_member_settings_team_idx').on(t.teamId),
+  ],
+);
+
+/**
  * Who can start a person's agent (agent access): per team a default, per project an optional
  * override (`project_id` set) that replaces it there. `rules.auto` start it without asking,
  * `rules.ask` make a request the owner approves; anyone else can't start it. No row: the built-in

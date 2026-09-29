@@ -69,6 +69,9 @@ export const ACCOUNT_NOTIFICATIONS: ProjectNotifications = {
 
 const agentLevelSchema = z.enum(AGENT_NOTIFICATION_LEVELS);
 
+/** Where "Use my defaults" in a project leads: your team's override, or your account. */
+export const NOTIFICATION_DEFAULT_SOURCES = ['team', 'account'] as const;
+
 /** `GET /api/projects/:projectId/my-settings`. */
 export const myProjectSettingsSchema = z.object({
   projectId: z.string(),
@@ -84,6 +87,16 @@ export const myProjectSettingsSchema = z.object({
     agentNotifications: agentLevelSchema,
     models: defaultMappingSchema,
   }),
+  /**
+   * Where each notification default comes from (BAT-34): the team's override, or the account's
+   * settings. Absent from older servers: the account's.
+   */
+  inherited: z
+    .object({
+      notifications: z.enum(NOTIFICATION_DEFAULT_SOURCES),
+      agentNotifications: z.enum(NOTIFICATION_DEFAULT_SOURCES),
+    })
+    .optional(),
 });
 export type MyProjectSettings = z.infer<typeof myProjectSettingsSchema>;
 
@@ -95,3 +108,32 @@ export const updateMyProjectSettingsInputSchema = z.object({
   models: z.object({ chain: chainSchema }).optional(),
 });
 export type UpdateMyProjectSettingsInput = z.input<typeof updateMyProjectSettingsInputSchema>;
+
+// ---------------------------------------------------------------------------------------------
+// Your settings for one team (BAT-34): /api/teams/:teamId/my-settings
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * `GET /api/teams/:teamId/my-settings`: your notification overrides for the whole team. A project
+ * override wins over these; whatever is unset here uses the account's settings.
+ */
+export const myTeamSettingsSchema = z.object({
+  teamId: z.string(),
+  /** Null: "Use my defaults" (the account's notifications). */
+  notifications: projectNotificationsSchema.nullable(),
+  /** Your agent's activity in this team; null: the account's level. */
+  agentNotifications: agentLevelSchema.nullable(),
+  /** What "Use my defaults" means (the account's settings). */
+  defaults: z.object({
+    notifications: projectNotificationsSchema,
+    agentNotifications: agentLevelSchema,
+  }),
+});
+export type MyTeamSettings = z.infer<typeof myTeamSettingsSchema>;
+
+/** `PUT /api/teams/:teamId/my-settings`: the parts given are replaced (null = defaults). */
+export const updateMyTeamSettingsInputSchema = z.object({
+  notifications: projectNotificationsSchema.nullable().optional(),
+  agentNotifications: agentLevelSchema.nullable().optional(),
+});
+export type UpdateMyTeamSettingsInput = z.input<typeof updateMyTeamSettingsInputSchema>;

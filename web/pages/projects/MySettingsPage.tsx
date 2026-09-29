@@ -2,18 +2,9 @@ import { FolderIcon } from 'lucide-react';
 import { useId, useState } from 'react';
 import { Link } from 'react-router';
 import { toast } from 'sonner';
-import type { AgentNotificationLevel } from '@shared/constants';
 import type { Chain } from '@shared/schemas/agentRunner';
 import type { MeProject, MeTeam } from '@shared/schemas/core';
-import {
-  PROJECT_NOTIFY_KIND_LABELS,
-  PROJECT_NOTIFY_KINDS,
-  PROJECT_NOTIFY_LEVEL_LABELS,
-  PROJECT_NOTIFY_LEVELS,
-  type MyProjectSettings,
-  type ProjectNotifications,
-  type ProjectNotifyLevel,
-} from '@shared/schemas/projectSettings';
+import type { MyProjectSettings } from '@shared/schemas/projectSettings';
 import type { AgentAccessRules } from '@shared/schemas/agentAccess';
 import { AgentAccessEditor } from '@web/components/agentRequests/AgentAccessEditor';
 import {
@@ -27,7 +18,6 @@ import { PageContainer } from '@web/components/common/PageContainer';
 import { Spinner } from '@web/components/common/Spinner';
 import { Button } from '@web/components/ui/button';
 import { Label } from '@web/components/ui/label';
-import { RadioGroup, RadioGroupItem } from '@web/components/ui/radio-group';
 import { Skeleton } from '@web/components/ui/skeleton';
 import { Switch } from '@web/components/ui/switch';
 import { errorMessage } from '@web/lib/api';
@@ -40,6 +30,7 @@ import { SettingsCard, SettingsCardSkeleton } from '../settings/SettingsCard';
 import { useProjectRoles } from '../project-settings/accessQueries';
 import { useMembers, useRoles } from '../teams/api';
 import { useMyProjectSettings, useUpdateMyProjectSettings } from './mySettingsQueries';
+import { NotificationSettingsCard } from './NotificationSettingsCard';
 
 /**
  * `/t/:team/p/:key/me`: your settings for this project (BAT-29), like Discord's per-server
@@ -70,7 +61,11 @@ function MySettings({ team, project }: { team: MeTeam; project: MeProject }) {
             <Link to="/settings/automatic-agents" className="underline underline-offset-2">
               Automatic agents
             </Link>{' '}
-            settings.
+            settings; notifications follow{' '}
+            <Link to={`/t/${team.slug}/me`} className="underline underline-offset-2">
+              your settings for {team.name}
+            </Link>{' '}
+            first.
           </p>
         </header>
         {settings.isPending ? (
@@ -223,17 +218,6 @@ function accessSummary(rules: AgentAccessRules, options: PrincipalOptions): stri
 // Notifications
 // ---------------------------------------------------------------------------------------------
 
-const AGENT_LEVEL_LABELS: Record<AgentNotificationLevel, string> = {
-  all: 'Everything',
-  needs_me: 'Only what needs you',
-  none: 'Nothing',
-};
-
-interface NotificationsDraft {
-  notifications: ProjectNotifications | null;
-  agentNotifications: AgentNotificationLevel | null;
-}
-
 function NotificationsCard({
   projectId,
   settings,
@@ -242,128 +226,26 @@ function NotificationsCard({
   settings: MyProjectSettings;
 }) {
   const update = useUpdateMyProjectSettings(projectId);
-  const saved: NotificationsDraft = {
-    notifications: settings.notifications,
-    agentNotifications: settings.agentNotifications,
-  };
-  const [draft, setDraft] = useState<NotificationsDraft | null>(null);
-  const value = draft ?? saved;
-  const dirty = draft !== null && JSON.stringify(draft) !== JSON.stringify(saved);
-  const ids = useId();
-  const own = value.notifications;
-  const shown = own ?? settings.defaults.notifications;
-  const set = (patch: Partial<NotificationsDraft>) => setDraft({ ...value, ...patch });
-  const setOwn = (patch: Partial<ProjectNotifications>) =>
-    set({ notifications: { ...shown, ...patch } });
-
-  const submit = () =>
-    update.mutate(value, {
-      onSuccess: () => {
-        setDraft(null);
-        toast.success('Saved your notifications for this project');
-      },
-      onError: (cause) => toast.error(errorMessage(cause)),
-    });
-
   return (
-    <SettingsCard
-      title="Notifications"
-      description="What of this project reaches your inbox. Mentions of you and assignments come through unless you choose Nothing; your agent’s sign-off requests always do."
-      footer={
-        <div className="flex w-full justify-end">
-          <Button size="sm" onClick={submit} disabled={!dirty || update.isPending}>
-            {update.isPending ? <Spinner /> : null}
-            Save notifications
-          </Button>
-        </div>
+    <NotificationSettingsCard
+      scope="project"
+      saved={{
+        notifications: settings.notifications,
+        agentNotifications: settings.agentNotifications,
+      }}
+      defaults={settings.defaults}
+      inherited={settings.inherited}
+      saving={update.isPending}
+      onSave={(value, done) =>
+        update.mutate(value, {
+          onSuccess: () => {
+            done();
+            toast.success('Saved your notifications for this project');
+          },
+          onError: (cause) => toast.error(errorMessage(cause)),
+        })
       }
-    >
-      <div className="grid gap-5">
-        <div className="flex items-center justify-between gap-4">
-          <div className="grid gap-0.5">
-            <Label htmlFor={`${ids}-defaults`}>Use my defaults</Label>
-            <p className="text-xs text-muted-foreground">
-              {own
-                ? 'This project has its own notifications.'
-                : `Your account’s: ${PROJECT_NOTIFY_LEVEL_LABELS[settings.defaults.notifications.level].toLowerCase()}.`}
-            </p>
-          </div>
-          <Switch
-            id={`${ids}-defaults`}
-            checked={own === null}
-            onCheckedChange={(on) =>
-              set({ notifications: on ? null : { ...settings.defaults.notifications } })
-            }
-          />
-        </div>
-        <fieldset className="grid gap-3" disabled={own === null}>
-          <legend className="sr-only">This project’s notifications</legend>
-          <RadioGroup
-            value={shown.level}
-            onValueChange={(level) => setOwn({ level: level as ProjectNotifyLevel })}
-            aria-label="Notifications for this project"
-            disabled={own === null}
-            className="gap-2"
-          >
-            {PROJECT_NOTIFY_LEVELS.map((level) => (
-              <div key={level} className="flex items-center gap-2">
-                <RadioGroupItem id={`${ids}-level-${level}`} value={level} />
-                <Label htmlFor={`${ids}-level-${level}`} className="font-normal">
-                  {PROJECT_NOTIFY_LEVEL_LABELS[level]}
-                </Label>
-              </div>
-            ))}
-          </RadioGroup>
-          {shown.level === 'all' ? (
-            <ul className="grid gap-2 rounded-md border p-3" aria-label="Kinds of notifications">
-              {PROJECT_NOTIFY_KINDS.map((kind) => (
-                <li key={kind} className="flex items-center justify-between gap-4">
-                  <div className="grid gap-0.5">
-                    <Label htmlFor={`${ids}-kind-${kind}`} className="font-normal">
-                      {PROJECT_NOTIFY_KIND_LABELS[kind].label}
-                    </Label>
-                    <p className="text-xs text-muted-foreground">
-                      {PROJECT_NOTIFY_KIND_LABELS[kind].hint}
-                    </p>
-                  </div>
-                  <Switch
-                    id={`${ids}-kind-${kind}`}
-                    checked={shown.kinds[kind]}
-                    disabled={own === null}
-                    onCheckedChange={(on) => setOwn({ kinds: { ...shown.kinds, [kind]: on } })}
-                  />
-                </li>
-              ))}
-            </ul>
-          ) : null}
-        </fieldset>
-        <div className="grid gap-1.5">
-          <Label htmlFor={`${ids}-agent`}>Your agent’s activity here</Label>
-          <select
-            id={`${ids}-agent`}
-            value={value.agentNotifications ?? ''}
-            onChange={(event) =>
-              set({
-                agentNotifications: (event.target.value || null) as AgentNotificationLevel | null,
-              })
-            }
-            className="h-8 w-full max-w-xs rounded-md border border-input bg-transparent px-2 text-sm dark:bg-input/30"
-          >
-            <option value="">
-              Use my default ({AGENT_LEVEL_LABELS[settings.defaults.agentNotifications]})
-            </option>
-            {(Object.keys(AGENT_LEVEL_LABELS) as AgentNotificationLevel[]).map((level) => (
-              <option key={level} value={level}>
-                {AGENT_LEVEL_LABELS[level]}
-              </option>
-            ))}
-          </select>
-          <p className="text-xs text-muted-foreground">
-            How much of what your agent does in this project reaches your inbox.
-          </p>
-        </div>
-      </div>
-    </SettingsCard>
+    />
   );
 }
 

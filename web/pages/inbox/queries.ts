@@ -1,12 +1,14 @@
 import {
   useInfiniteQuery,
   useMutation,
+  useQuery,
   useQueryClient,
   type InfiniteData,
   type QueryClient,
 } from '@tanstack/react-query';
 import {
   markNotificationsReadResponseSchema,
+  notificationCountsResponseSchema,
   notificationListResponseSchema,
   type MarkNotificationsReadInput,
   type MeResponse,
@@ -26,17 +28,43 @@ export const INBOX_PAGE_SIZE = 30;
 
 type Feed = InfiniteData<NotificationListResponse, string | undefined>;
 
-export function useInbox(unreadOnly: boolean) {
+/** The inbox's team and project filters (BAT-34); unset: everything. */
+export interface InboxScope {
+  teamId?: string;
+  projectId?: string;
+}
+
+export function useInbox(unreadOnly: boolean, scope: InboxScope = {}) {
   return useInfiniteQuery({
-    queryKey: queryKeys.notifications.list({ view: 'inbox', unread: unreadOnly }),
+    queryKey: queryKeys.notifications.list({
+      view: 'inbox',
+      unread: unreadOnly,
+      teamId: scope.teamId ?? null,
+      projectId: scope.projectId ?? null,
+    }),
     queryFn: ({ pageParam, signal }) =>
       api.get('/api/notifications', {
-        query: { limit: INBOX_PAGE_SIZE, cursor: pageParam, unread: unreadOnly ? '1' : null },
+        query: {
+          limit: INBOX_PAGE_SIZE,
+          cursor: pageParam,
+          unread: unreadOnly ? '1' : null,
+          teamId: scope.teamId ?? null,
+          projectId: scope.projectId ?? null,
+        },
         schema: notificationListResponseSchema,
         signal,
       }),
     initialPageParam: undefined as string | undefined,
     getNextPageParam: (last) => last.nextCursor ?? undefined,
+  });
+}
+
+/** How many notifications (and unread) each team and project has (BAT-34). */
+export function useNotificationCounts() {
+  return useQuery({
+    queryKey: queryKeys.notifications.counts(),
+    queryFn: ({ signal }) =>
+      api.get('/api/notifications/counts', { schema: notificationCountsResponseSchema, signal }),
   });
 }
 
@@ -50,6 +78,8 @@ function covers(input: MarkNotificationsReadInput, notification: Notification): 
   if (input.item) {
     return notification.entityType === input.item.type && notification.entityId === input.item.id;
   }
+  if (input.teamId && notification.teamId !== input.teamId) return false;
+  if (input.projectId && notification.projectId !== input.projectId) return false;
   return true;
 }
 
@@ -63,6 +93,10 @@ function lowerUnreadCounts(queryClient: QueryClient, read: number, all = false):
     data ? { ...data, unreadNotifications: lower(data.unreadNotifications) } : data,
   );
 }
+
+/** "Mark all as read" within the inbox's team or project filter. */
+const isScoped = (input: MarkNotificationsReadInput) =>
+  input.teamId !== undefined || input.projectId !== undefined;
 
 /**
  * Marks notifications read in every cached list and lowers the unread counts at once. Returns
@@ -96,7 +130,7 @@ function applyRead(queryClient: QueryClient, input: MarkNotificationsReadInput):
     },
   );
 
-  if (!input.item) lowerUnreadCounts(queryClient, newlyRead, input.all);
+  if (!input.item) lowerUnreadCounts(queryClient, newlyRead, input.all && !isScoped(input));
   return newlyRead;
 }
 

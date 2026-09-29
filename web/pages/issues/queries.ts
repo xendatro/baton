@@ -3,6 +3,7 @@ import {
   useMutation,
   useQuery,
   useQueryClient,
+  type InfiniteData,
   type QueryClient,
 } from '@tanstack/react-query';
 import { okResponseSchema } from '@shared/schemas/common';
@@ -12,6 +13,8 @@ import {
   issueSchema,
   type CreateIssueInput,
   type Issue,
+  type IssueLabel,
+  type IssueListResponse,
   type IssueSort,
   type IssueState,
   type IssueSummary,
@@ -22,6 +25,7 @@ import { api } from '@web/lib/api';
 import { queryKeys } from '@web/lib/queryKeys';
 import { runShellAction } from '@web/lib/shellActions';
 import { prefillFromIssue } from '@web/lib/taskPrefill';
+import { toggleLabel, type LabelToggle } from '../projects/labelToggle';
 
 /**
  * Data hooks of the issues module (`/api/projects/:projectId/issues`, `/api/issues/:id`). Live
@@ -146,6 +150,67 @@ export function useSetIssueLabels(issue: Issue, labels: ReadonlyArray<Issue['lab
     },
     onError: (_error, _labelIds, context) => context?.rollback(),
     onSuccess: (updated) => storeIssue(queryClient, updated),
+  });
+}
+
+/** Applies `update` to the issue's labels on its page and in every cached list of the project. */
+function patchIssueLabels(
+  queryClient: QueryClient,
+  issue: Pick<IssueSummary, 'id' | 'projectId'>,
+  update: (labels: IssueLabel[]) => IssueLabel[],
+): void {
+  const patch = <T extends IssueSummary>(item: T): T =>
+    item.id === issue.id && Array.isArray(item.labels)
+      ? { ...item, labels: update(item.labels) }
+      : item;
+  queryClient.setQueriesData<unknown>(
+    { queryKey: queryKeys.issues.all(issue.projectId) },
+    (data: unknown) => {
+      if (typeof data !== 'object' || data === null) return data;
+      if ('pages' in data) {
+        const feed = data as InfiniteData<IssueListResponse>;
+        return {
+          ...feed,
+          pages: feed.pages.map((page) => ({ ...page, items: page.items.map(patch) })),
+        };
+      }
+      if ('id' in data && 'labels' in data) return patch(data as Issue);
+      return data;
+    },
+  );
+}
+
+/**
+ * Adds or removes one label of an issue (BAT-40: the right-click menus' Labels submenu): its own
+ * `{add}` / `{remove}` request, shown at once on the issue page and in the lists, and undone on
+ * failure. Only the last toggle in flight refreshes the lists.
+ */
+export function useToggleIssueLabel(issue: Pick<IssueSummary, 'id' | 'projectId'>) {
+  const queryClient = useQueryClient();
+  const mutationKey = ['issues', issue.id, 'labels'];
+  const lastInFlight = () => queryClient.isMutating({ mutationKey }) === 1;
+  return useMutation({
+    mutationKey,
+    mutationFn: (toggle: LabelToggle<IssueLabel>) =>
+      api.patch(
+        `/api/issues/${enc(issue.id)}`,
+        {
+          labels: toggle.add ? { add: [toggle.label.id] } : { remove: [toggle.label.id] },
+        } satisfies UpdateIssueInput,
+        { schema: issueSchema },
+      ),
+    onMutate: async (toggle) => {
+      await queryClient.cancelQueries({ queryKey: queryKeys.issues.all(issue.projectId) });
+      patchIssueLabels(queryClient, issue, (labels) => toggleLabel(labels, toggle));
+    },
+    onError: (_error, toggle) =>
+      patchIssueLabels(queryClient, issue, (labels) =>
+        toggleLabel(labels, { ...toggle, add: !toggle.add }),
+      ),
+    onSuccess: (updated) => {
+      if (lastInFlight()) storeIssue(queryClient, updated);
+    },
+    meta: { suppressErrorToast: true },
   });
 }
 

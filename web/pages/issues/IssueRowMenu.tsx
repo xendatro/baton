@@ -24,6 +24,7 @@ import { canOpenNewTab, copyLink, copyToClipboard, openInNewTab } from '@web/lib
 import { useProjectAccess } from '@web/lib/permissions';
 import { queryKeys } from '@web/lib/queryKeys';
 import { useShellActionAvailable } from '@web/lib/shellActions';
+import { useIssueLabelsMenu } from './issueLabelsMenu';
 import { useOpenCreateTaskFromIssue } from './queries';
 
 const enc = encodeURIComponent;
@@ -31,7 +32,8 @@ const enc = encodeURIComponent;
 /**
  * An issue row's right-click menu: open it (here or in a new tab), copy its link or ref, resolve
  * or reopen it (its author, or `RESOLVE_ISSUES`), and create a task from it (`CREATE_TASKS`, like
- * the issue page's "Create task": the New task dialog, prefilled). A normal click still opens it.
+ * the issue page's "Create task": the New task dialog, prefilled), and add or remove its labels
+ * (the same people as resolving, BAT-40). A normal click still opens it.
  */
 export function IssueRowMenu({ issue, children }: { issue: IssueSummary; children: ReactNode }) {
   const navigate = useNavigate();
@@ -55,6 +57,7 @@ export function IssueRowMenu({ issue, children }: { issue: IssueSummary; childre
     onError: (error) => toast.error(errorMessage(error)),
     meta: { suppressErrorToast: true },
   });
+  const labels = useIssueLabelsMenu(issue, 'context', canTriage);
   const openCreateTask = useOpenCreateTaskFromIssue();
   const createTask = () =>
     void openCreateTask(issue, canTriage ? 'fixes' : 'relates').catch((error: unknown) =>
@@ -62,40 +65,44 @@ export function IssueRowMenu({ issue, children }: { issue: IssueSummary; childre
     );
 
   return (
-    <ContextMenu>
-      <ContextMenuTrigger asChild>{children}</ContextMenuTrigger>
-      <ContextMenuContent className="w-52" aria-label={`${issue.ref} actions`}>
-        <MenuRow
-          icon={SquareArrowOutUpRightIcon}
-          label="Open"
-          shortcut="enter"
-          onSelect={() => void navigate(issue.path)}
-        />
-        {canOpenNewTab() ? (
+    <>
+      <ContextMenu>
+        <ContextMenuTrigger asChild>{children}</ContextMenuTrigger>
+        <ContextMenuContent className="w-52" aria-label={`${issue.ref} actions`}>
           <MenuRow
-            icon={ExternalLinkIcon}
-            label="Open in new tab"
-            onSelect={() => openInNewTab(issue.path, (path) => void navigate(path))}
+            icon={SquareArrowOutUpRightIcon}
+            label="Open"
+            shortcut="enter"
+            onSelect={() => void navigate(issue.path)}
           />
-        ) : null}
-        <MenuRow icon={LinkIcon} label="Copy link" onSelect={() => copyLink(issue.path)} />
-        <MenuRow
-          icon={HashIcon}
-          label="Copy ref"
-          onSelect={() => void copyToClipboard(issue.ref, 'Ref')}
-        />
-        {canTriage || canCreateTask ? <ContextMenuSeparator /> : null}
-        {canTriage ? (
+          {canOpenNewTab() ? (
+            <MenuRow
+              icon={ExternalLinkIcon}
+              label="Open in new tab"
+              onSelect={() => openInNewTab(issue.path, (path) => void navigate(path))}
+            />
+          ) : null}
+          <MenuRow icon={LinkIcon} label="Copy link" onSelect={() => copyLink(issue.path)} />
           <MenuRow
-            icon={issue.resolved ? CircleDotIcon : CheckCircle2Icon}
-            label={issue.resolved ? 'Reopen' : 'Resolve'}
-            onSelect={() => setResolved.mutate(!issue.resolved)}
+            icon={HashIcon}
+            label="Copy ref"
+            onSelect={() => void copyToClipboard(issue.ref, 'Ref')}
           />
-        ) : null}
-        {canCreateTask ? (
-          <MenuRow icon={SquarePenIcon} label="Create task…" onSelect={createTask} />
-        ) : null}
-      </ContextMenuContent>
-    </ContextMenu>
+          {canTriage || canCreateTask ? <ContextMenuSeparator /> : null}
+          {canTriage ? (
+            <MenuRow
+              icon={issue.resolved ? CircleDotIcon : CheckCircle2Icon}
+              label={issue.resolved ? 'Reopen' : 'Resolve'}
+              onSelect={() => setResolved.mutate(!issue.resolved)}
+            />
+          ) : null}
+          {labels.submenu}
+          {canCreateTask ? (
+            <MenuRow icon={SquarePenIcon} label="Create task…" onSelect={createTask} />
+          ) : null}
+        </ContextMenuContent>
+      </ContextMenu>
+      {labels.dialog}
+    </>
   );
 }

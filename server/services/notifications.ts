@@ -6,6 +6,7 @@ import type {
   MarkNotificationsReadInput,
   MarkNotificationsReadResponse,
   Notification,
+  NotificationCountsResponse,
   NotificationItem,
 } from '@shared/schemas/core';
 import type { Actor, AppDeps } from '../context';
@@ -27,11 +28,7 @@ import {
 } from './access';
 import { queueAssignedJobs, queueMentionJobs } from './agentJobs';
 import { emitAfterCommit } from './events';
-import {
-  agentNotificationLevel,
-  projectNotificationPrefs,
-  wantsNotification,
-} from './projectSettings';
+import { agentNotificationLevel, notificationPrefs, wantsNotification } from './projectSettings';
 import { subscriberIds } from './subscriptions';
 import { getUserSummaries } from './users';
 
@@ -90,10 +87,11 @@ export interface NotifyOptions {
 function ownerLevel(
   tx: Tx,
   actor: Actor | null,
+  teamId: string,
   projectId: string | null,
 ): AgentNotificationLevel | null {
   if (!actor?.ownerId) return null;
-  return agentNotificationLevel(tx, actor.ownerId, projectId);
+  return agentNotificationLevel(tx, actor.ownerId, projectId, teamId);
 }
 
 /**
@@ -114,7 +112,7 @@ export function notifyUsers(
   options: NotifyOptions = {},
 ): string[] {
   const item = itemOfTarget(tx, target);
-  const level = ownerLevel(tx, actor, item.projectId);
+  const level = ownerLevel(tx, actor, target.teamId, item.projectId);
   const ownerId = actor?.ownerId;
   const ownerWanted =
     options.always === true ||
@@ -153,18 +151,16 @@ export function notifyUsers(
   ) {
     recipients.push(ownerId);
   }
-  if (item.projectId) {
-    // Nobody hears about a project they can't see (VIEW_PROJECT, design §3).
-    recipients = projectViewerIds(tx, item.projectId, recipients);
-    // Each person's notifications for the project: their override, else the account's (BAT-29).
-    // What their own agent did is up to its level (above), unless the project is set to Nothing.
-    const prefs = projectNotificationPrefs(tx, item.projectId, recipients);
-    recipients = recipients.filter((id) => {
-      const own = prefs.get(id)?.notifications ?? null;
-      if (id === ownerId && own?.level !== 'none') return true;
-      return wantsNotification(own, type, options.always === true);
-    });
-  }
+  // Nobody hears about a project they can't see (VIEW_PROJECT, design §3).
+  if (item.projectId) recipients = projectViewerIds(tx, item.projectId, recipients);
+  // Each person's notifications here: the project's override, else the team's (BAT-34), else the
+  // account's (BAT-29). What their own agent did is up to its level (above), unless it is Nothing.
+  const prefs = notificationPrefs(tx, target.teamId, item.projectId, recipients);
+  recipients = recipients.filter((id) => {
+    const own = prefs.get(id)?.notifications ?? null;
+    if (id === ownerId && own?.level !== 'none') return true;
+    return wantsNotification(own, type, options.always === true);
+  });
   if (recipients.length === 0) return [];
 
   const snippet = target.snippet ? excerpt(target.snippet, SNIPPET_LENGTH) : '';
@@ -393,7 +389,10 @@ export function refreshNotificationText(tx: Tx, target: NotificationTarget): voi
 
 type NotificationRow = typeof s.notification.$inferSelect;
 
-function toNotifications(db: DbExecutor, rows: readonly NotificationRow[]): Notification[] {
+function toNotifications(
+  db: DbExecutor,
+  rows: ReadonlyArray<NotificationRow & { projectId?: string | null }>,
+): Notification[] {
   const actors = getUserSummaries(
     db,
     rows.map((row) => row.actorId),
@@ -412,7 +411,16 @@ function toNotifications(db: DbExecutor, rows: readonly NotificationRow[]): Noti
     url: row.url,
     readAt: row.readAt?.toISOString() ?? null,
     createdAt: row.createdAt.toISOString(),
+    projectId: row.projectId ?? null,
   }));
+}
+
+/** Only the notifications of one team and/or project (the inbox filters, BAT-34). */
+function scopeCondition(scope: { teamId?: string; projectId?: string }) {
+  return and(
+    scope.teamId ? eq(s.notification.teamId, scope.teamId) : undefined,
+    scope.projectId ? eq(notificationProjectId, scope.projectId) : undefined,
+  );
 }
 
 /**
@@ -483,18 +491,20 @@ export function listNotifications(
     );
   }
   const rows = orm
-    .select()
+    .select({ notification: s.notification, projectId: notificationProjectId })
     .from(s.notification)
     .where(
       and(
         visibleCondition(orm, actor),
         query.unread === '1' ? isNull(s.notification.readAt) : undefined,
+        scopeCondition(query),
         cursor,
       ),
     )
     .orderBy(desc(s.notification.createdAt), desc(s.notification.id))
     .limit(query.limit + 1)
-    .all();
+    .all()
+    .map((row) => ({ ...row.notification, projectId: row.projectId }));
   const hasMore = rows.length > query.limit;
   const items = hasMore ? rows.slice(0, query.limit) : rows;
   const last = items.at(-1);
@@ -512,6 +522,40 @@ export function unreadNotificationCount(deps: AppDeps, actor: Actor): number {
     .where(and(visibleCondition(orm, actor), isNull(s.notification.readAt)))
     .get();
   return row?.value ?? 0;
+}
+
+/**
+ * The viewer's inbox broken down by team and by project (BAT-34): how many notifications each
+ * has, and how many are unread. Only teams and projects with notifications are listed.
+ */
+export function notificationCounts(deps: AppDeps, actor: Actor): NotificationCountsResponse {
+  const { orm } = deps.db;
+  const unread = sql<number>`coalesce(sum(case when ${s.notification.readAt} is null then 1 else 0 end), 0)`;
+  const rows = orm
+    .select({
+      teamId: s.notification.teamId,
+      projectId: notificationProjectId,
+      total: count(),
+      unread,
+    })
+    .from(s.notification)
+    .where(visibleCondition(orm, actor))
+    .groupBy(s.notification.teamId, notificationProjectId)
+    .all();
+  const teams = new Map<string, { teamId: string; total: number; unread: number }>();
+  const projects: NotificationCountsResponse['projects'] = [];
+  for (const row of rows) {
+    const total = Number(row.total);
+    const unreadCount = Number(row.unread);
+    const team = teams.get(row.teamId) ?? { teamId: row.teamId, total: 0, unread: 0 };
+    team.total += total;
+    team.unread += unreadCount;
+    teams.set(row.teamId, team);
+    if (row.projectId) {
+      projects.push({ teamId: row.teamId, projectId: row.projectId, total, unread: unreadCount });
+    }
+  }
+  return { teams: [...teams.values()], projects };
 }
 
 /** The project a notification's subject belongs to, or null (team-level subjects). */
@@ -557,6 +601,7 @@ export function markNotificationsRead(
       isNull(s.notification.readAt),
       input.ids ? inArray(s.notification.id, input.ids) : undefined,
       input.item ? aboutItem(tx, input.item) : undefined,
+      scopeCondition(input),
     );
     const groups = tx
       .selectDistinct({ teamId: s.notification.teamId, projectId: notificationProjectId })

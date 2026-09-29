@@ -51,6 +51,8 @@ const shellRoutes: RouteObject[] = [
   { path: 'join/:code', ...page(() => import('./pages/join/JoinPage')) },
   { path: 't/:team', ...page(() => import('./pages/teams/TeamHomePage')) },
   { path: 't/:team/members', ...page(() => import('./pages/teams/TeamMembersPage')) },
+  // Your settings for this team (BAT-34)
+  { path: 't/:team/me', ...page(() => import('./pages/teams/MyTeamSettingsPage')) },
   {
     path: 't/:team/settings',
     ...page(() => import('./pages/team-settings/TeamSettingsLayout')),

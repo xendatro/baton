@@ -23,6 +23,23 @@ export interface DesktopJob {
   state: string;
   note: string | null;
   output: string[];
+  /** Waiting on usage: the harnesses of its chain here and when each may run again (ms). */
+  waitingOn?: Array<{ harness: HarnessId; until: number }>;
+  /** BAT#31: messages of later jobs about the same item the session has taken in. */
+  delivered?: number;
+  /** BAT#31: …and those waiting for its next turn. */
+  queued?: number;
+}
+
+/** A job that ended on this computer recently, with why (e.g. the harness's own error). */
+export interface DesktopFinishedJob {
+  jobId: string;
+  ref: string | null;
+  title: string | null;
+  harness: HarnessId | null;
+  outcome: string;
+  note: string | null;
+  finishedAt: number;
 }
 
 export interface DesktopFolder {
@@ -45,12 +62,16 @@ export interface DesktopState {
   /** Updates of the app itself (optional: apps before 0.3.0 can't update themselves). */
   update?: DesktopUpdate;
   permissionModes: Partial<Record<HarnessId, string>>;
+  /** Harness → until when it is out of usage here (ms; only future ones; optional: older apps). */
+  exhaustedUntil?: Partial<Record<HarnessId, number>>;
   runner: {
     status: DesktopRunnerStatus;
     statusText: string | null;
     runnerId: string | null;
     waitingCount: number;
     jobs: DesktopJob[];
+    /** Jobs that ended here recently (optional: older apps). */
+    finished?: DesktopFinishedJob[];
   } | null;
 }
 
@@ -115,6 +136,13 @@ export interface BatonDesktopBridge {
   setPermissionMode(harness: HarnessId, mode: string): Promise<DesktopState>;
   testRun(harness: HarnessId): Promise<DesktopTestResult>;
   kill(jobId: string): Promise<void>;
+  /**
+   * BAT#30: the job's next attempt ignores the stored usage limits (a job waiting on usage here
+   * tries at once; a held one when this computer claims it next). Optional: older apps.
+   */
+  retryNow?(jobId: string): Promise<void>;
+  /** BAT#30: forgets that a harness is out of usage here. Optional: older apps. */
+  clearUsageLimit?(harness: HarnessId): Promise<DesktopState>;
   pauseHere(paused: boolean): Promise<DesktopState>;
   setMachineName(name: string): Promise<DesktopState>;
   onState(listener: (state: DesktopState) => void): () => void;

@@ -75,3 +75,30 @@ export function runnableChain(
     (entry) => installed.has(entry.harness) && (exhaustedUntil.get(entry.harness) ?? 0) <= now,
   );
 }
+
+/**
+ * BAT#28: the harness behind an agent name, as MCP clients name themselves (BAT-6): "Claude" is
+ * Claude Code, "Codex" Codex, and so on. Null for names of other clients.
+ */
+export function harnessOfAgentName(name: string | null | undefined): HarnessId | null {
+  const value = name?.trim().toLowerCase() ?? '';
+  if (!value) return null;
+  if (value.includes('claude')) return 'claude';
+  if (value.includes('codex')) return 'codex';
+  if (value.includes('gemini')) return 'gemini';
+  if (value.includes('cursor')) return 'cursor';
+  if (value.includes('opencode')) return 'opencode';
+  return null;
+}
+
+/**
+ * BAT#28: the chain with `harness` first — its own entry of the chain (model and effort) when the
+ * chain has one, else the harness with its defaults — and the rest after it as the fallback,
+ * at most `max` entries.
+ */
+export function preferHarness(chain: Chain, harness: HarnessId, max = chain.length + 1): Chain {
+  const index = chain.findIndex((entry) => entry.harness === harness);
+  const first = index >= 0 ? chain[index] : undefined;
+  const rest = chain.filter((_entry, position) => position !== index);
+  return [first ?? { harness, model: '', effort: '' }, ...rest].slice(0, Math.max(1, max));
+}

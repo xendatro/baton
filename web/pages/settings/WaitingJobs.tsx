@@ -36,8 +36,15 @@ import { useDecideWaitingJob, useJobOutput, type WaitingJob } from './automaticA
  *   killed by you, out of usage) and the output's tail. Retry runs it again; Trash drops it.
  * - **Cleared — task finished** (BAT#29): either kind whose task or issue finished meanwhile,
  *   muted with only Open, for a day.
+ *
+ * On the desktop app, `notes` carries why a job stopped on this computer (shown when Baton has
+ * no error for it, e.g. from an older server) and `beforeRetry` the app's Retry now, which makes
+ * the next attempt ignore the usage limits stored there (BAT#30).
  */
-export function WaitingJobGroups({ jobs }: { jobs: readonly WaitingJob[] }) {
+export function WaitingJobGroups({
+  jobs,
+  ...options
+}: { jobs: readonly WaitingJob[] } & RowOptions) {
   const needsOk = jobs.filter((job) => job.group === 'needs_ok');
   const stopped = jobs.filter((job) => job.group === 'stopped');
   const cleared = jobs.filter((job) => job.group === 'cleared');
@@ -48,6 +55,7 @@ export function WaitingJobGroups({ jobs }: { jobs: readonly WaitingJob[] }) {
           title="Needs your OK"
           description="From people outside “Whose jobs run”. They only run when you approve them."
           jobs={needsOk}
+          options={options}
         />
       ) : null}
       {stopped.length > 0 ? (
@@ -55,6 +63,7 @@ export function WaitingJobGroups({ jobs }: { jobs: readonly WaitingJob[] }) {
           title="Stopped runs"
           description="Your agent’s runs that failed or that you stopped. They wait until you retry them."
           jobs={stopped}
+          options={options}
         />
       ) : null}
       {cleared.length > 0 ? (
@@ -62,6 +71,7 @@ export function WaitingJobGroups({ jobs }: { jobs: readonly WaitingJob[] }) {
           title="Cleared — task finished"
           description="Their task or issue was finished meanwhile, so nothing is left to do. They go away after a day."
           jobs={cleared}
+          options={options}
           muted
         />
       ) : null}
@@ -69,15 +79,24 @@ export function WaitingJobGroups({ jobs }: { jobs: readonly WaitingJob[] }) {
   );
 }
 
+interface RowOptions {
+  /** Job id → why it stopped, as the desktop app that ran it knows. */
+  notes?: Readonly<Record<string, string>>;
+  /** Runs before Retry approves the job (the desktop app's Retry now). */
+  beforeRetry?: (jobId: string) => Promise<void> | void;
+}
+
 function Group({
   title,
   description,
   jobs,
+  options,
   muted = false,
 }: {
   title: string;
   description: string;
   jobs: readonly WaitingJob[];
+  options: RowOptions;
   muted?: boolean;
 }) {
   return (
@@ -88,7 +107,7 @@ function Group({
       <p className="text-xs text-muted-foreground">{description}</p>
       <ul className="divide-y">
         {jobs.map((job) => (
-          <JobRow key={job.jobId} job={job} />
+          <JobRow key={job.jobId} job={job} options={options} />
         ))}
       </ul>
     </section>
@@ -132,11 +151,14 @@ function harnessText(run: JobRun): string | null {
   return run.model ? `${label} · ${run.model}` : label;
 }
 
-function JobRow({ job }: { job: WaitingJob }) {
+function JobRow({ job, options }: { job: WaitingJob; options: RowOptions }) {
   const decide = useDecideWaitingJob();
   const [showOutput, setShowOutput] = useState(false);
   const ref = job.target.ref ?? 'job';
-  const act = (decision: 'approve' | 'dismiss', done: string) =>
+  const act = async (decision: 'approve' | 'dismiss', done: string) => {
+    if (decision === 'approve' && job.group === 'stopped' && options.beforeRetry) {
+      await Promise.resolve(options.beforeRetry(job.jobId)).catch(() => undefined);
+    }
     decide.mutate(
       { jobId: job.jobId, decision },
       {
@@ -144,6 +166,13 @@ function JobRow({ job }: { job: WaitingJob }) {
         onError: (cause) => toast.error(errorMessage(cause)),
       },
     );
+  };
+  // Baton's record of the run, else what the desktop app that ran it noted (one reason, not two).
+  const localNote = options.notes?.[job.jobId];
+  const reason =
+    localNote && (!job.run || (!job.run.error && job.run.outcome !== 'killed'))
+      ? localNote
+      : runReason(job.run);
   const failed = job.group === 'stopped' && job.run?.outcome !== 'killed';
   return (
     <li className="flex flex-wrap items-center gap-2 py-2">
@@ -170,7 +199,7 @@ function JobRow({ job }: { job: WaitingJob }) {
               failed ? 'text-destructive' : 'text-muted-foreground',
             )}
           >
-            {runReason(job.run)}
+            {reason}
             {job.run ? (
               <>
                 {' · '}
@@ -195,7 +224,7 @@ function JobRow({ job }: { job: WaitingJob }) {
         <>
           <Button
             size="sm"
-            onClick={() => act('approve', 'Approved: your agent will run it')}
+            onClick={() => void act('approve', 'Approved: your agent will run it')}
             disabled={decide.isPending}
             aria-label={`Approve ${ref}`}
           >
@@ -205,7 +234,7 @@ function JobRow({ job }: { job: WaitingJob }) {
           <Button
             size="sm"
             variant="outline"
-            onClick={() => act('dismiss', 'Declined')}
+            onClick={() => void act('dismiss', 'Declined')}
             disabled={decide.isPending}
             aria-label={`Decline ${ref}`}
           >
@@ -229,7 +258,7 @@ function JobRow({ job }: { job: WaitingJob }) {
           ) : null}
           <Button
             size="sm"
-            onClick={() => act('approve', 'Your agent will run it again')}
+            onClick={() => void act('approve', 'Your agent will run it again')}
             disabled={decide.isPending}
             aria-label={`Retry ${ref}`}
           >
@@ -239,7 +268,7 @@ function JobRow({ job }: { job: WaitingJob }) {
           <Button
             size="sm"
             variant="outline"
-            onClick={() => act('dismiss', 'Trashed')}
+            onClick={() => void act('dismiss', 'Trashed')}
             disabled={decide.isPending}
             aria-label={`Trash ${ref}`}
           >

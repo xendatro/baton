@@ -1,5 +1,6 @@
 import type { HarnessEvent, RunResult } from './types';
-import { cliAdapter, flag, num, str } from './cli';
+import { cliAdapter, errorEventMessage, eventMessage, flag, num, str, type CliSpec } from './cli';
+import { batonToolTouches, resultText } from './touches';
 
 /**
  * Codex, Gemini CLI, Cursor CLI and opencode (BAT-24). Not installed on the machine the app was
@@ -50,8 +51,24 @@ function addOpencodeUsage(result: RunResult, tokens: unknown) {
   result.reasoningTokens = (result.reasoningTokens ?? 0) + num(value.reasoning);
 }
 
-/** Codex: `codex exec --json -` (prompt on stdin), `codex exec resume <thread> …`. */
-export const codexAdapter = cliAdapter({
+/**
+ * Codex's workspace-write sandbox with network access: `sandbox_workspace_write.network_access`
+ * is a key of Codex's config.toml (`[sandbox_workspace_write] network_access = true`), set per
+ * run with `-c` (BAT#30). Without it the sandbox blocks all network, so npm, pip or a git
+ * fetch fail.
+ */
+export const CODEX_WORKSPACE_NETWORK = 'sandbox_workspace_write.network_access=true';
+
+/**
+ * Codex: `codex exec --json -` (prompt on stdin), `codex exec resume <thread> …`. Checked against
+ * `codex exec --help` of codex-cli 0.147: `--sandbox read-only|workspace-write|danger-full-access`,
+ * `--dangerously-bypass-approvals-and-sandbox`, `-c key=value`. `--full-auto` (older CLIs'
+ * shorthand for the workspace-write sandbox) isn't listed any more, and passing nothing leaves
+ * Codex in whatever sandbox the user's config gives (read-only by default), so "Full auto" passes
+ * `--sandbox workspace-write` when the help lists it and `--full-auto` only on CLIs that still
+ * have it.
+ */
+export const codexSpec: CliSpec = {
   id: 'codex',
   label: 'Codex',
   headless: 'codex exec',
@@ -62,8 +79,9 @@ export const codexAdapter = cliAdapter({
   modes: [
     {
       id: 'full-auto',
-      label: 'Full auto (workspace write)',
-      description: 'Edits files and runs commands inside the project folder, in Codex’s sandbox.',
+      label: 'Full auto (workspace-write sandbox)',
+      description:
+        'Codex’s workspace-write sandbox: edits files and runs commands in the project folder, with network access turned on (so npm, pip and git can download and push). It blocks writing anywhere outside the project folder and the temp folder (your home folder, other repositories, global installs); commands that need that fail instead of asking. Choose “No sandbox” for jobs that need more.',
       unattended: true,
     },
     {
@@ -74,7 +92,7 @@ export const codexAdapter = cliAdapter({
     },
     {
       id: 'bypass',
-      label: 'No sandbox, no approvals',
+      label: 'No sandbox, no approvals (full access)',
       description:
         'Everything runs without asking or sandboxing. Only for machines where that is safe.',
       unattended: true,
@@ -94,8 +112,10 @@ export const codexAdapter = cliAdapter({
       args.push(...flag(help, '--dangerously-bypass-approvals-and-sandbox'));
     } else if (options.permissionMode === 'read-only') {
       args.push(...flag(help, '--sandbox', 'read-only'));
-    } else {
-      args.push(...flag(help, '--full-auto'));
+    } else if (help.includes('--sandbox') && help.includes('workspace-write')) {
+      args.push('--sandbox', 'workspace-write', '-c', CODEX_WORKSPACE_NETWORK);
+    } else if (help.includes('--full-auto')) {
+      args.push('--full-auto', '-c', CODEX_WORKSPACE_NETWORK);
     }
     args.push(...flag(help, '--skip-git-repo-check'));
     const env: NodeJS.ProcessEnv = {};
@@ -120,16 +140,34 @@ export const codexAdapter = cliAdapter({
         if (message) emit({ type: 'output', text: message });
       } else if (itemType === 'command_execution' && event.type === 'item.started') {
         emit({ type: 'status', text: `→ ${str(item.command) ?? 'command'}` });
+      } else if (itemType === 'mcp_tool_call' && event.type === 'item.completed') {
+        const output = (item.result ?? {}) as Record<string, unknown>;
+        const touched = batonToolTouches({
+          name: str(item.tool) ?? str(item.name) ?? '',
+          server: str(item.server),
+          input: item.arguments,
+          output:
+            resultText(output.content) ??
+            (output.structured_content ? JSON.stringify(output.structured_content) : null),
+          failed: item.status === 'failed' || Boolean(item.error),
+        });
+        for (const ref of touched) emit({ type: 'touched', item: ref });
       }
     }
     if (event.type === 'turn.completed') addUsage(result, event.usage);
     if (event.type === 'turn.failed' || event.type === 'error') {
-      const message =
-        str((event.error as { message?: unknown } | undefined)?.message) ?? str(event.message);
+      const message = eventMessage(event);
       if (message) emit({ type: 'output', text: message });
     }
   },
-});
+  // Codex's own errors: the stream failing (`error`) or the turn failing (`turn.failed`). Items
+  // (agent messages, command output, file changes) are the agent's work and never count.
+  harnessError(event) {
+    if (event.type === 'turn.failed') return eventMessage(event) ?? 'The turn failed';
+    return errorEventMessage(event);
+  },
+};
+export const codexAdapter = cliAdapter(codexSpec);
 
 /** Gemini CLI: prompt on stdin, `--output-format stream-json` when available. */
 export const geminiAdapter = cliAdapter({
@@ -177,6 +215,10 @@ export const geminiAdapter = cliAdapter({
     if (event.type === 'result')
       addUsage(result, (event.stats as Record<string, unknown> | undefined) ?? event.usage);
   },
+  harnessError(event) {
+    if (event.type === 'result' && event.status === 'error') return eventMessage(event) ?? 'error';
+    return errorEventMessage(event);
+  },
 });
 
 /** Cursor CLI: `cursor-agent -p "<prompt>" --output-format stream-json`. */
@@ -220,6 +262,12 @@ export const cursorAdapter = cliAdapter({
       const message = str(event.result);
       if (message) emit({ type: 'output', text: message } satisfies HarnessEvent);
     }
+  },
+  harnessError(event) {
+    if (event.type === 'result' && (event.is_error === true || event.subtype === 'error')) {
+      return str(event.result) ?? eventMessage(event) ?? 'error';
+    }
+    return errorEventMessage(event);
   },
 });
 
@@ -265,5 +313,12 @@ export const opencodeAdapter = cliAdapter({
       }
       result.costUsd += num(part.cost);
     }
+  },
+  harnessError(event) {
+    if (event.type !== 'error') return null;
+    const data = ((event.error as { data?: unknown } | undefined)?.data ?? {}) as {
+      message?: unknown;
+    };
+    return str(data.message) ?? eventMessage(event) ?? 'error';
   },
 });

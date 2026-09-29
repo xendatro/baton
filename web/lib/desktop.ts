@@ -45,6 +45,17 @@ export function useDesktopState(): { state: DesktopState | null; loading: boolea
   return { state, loading };
 }
 
+/** When a usage limit resets: "01:00", or "Tue 01:00" when it isn't today (BAT#30). */
+export function usageClock(until: number, now: number = Date.now()): string {
+  const date = new Date(until);
+  const sameDay = date.toDateString() === new Date(now).toDateString();
+  return date.toLocaleString([], {
+    ...(sameDay ? {} : { weekday: 'short' }),
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
 /** "3m 12s". */
 export function elapsed(since: number, now: number): string {
   const seconds = Math.max(0, Math.round((now - since) / 1000));

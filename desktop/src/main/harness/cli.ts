@@ -5,7 +5,7 @@ import type { HarnessId } from '@shared/schemas/agentRunner';
 import type { HarnessAdapter, HarnessEvent, PermissionMode, RunOptions, RunResult } from './types';
 import { capture, num, parseJsonLine, spawnLines, str, which } from './process';
 import { mcpListReaches } from './mcpList';
-import { isOutOfUsage, parseResetAt } from './usageLimits';
+import { usageLimitOf } from './usageLimits';
 
 /**
  * Adapters for CLIs that print JSON lines (Codex, Gemini CLI, Cursor CLI, opencode). Their flags
@@ -41,7 +41,32 @@ export interface CliSpec {
     result: RunResult,
     emit: (event: HarnessEvent) => void,
   ): void;
+  /**
+   * The message of a JSON event that is the harness's own error (not the agent's messages, tool
+   * or command output, which can say anything), or null. Only these, and stderr of a failed
+   * run, can make a run "out of usage" (BAT#30). Default: `{ type: 'error', message }`.
+   */
+  harnessError?(event: Record<string, unknown>): string | null;
 }
+
+/** `{ type: 'error', message | error: { message } }`. */
+export function errorEventMessage(event: Record<string, unknown>): string | null {
+  if (event.type !== 'error') return null;
+  return eventMessage(event) ?? 'error';
+}
+
+/** `message`, or `error.message`, or `error` as text. */
+export function eventMessage(event: Record<string, unknown>): string | null {
+  const error = event.error;
+  return (
+    str(event.message) ??
+    str((error as { message?: unknown } | undefined)?.message) ??
+    (typeof error === 'string' ? str(error) : null)
+  );
+}
+
+/** Stderr lines kept for the error and the usage check. */
+const STDERR_LINES = 50;
 
 /**
  * On Windows the shell can't carry a multi-line argument, so the prompt goes into a file and the
@@ -52,6 +77,79 @@ function promptArgument(prompt: string): string {
   const file = path.join(os.tmpdir(), `baton-prompt-${process.pid}-${Date.now()}.md`);
   writeFileSync(file, prompt, { mode: 0o600 });
   return `Read the file ${file} and follow the instructions in it exactly.`;
+}
+
+/**
+ * Reads one run's output lines into its result: JSON events go to the spec, stderr is the
+ * harness's own log. How the run ended is decided from the exit code and the harness's own
+ * errors only (BAT#30): exit 0 is done, never out of usage.
+ */
+export class CliRunReader {
+  readonly result: RunResult;
+  private readonly harnessErrors: string[] = [];
+  private readonly stderr: string[] = [];
+
+  constructor(
+    private readonly spec: Pick<CliSpec, 'label' | 'parse' | 'harnessError'>,
+    resumeId: string | null,
+    private readonly onEvent: (event: HarnessEvent) => void,
+  ) {
+    this.result = {
+      outcome: 'failed',
+      sessionId: resumeId,
+      tokensIn: 0,
+      tokensOut: 0,
+      costUsd: 0,
+      durationMs: 0,
+      resetAt: null,
+      error: null,
+    };
+  }
+
+  private readonly emit = (event: HarnessEvent) => {
+    if (event.type === 'session') this.result.sessionId = event.sessionId;
+    this.onEvent(event);
+  };
+
+  line(line: string, stream: 'stdout' | 'stderr'): void {
+    if (!line.trim()) return;
+    const event = parseJsonLine(line);
+    if (event) {
+      this.spec.parse(event, this.result, this.emit);
+      const error = (this.spec.harnessError ?? errorEventMessage)(event);
+      if (error) this.harnessErrors.push(error);
+      return;
+    }
+    if (stream === 'stderr') {
+      this.stderr.push(line);
+      if (this.stderr.length > STDERR_LINES) this.stderr.shift();
+      this.emit({ type: 'log', text: line });
+      return;
+    }
+    this.emit({ type: 'output', text: line });
+  }
+
+  finish(code: number | null, aborted: boolean): RunResult {
+    const { result } = this;
+    const usage = usageLimitOf({
+      succeeded: code === 0,
+      errors: this.harnessErrors,
+      stderr: this.stderr,
+    });
+    if (aborted) result.outcome = 'killed';
+    else if (code === 0) result.outcome = 'done';
+    else if (usage.limited) result.outcome = 'out_of_usage';
+    else result.outcome = 'failed';
+    result.resetAt = result.outcome === 'out_of_usage' ? usage.resetAt : null;
+    result.error =
+      result.outcome === 'done' || result.outcome === 'killed'
+        ? null
+        : (usage.message ??
+          this.harnessErrors.at(-1) ??
+          this.stderr.at(-1) ??
+          `${this.spec.label} exited with code ${String(code)}`);
+    return result;
+  }
 }
 
 export function cliAdapter(spec: CliSpec): HarnessAdapter {
@@ -88,59 +186,17 @@ export function cliAdapter(spec: CliSpec): HarnessAdapter {
         hasBaton:
           listed !== null && options.mcp !== null && mcpListReaches(listed, options.mcp.url),
       });
-      const result: RunResult = {
-        outcome: 'failed',
-        sessionId: options.resumeId,
-        tokensIn: 0,
-        tokensOut: 0,
-        costUsd: 0,
-        durationMs: 0,
-        resetAt: null,
-        error: null,
-      };
-      let limited = false;
-      let lastError: string | null = null;
-      const emit = (event: HarnessEvent) => {
-        if (event.type === 'session') result.sessionId = event.sessionId;
-        options.onEvent(event);
-      };
+      const reader = new CliRunReader(spec, options.resumeId, options.onEvent);
       const run = spawnLines(command(), built.args, {
         cwd: options.cwd,
         stdin: built.stdin,
         env: built.env,
         signal: options.signal,
-        onLine: (line, stream) => {
-          if (!line.trim()) return;
-          if (isOutOfUsage(line)) {
-            limited = true;
-            result.resetAt = parseResetAt(line) ?? result.resetAt;
-          }
-          const event = parseJsonLine(line);
-          if (event) {
-            spec.parse(event, result, emit);
-            const error =
-              str((event.error as { message?: unknown } | undefined)?.message) ??
-              str(event.message);
-            // BAT#23: Codex reports a rejected model as `turn.failed { error: { message } }`.
-            if ((event.type === 'error' || event.type === 'turn.failed') && error) {
-              lastError = error;
-            }
-            return;
-          }
-          if (stream === 'stderr') {
-            lastError = line;
-            emit({ type: 'log', text: line });
-            return;
-          }
-          emit({ type: 'output', text: line });
-        },
+        onLine: (line, stream) => reader.line(line, stream),
       });
       const code = await run.exit;
+      const result = reader.finish(code, options.signal.aborted);
       result.durationMs = Date.now() - started;
-      if (options.signal.aborted) result.outcome = 'killed';
-      else if (limited) result.outcome = 'out_of_usage';
-      else result.outcome = code === 0 ? 'done' : 'failed';
-      result.error = result.outcome === 'done' ? null : lastError;
       return result;
     },
   };

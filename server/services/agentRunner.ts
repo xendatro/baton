@@ -1,11 +1,14 @@
 import { and, asc, desc, eq, gte, inArray, isNull, or } from 'drizzle-orm';
 import { AGENT_LISTENER, PRIORITIES } from '@shared/constants';
-import { resolveChain } from '@shared/agentChains';
+import { harnessOfAgentName, preferHarness, resolveChain } from '@shared/agentChains';
 import { canonicalModel, estimateCost } from '@shared/modelPrices';
 import {
   AGENT_RUNNER_LIMITS,
   CLEARED_JOBS_SHOWN_MS,
   DEFAULT_CHAIN,
+  HARNESS_LABELS,
+  harnessIdSchema,
+  type HarnessId,
   type AgentStats,
   type AgentUsageTotals,
   type FinishJobInput,
@@ -48,6 +51,7 @@ import { emitEvent } from './events';
 import { stageOf } from './pipelines';
 import { pipelineIdOfStatus, pipelineRow } from './projectPipelines';
 import { isSessionListening, refreshPresence } from './presence';
+import { resolveTask } from './refs';
 import { getUserSummaries } from './users';
 
 /**
@@ -725,6 +729,62 @@ function recentReplies(
   }));
 }
 
+/** Jobs that follow up on an item the agent may already be working on (BAT#28). */
+const FOLLOW_UP_KINDS = new Set<string>(['thread_reply', 'mention']);
+
+/**
+ * BAT#28: the harness of the agent's most recent write on an item — creating it or replying in
+ * it — from the agent name snapshotted on that write's activity (the key's current agent for
+ * rows from before the snapshot existed). Null when none of them names a known harness.
+ */
+function lastWriteHarness(
+  db: DbExecutor,
+  agentId: string,
+  item: { type: 'task' | 'issue'; id: string },
+): HarnessId | null {
+  const replyIds = db
+    .select({ id: s.reply.id })
+    .from(s.reply)
+    .where(
+      and(
+        eq(s.reply.parentType, item.type),
+        eq(s.reply.parentId, item.id),
+        eq(s.reply.authorId, agentId),
+      ),
+    )
+    .all()
+    .map((row) => row.id);
+  const created = and(
+    eq(s.activity.entityType, item.type),
+    eq(s.activity.entityId, item.id),
+    eq(s.activity.action, `${item.type}.created`),
+  );
+  const replied =
+    replyIds.length > 0
+      ? and(
+          eq(s.activity.entityType, 'reply'),
+          inArray(s.activity.entityId, replyIds),
+          eq(s.activity.action, 'reply.created'),
+        )
+      : undefined;
+  const rows = db
+    .select({
+      agentName: s.activity.viaAgentName,
+      keyAgentName: s.apiKey.agentName,
+    })
+    .from(s.activity)
+    .leftJoin(s.apiKey, eq(s.apiKey.id, s.activity.viaKeyId))
+    .where(and(eq(s.activity.actorId, agentId), replied ? or(created, replied) : created))
+    .orderBy(desc(s.activity.createdAt), desc(s.activity.id))
+    .limit(20)
+    .all();
+  for (const row of rows) {
+    const harness = harnessOfAgentName(row.agentName ?? row.keyAgentName);
+    if (harness) return harness;
+  }
+  return null;
+}
+
 /**
  * `GET /api/agent/jobs/:jobId/brief?runner=`: the prompt for a job (the task, its stage, what is
  * missing, the latest replies, the job and the rules), the model chain from the owner's mappings
@@ -781,8 +841,9 @@ export function jobBrief(
     defaults: mappings?.defaultMapping ?? null,
   });
 
-  // Harness sessions on this machine.
+  // Harness sessions on this machine (most recent first).
   const resume: Record<string, string> = {};
+  let sessionHarness: HarnessId | null = null;
   if (runnerId && task) {
     const runner = requireRunner(deps, agent.id, runnerId);
     for (const row of orm
@@ -795,8 +856,22 @@ export function jobBrief(
           eq(s.agentHarnessSession.machineId, runner.machineId ?? ''),
         ),
       )
+      .orderBy(desc(s.agentHarnessSession.updatedAt))
       .all()) {
       resume[row.harness] = row.sessionId;
+      const harness = harnessIdSchema.safeParse(row.harness);
+      if (harness.success) sessionHarness ??= harness.data;
+    }
+  }
+
+  // BAT#28: a follow-up goes to the harness that has been working on the item.
+  let chain = resolved.chain;
+  let chainSource = resolved.source;
+  if (item && FOLLOW_UP_KINDS.has(job.kind)) {
+    const working = sessionHarness ?? lastWriteHarness(orm, agent.id, item);
+    if (working && chain[0]?.harness !== working) {
+      chain = preferHarness(chain, working, AGENT_RUNNER_LIMITS.chain);
+      chainSource = `${resolved.source}; ${HARNESS_LABELS[working]} first: it has been working on this ${item.type}`;
     }
   }
 
@@ -882,8 +957,8 @@ export function jobBrief(
       url: context.target.url,
     },
     difficulty: level ? { id: level.id, name: level.name } : null,
-    chain: resolved.chain,
-    chainSource: resolved.source,
+    chain,
+    chainSource,
     resume,
     prompt: sections.join('\n\n'),
   };
@@ -906,29 +981,46 @@ export function setHarnessSession(
   if (!job || job.agentUserId !== agent.id) throw errors.notFound('Job');
   const runner = requireRunner(deps, agent.id, input.runnerId);
   const item = jobItem(orm, job);
-  // Sessions resume per task; other targets start fresh every time.
-  if (item?.type !== 'task') return { ok: true };
   const now = new Date();
-  orm
-    .insert(s.agentHarnessSession)
-    .values({
-      agentUserId: agent.id,
-      taskId: item.id,
-      machineId: runner.machineId ?? '',
-      harness: input.harness,
-      sessionId: input.sessionId,
-      updatedAt: now,
-    })
-    .onConflictDoUpdate({
-      target: [
-        s.agentHarnessSession.agentUserId,
-        s.agentHarnessSession.taskId,
-        s.agentHarnessSession.machineId,
-        s.agentHarnessSession.harness,
-      ],
-      set: { sessionId: input.sessionId, updatedAt: now },
-    })
-    .run();
+  const row = (taskId: string) => ({
+    agentUserId: agent.id,
+    taskId,
+    machineId: runner.machineId ?? '',
+    harness: input.harness,
+    sessionId: input.sessionId,
+    updatedAt: now,
+  });
+  // Sessions resume per task; other targets start fresh every time.
+  if (item?.type === 'task') {
+    orm
+      .insert(s.agentHarnessSession)
+      .values(row(item.id))
+      .onConflictDoUpdate({
+        target: [
+          s.agentHarnessSession.agentUserId,
+          s.agentHarnessSession.taskId,
+          s.agentHarnessSession.machineId,
+          s.agentHarnessSession.harness,
+        ],
+        set: { sessionId: input.sessionId, updatedAt: now },
+      })
+      .run();
+  }
+  // BAT#28: tasks the run created or replied in resume this session too, unless they have a
+  // session of their own for the harness here (never replaced). Refs the agent can't see, and
+  // issues, are skipped.
+  const linked = new Set<string>(item?.type === 'task' ? [item.id] : []);
+  for (const ref of input.items ?? []) {
+    let taskId: string;
+    try {
+      taskId = resolveTask(deps, actor, ref).task.id;
+    } catch {
+      continue;
+    }
+    if (linked.has(taskId)) continue;
+    linked.add(taskId);
+    orm.insert(s.agentHarnessSession).values(row(taskId)).onConflictDoNothing().run();
+  }
   return { ok: true };
 }
 
@@ -1036,6 +1128,21 @@ export function finishJob(
   // The agent usually completes or releases the job itself (complete_job / release_job): only a
   // job still claimed is finished here.
   if (job.status !== 'claimed') return jobContexts(deps, [job])[0] as AgentJobContext;
+  if (mode === 'complete' && input.deliveredTo) {
+    // BAT#31: its message went to the running session of another job of the agent.
+    const host = deps.db.orm
+      .select({ id: s.agentJob.id, agentUserId: s.agentJob.agentUserId })
+      .from(s.agentJob)
+      .where(eq(s.agentJob.id, input.deliveredTo))
+      .get();
+    if (host?.agentUserId !== agent.id) throw errors.notFound('Job');
+    deps.db.write((tx) => {
+      tx.update(s.agentJob)
+        .set({ payload: { ...job.payload, deliveredTo: host.id } })
+        .where(eq(s.agentJob.id, job.id))
+        .run();
+    });
+  }
   if (mode === 'complete') {
     return completeJob(deps, actor, { jobId, ...(input.agreeDone ? { agreeDone: true } : {}) });
   }

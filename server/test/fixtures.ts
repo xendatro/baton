@@ -128,9 +128,14 @@ export function createTeam(db: Database, options: CreateTeamOptions): CreatedTea
       })
       .returning()
       .get();
-    tx.insert(s.teamMember).values({ teamId: team.id, userId: options.ownerId }).run();
+    // Only the original columns: the migration tests create teams before later migrations run.
+    const join = (userId: string) =>
+      tx.run(
+        sql`insert into team_member (team_id, user_id, joined_at) values (${team.id}, ${userId}, ${Date.now()})`,
+      );
+    join(options.ownerId);
     const agentId = findAgentId(tx, options.ownerId);
-    if (agentId) tx.insert(s.teamMember).values({ teamId: team.id, userId: agentId }).run();
+    if (agentId) join(agentId);
     const [everyoneRole, adminRole] = TEAM_ROLE_SEEDS.map((seed) =>
       tx
         .insert(s.role)

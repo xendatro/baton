@@ -15,6 +15,17 @@ const job: RunnerJob = {
   createdAt: new Date().toISOString(),
 };
 
+/** A reply by Caden in the same task's thread. */
+const reply: RunnerJob = {
+  ...job,
+  jobId: 'job-2',
+  kind: 'thread_reply',
+  triggeredBy: 'caden',
+  trigger: { body: 'Please also cover Windows', author: { username: 'caden' } },
+};
+
+const tick = () => new Promise((resolve) => setTimeout(resolve, 10));
+
 function brief(chain: Chain): JobBrief {
   return {
     jobId: 'job-1',
@@ -125,6 +136,9 @@ function setup(chain: Chain, adapters: HarnessAdapter[], folder: string | null =
     exhaustedUntil: () => exhausted,
     setExhausted: (harness, until) => {
       exhausted[harness] = until;
+    },
+    clearExhausted: (harness) => {
+      delete exhausted[harness];
     },
     pausedHere: () => false,
   };
@@ -284,6 +298,238 @@ describe('runner', () => {
       },
     ]);
     expect(runner.snapshot().jobs).toEqual([]);
+  });
+
+  it('waits on usage, and Retry now runs it at once ignoring the stored limit (BAT#30)', async () => {
+    const seen: RunOptions[] = [];
+    const { runner, calls, exhausted } = setup(
+      [{ harness: 'codex', model: '', effort: '' }],
+      [fakeAdapter('codex', [{ outcome: 'done' }], seen)],
+    );
+    exhausted.codex = Date.now() + 5 * 3_600_000;
+    await ready(runner);
+    const running = runner.runJob(job);
+    await tick();
+    const [waiting] = runner.snapshot().jobs;
+    expect(waiting).toMatchObject({
+      state: 'waiting-usage',
+      waitingOn: [{ harness: 'codex', until: exhausted.codex }],
+    });
+    expect(waiting?.note).toMatch(/^Out of usage until .* \(Codex\)\.$/);
+    expect(seen).toEqual([]);
+    runner.retryNow('job-1');
+    await running;
+    expect(seen).toHaveLength(1);
+    expect(calls.find((call) => call.call === 'finish')?.args[1]).toBe('complete');
+    // Only that attempt ignores it: the stored limit stays until it resets or is cleared.
+    expect(exhausted.codex).toBeGreaterThan(Date.now());
+  });
+
+  it('Clear usage limit forgets the harness’s limit and the waiting job runs', async () => {
+    const seen: RunOptions[] = [];
+    const { runner, exhausted } = setup(
+      [{ harness: 'codex', model: '', effort: '' }],
+      [fakeAdapter('codex', [{ outcome: 'done' }], seen)],
+    );
+    exhausted.codex = Date.now() + 5 * 3_600_000;
+    await ready(runner);
+    const running = runner.runJob(job);
+    await tick();
+    runner.clearUsageLimit('codex');
+    await running;
+    expect(exhausted.codex).toBeUndefined();
+    expect(seen).toHaveLength(1);
+  });
+
+  it('Kill stops a job waiting on usage and holds it; Retry now applies to its next claim', async () => {
+    const seen: RunOptions[] = [];
+    const { runner, calls, exhausted } = setup(
+      [{ harness: 'codex', model: '', effort: '' }],
+      [fakeAdapter('codex', [{ outcome: 'done' }], seen)],
+    );
+    exhausted.codex = Date.now() + 5 * 3_600_000;
+    await ready(runner);
+    const running = runner.runJob(job);
+    await tick();
+    runner.kill('job-1');
+    await running;
+    expect(seen).toEqual([]);
+    expect(calls.filter((call) => call.call === 'finish')).toEqual([
+      {
+        call: 'finish',
+        args: [
+          'job-1',
+          'release',
+          expect.objectContaining({ usage: [], hold: true, outcome: 'killed' }),
+        ],
+      },
+    ]);
+    expect(runner.snapshot().jobs).toEqual([]);
+    expect(runner.snapshot().finished[0]).toMatchObject({ jobId: 'job-1', outcome: 'killed' });
+    // The owner retries the held job: claimed again, it runs despite the stored limit.
+    runner.retryNow('job-1');
+    await runner.runJob(job);
+    expect(seen).toHaveLength(1);
+  });
+
+  it('a harness out of usage for real is stored as exhausted, with the harness’s own error', async () => {
+    const seen: RunOptions[] = [];
+    const { runner, exhausted } = setup(
+      [
+        { harness: 'codex', model: '', effort: '' },
+        { harness: 'claude', model: '', effort: '' },
+      ],
+      [
+        fakeAdapter(
+          'codex',
+          [{ outcome: 'out_of_usage', resetAt: null, error: 'You’ve hit your usage limit.' }],
+          seen,
+        ),
+        fakeAdapter('claude', [{ outcome: 'done' }], seen),
+      ],
+    );
+    await ready(runner);
+    const outputs: string[] = [];
+    runner.on('output', ({ text }: { text: string }) => outputs.push(text));
+    await runner.runJob(job);
+    expect(exhausted.codex).toBeGreaterThan(Date.now());
+    expect(outputs.join('\n')).toContain('Codex is out of usage until');
+    expect(outputs.join('\n')).toContain('You’ve hit your usage limit.');
+  });
+
+  it('delivers a reply on the same task into the running session instead of a second run (BAT#31)', async () => {
+    const seen: RunOptions[] = [];
+    const sent: string[] = [];
+    let finishRun: () => void = () => undefined;
+    const claude: HarnessAdapter = {
+      ...fakeAdapter('claude', [], []),
+      run: (options) => {
+        seen.push(options);
+        options.attach?.({
+          send: (text) => {
+            sent.push(text);
+            setTimeout(() => options.onEvent({ type: 'delivered' }), 0);
+            return true;
+          },
+        });
+        return new Promise((resolve) => {
+          finishRun = () => resolve(result({ sessionId: 'sess-1' }));
+        });
+      },
+    };
+    const { runner, calls } = setup([{ harness: 'claude', model: '', effort: '' }], [claude]);
+    await ready(runner);
+    const running = runner.runJob(job);
+    await tick();
+    await runner.runJob(reply);
+    await tick();
+    expect(seen).toHaveLength(1);
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toContain('@caden wrote on baton/BAT-24');
+    expect(sent[0]).toContain('> Please also cover Windows');
+    expect(sent[0]).toContain('The Baton app completes job `job-2` for you');
+    expect(runner.snapshot().jobs).toEqual([
+      expect.objectContaining({ jobId: 'job-1', delivered: 1, queued: 0 }),
+    ]);
+    expect(calls).toContainEqual({
+      call: 'finish',
+      args: ['job-2', 'complete', { usage: [], deliveredTo: 'job-1' }],
+    });
+    finishRun();
+    await running;
+    expect(calls.filter((call) => call.call === 'finish').map((call) => call.args[0])).toEqual([
+      'job-2',
+      'job-1',
+    ]);
+  });
+
+  it('queues it for a harness without mid-run input and resumes the same session with it', async () => {
+    const seen: RunOptions[] = [];
+    const releases: Array<() => void> = [];
+    const codex: HarnessAdapter = {
+      ...fakeAdapter('codex', [], []),
+      run: (options) => {
+        seen.push(options);
+        return new Promise((resolve) => {
+          releases.push(() => resolve(result({ sessionId: 'thread-9' })));
+        });
+      },
+    };
+    const { runner, calls } = setup([{ harness: 'codex', model: '', effort: '' }], [codex]);
+    await ready(runner);
+    const running = runner.runJob(job);
+    await tick();
+    await runner.runJob(reply);
+    await runner.runJob({ ...reply, jobId: 'job-3', trigger: { body: 'And Linux' } });
+    expect(runner.snapshot().jobs[0]).toMatchObject({ queued: 2, delivered: 0 });
+    expect(seen).toHaveLength(1);
+    releases[0]?.();
+    await tick();
+    // One resumed run with both messages, not fresh runs.
+    expect(seen).toHaveLength(2);
+    expect(seen[1]?.resumeId).toBe('thread-9');
+    expect(seen[1]?.prompt).toContain('Please also cover Windows');
+    expect(seen[1]?.prompt).toContain('And Linux');
+    expect(seen[1]?.prompt).not.toContain('# Baton job');
+    expect(runner.snapshot().jobs[0]).toMatchObject({ queued: 0, delivered: 2 });
+    releases[1]?.();
+    await running;
+    const finishes = calls.filter((call) => call.call === 'finish');
+    expect(finishes.map((call) => [call.args[0], call.args[1]])).toEqual([
+      ['job-2', 'complete'],
+      ['job-3', 'complete'],
+      ['job-1', 'complete'],
+    ]);
+  });
+
+  it('releases queued messages when the running job is killed first, so they run on their own', async () => {
+    const seen: RunOptions[] = [];
+    const { runner, calls } = setup(
+      [{ harness: 'codex', model: '', effort: '' }],
+      [fakeAdapter('codex', [{ outcome: 'killed' }], seen)],
+    );
+    await ready(runner);
+    const running = runner.runJob(job);
+    await tick();
+    await runner.runJob(reply);
+    runner.kill('job-1');
+    await running;
+    expect(seen).toHaveLength(1);
+    expect(calls.filter((call) => call.call === 'finish')).toEqual([
+      {
+        call: 'finish',
+        args: [
+          'job-1',
+          'release',
+          expect.objectContaining({
+            usage: [expect.objectContaining({ outcome: 'killed' })],
+            hold: true,
+            outcome: 'killed',
+          }),
+        ],
+      },
+      { call: 'finish', args: ['job-2', 'release', { usage: [] }] },
+    ]);
+  });
+
+  it('runs jobs about different items in parallel', async () => {
+    const seen: RunOptions[] = [];
+    const { runner } = setup(
+      [{ harness: 'claude', model: '', effort: '' }],
+      [fakeAdapter('claude', [{ outcome: 'killed' }, { outcome: 'killed' }], seen)],
+    );
+    await ready(runner);
+    const first = runner.runJob(job);
+    const second = runner.runJob({
+      ...reply,
+      target: { ...job.target, ref: 'baton/BAT-25', title: 'Other task' },
+    });
+    await tick();
+    expect(seen).toHaveLength(2);
+    expect(runner.snapshot().jobs.map((item) => item.jobId)).toEqual(['job-1', 'job-2']);
+    runner.kill('job-1');
+    runner.kill('job-2');
+    await Promise.all([first, second]);
   });
 
   it('holds jobs of projects without a folder here', async () => {

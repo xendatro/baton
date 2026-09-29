@@ -19,6 +19,8 @@ export const AGENT_RUNNER_LIMITS = {
   sessionId: 300,
   /** Replies included in a job brief. */
   briefReplies: 12,
+  /** Items a run's session is linked to besides its job's (BAT#28). */
+  touchedItems: 50,
   statsDays: 365,
   /** A run's last error (BAT#23), in characters. */
   error: 2_000,
@@ -218,6 +220,14 @@ export const harnessSessionInputSchema = z.object({
   runnerId: idSchema,
   harness: harnessIdSchema,
   sessionId: z.string().trim().min(1).max(AGENT_RUNNER_LIMITS.sessionId),
+  /**
+   * BAT#28: tasks the run created or replied in (refs or ids, from the harness's tool calls):
+   * their next jobs resume this session too, unless they have one of their own for the harness.
+   */
+  items: z
+    .array(z.string().trim().min(1).max(300))
+    .max(AGENT_RUNNER_LIMITS.touchedItems)
+    .optional(),
 });
 export type HarnessSessionInput = z.infer<typeof harnessSessionInputSchema>;
 
@@ -309,6 +319,11 @@ export const finishJobInputSchema = z.object({
             AGENT_RUNNER_LIMITS.outputChars,
           ),
     ),
+  /**
+   * Complete only (BAT#31): the job's message was handed to the running session of this other
+   * job (same item, same runner) instead of starting one of its own.
+   */
+  deliveredTo: idSchema.optional(),
 });
 export type FinishJobInput = z.input<typeof finishJobInputSchema>;
 

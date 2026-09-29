@@ -93,6 +93,11 @@ function store(): RunnerStore {
     exhaustedUntil: () => config.get().exhaustedUntil,
     setExhausted: (harness, until) =>
       config.update({ exhaustedUntil: { ...config.get().exhaustedUntil, [harness]: until } }),
+    clearExhausted: (harness) => {
+      const exhaustedUntil = { ...config.get().exhaustedUntil };
+      delete exhaustedUntil[harness];
+      config.update({ exhaustedUntil });
+    },
     pausedHere: () => config.get().pausedHere,
   };
 }
@@ -107,6 +112,9 @@ function state(): DesktopState {
     pausedHere: cfg.pausedHere,
     folders: cfg.folders,
     permissionModes: cfg.permissionModes,
+    exhaustedUntil: Object.fromEntries(
+      Object.entries(cfg.exhaustedUntil).filter(([, until]) => (until ?? 0) > Date.now()),
+    ),
     testedHarnesses: cfg.testedHarnesses ?? [],
     update: updates.state,
     runner: runner?.snapshot() ?? null,
@@ -463,7 +471,9 @@ function registerIpc() {
       },
       signal: new AbortController().signal,
       onEvent: (event) => {
-        if (event.type === 'session') return;
+        if (event.type === 'session' || event.type === 'delivered' || event.type === 'touched') {
+          return;
+        }
         // The harness's own log lines (e.g. Codex's model-cache warnings) only matter on failure.
         if (event.type === 'log') {
           logs.push(event.text);
@@ -484,6 +494,19 @@ function registerIpc() {
     return { ok, outcome: result.outcome, output: output.join('\n') };
   });
   handle('kill', (jobId: string) => runner?.kill(String(jobId)));
+  handle('retryNow', (jobId: string) => runner?.retryNow(String(jobId)));
+  handle('clearUsageLimit', (harness: HarnessId) => {
+    const id = String(harness) as HarnessId;
+    if (!adapters.has(id)) throw new Error('Unknown harness');
+    if (runner) runner.clearUsageLimit(id);
+    else {
+      const exhaustedUntil = { ...config.get().exhaustedUntil };
+      delete exhaustedUntil[id];
+      config.update({ exhaustedUntil });
+    }
+    broadcast();
+    return state();
+  });
   handle('checkForUpdates', () => updates.check());
   handle('installUpdate', () => updates.install());
   handle('pauseHere', (paused: boolean) => {

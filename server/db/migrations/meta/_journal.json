@@ -159,8 +159,15 @@
     {
       "idx": 22,
       "version": "6",
-      "when": 1790708150266,
-      "tag": "0022_agent_runs_usage_detail",
+      "when": 1790706776979,
+      "tag": "0022_team_sidebar",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "6",
+      "when": 1790711154911,
+      "tag": "0023_agent_runs_usage_detail",
       "breakpoints": true
     }
   ]

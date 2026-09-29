@@ -269,6 +269,11 @@ export const teamMember = sqliteTable(
     joinedAt: timestamp('joined_at')
       .notNull()
       .$defaultFn(() => new Date()),
+    // The member's own sidebar (BAT-36): their order of teams (null: never arranged, after the
+    // arranged ones by name), pinned to the top, and the project list folded.
+    sidebarPosition: integer('sidebar_position'),
+    pinned: integer('pinned', { mode: 'boolean' }).default(false).notNull(),
+    sidebarCollapsed: integer('sidebar_collapsed', { mode: 'boolean' }).default(false).notNull(),
   },
   (t) => [
     primaryKey({ columns: [t.teamId, t.userId] }),

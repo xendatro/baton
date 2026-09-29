@@ -242,7 +242,27 @@ manual fallback.
 - **Briefs and sessions.** For each job the app reads a brief: a compact prompt (task, stage
   instructions, criteria, approvals, what's missing, the trigger and latest replies, the job and
   the rules), the chain, and the harness session to resume for that task on that machine. One
-  process per job; a follow-up job on the same task resumes the same harness thread.
+  process per job; a follow-up job on the same task resumes the same harness thread. A follow-up
+  (`thread_reply`, `mention`) goes first to the harness that has been working on the item: its
+  stored session there, else the harness of the agent's last write on it (BAT#28). A run's
+  session is also linked to the tasks it created or replied in (from its Baton tool calls), so a
+  reply on a task Claude Code opened resumes that Claude Code session.
+- **One session per item (BAT#31).** A job about an item a job running on the same computer
+  already works on doesn't start a second process: its message goes into the running session.
+  Claude Code takes it mid-run (streaming input: read after the current tool call, as typing into
+  an interactive session); harnesses without mid-run input get it as soon as the run ends, by
+  resuming the same session with every queued message in one prompt. The merged job is completed
+  once the session has the message (`deliveredTo`); if the running job is killed first, it is
+  released and runs on its own. Running agents shows "1 message delivered" / "1 queued for next
+  turn".
+- **Out of usage (BAT#30).** Only the harness's own error signal counts (its error events, or
+  stderr of a run that failed), never the agent's messages, command output or file contents; a run
+  that succeeded never is. The limit is stored per harness on the computer until the reset it
+  names (else an hour). Wherever a job waits on usage the app shows "Out of usage until HH:MM
+  (harness)" with Retry now (that attempt ignores the stored limits; for a held job, its next
+  claim here) and Clear usage limit (also on the Harnesses page); Kill stops a waiting job and
+  holds it. Codex's "Full auto" is its workspace-write sandbox with network access
+  (`-c sandbox_workspace_write.network_access=true`); it can't write outside the project folder.
 - **Usage.** Completing, releasing or killing a job reports each harness run's usage; the stats
   page sums it by day, harness, model, level and outcome. The global pause is the owner's agent
   pause. BAT#25: usage separates input, cache reads, cache writes, output and reasoning tokens,

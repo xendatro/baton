@@ -2,10 +2,15 @@
  * Recognising "out of usage" and rate limits in a harness's output (BAT-24), so the app can move
  * on to the next harness of the chain and skip this one until its reset. Heuristic by design:
  * harnesses word it differently and change it; unknown resets fall back to an hour.
+ *
+ * BAT#30: the text matcher only ever sees the harness's own error signal (its error events, or
+ * stderr of a run that failed), never the agent's messages, command output or file contents,
+ * which mention rate limits all the time. A run that succeeded is never out of usage.
  */
 
 const PATTERNS: readonly RegExp[] = [
   /usage limit/i,
+  /hit your (usage )?limit/i,
   /rate[- ]limit(ed)?/i,
   /quota (exceeded|reached)/i,
   /exceeded your (current )?quota/i,
@@ -19,7 +24,7 @@ const PATTERNS: readonly RegExp[] = [
 
 export const DEFAULT_BACKOFF_MS = 60 * 60 * 1000;
 
-/** Is this output line about being out of usage? */
+/** Is this (harness error) text about being out of usage? */
 export function isOutOfUsage(text: string): boolean {
   return PATTERNS.some((pattern) => pattern.test(text));
 }
@@ -58,4 +63,29 @@ export function parseResetAt(text: string, now: number = Date.now()): number | n
     return date.getTime();
   }
   return null;
+}
+
+/** How a finished run's harness errors read (see `usageLimitOf`). */
+export interface RunErrors {
+  /** The run finished its work (exit 0, or a successful result). */
+  succeeded: boolean;
+  /** Messages of the harness's own error events, oldest first. */
+  errors: readonly string[];
+  /** Lines the harness printed on stderr, oldest first. */
+  stderr: readonly string[];
+}
+
+/**
+ * Was a run out of usage? Only a run that didn't succeed, and only from its harness's own
+ * errors (error events first, then stderr). The matching text also gives the reset, if it says.
+ */
+export function usageLimitOf(
+  run: RunErrors,
+  now: number = Date.now(),
+): { limited: boolean; resetAt: number | null; message: string | null } {
+  if (run.succeeded) return { limited: false, resetAt: null, message: null };
+  const matches = [...run.errors, ...run.stderr].filter(isOutOfUsage);
+  if (matches.length === 0) return { limited: false, resetAt: null, message: null };
+  const resetAt = matches.map((text) => parseResetAt(text, now)).find((value) => value !== null);
+  return { limited: true, resetAt: resetAt ?? null, message: matches.at(-1) ?? null };
 }

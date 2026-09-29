@@ -42,7 +42,14 @@ import { getTeamPresence } from './presence';
 import { createReply } from './replies';
 import { decideApproval } from './pipelines';
 import { updateStatus } from './statuses';
-import { deleteTask, getTask, moveTask, restoreTask, updateTask } from './tasks';
+import {
+  createTask as createTaskService,
+  deleteTask,
+  getTask,
+  moveTask,
+  restoreTask,
+  updateTask,
+} from './tasks';
 
 /**
  * The desktop app's runners (BAT-24): registering, claiming jobs, whose jobs run without asking,
@@ -494,6 +501,156 @@ describe('job briefs, sessions and usage', () => {
       ['codex', 'gpt-5', 1],
       ['codex', 'gpt-6-sol', 1],
     ]);
+  });
+
+  describe('follow-ups go to the harness that has been working on the item (BAT#28)', () => {
+    /** The agent opens a task through the key while `agentName` is connected. */
+    function taskOpenedBy(agentName: string) {
+      const via = { ...runnerKey, key: { ...runnerKey.key!, agentName } };
+      return createTaskService(ctx.deps, via, projectId, { title: 'Opened by the agent' });
+    }
+
+    async function replyJob(taskId: string, runnerId: string) {
+      createReply(ctx.deps, ethanWeb, { parentType: 'task', parentId: taskId, body: 'Yes, go on' });
+      const jobs = (await nextRunnerJobs(ctx.deps, runnerKey, runnerId, 0)).jobs;
+      const job = jobs.find((item) => item.kind === 'thread_reply' && item.target.id === taskId);
+      expect(job).toBeDefined();
+      return job?.jobId ?? '';
+    }
+
+    it('puts the harness of the agent’s last write first, keeping the chain after it', async () => {
+      const runner = register();
+      setModelMappings(ctx.deps, ethanWeb, {
+        default: {
+          chain: [
+            { harness: 'codex', model: 'gpt-5', effort: 'high' },
+            { harness: 'claude', model: 'opus', effort: 'high' },
+          ],
+          levels: {},
+        },
+        projects: {},
+      });
+      const opened = taskOpenedBy('Claude');
+      const brief = jobBrief(ctx.deps, runnerKey, await replyJob(opened.id, runner.id), runner.id);
+      expect(brief.chain).toEqual([
+        { harness: 'claude', model: 'opus', effort: 'high' },
+        { harness: 'codex', model: 'gpt-5', effort: 'high' },
+      ]);
+      expect(brief.chainSource).toBe(
+        'account default; Claude Code first: it has been working on this task',
+      );
+    });
+
+    it('uses the harness’s defaults when the chain doesn’t have it, and a stored session first', async () => {
+      const runner = register();
+      setModelMappings(ctx.deps, ethanWeb, {
+        default: { chain: [{ harness: 'codex', model: '', effort: '' }], levels: {} },
+        projects: {},
+      });
+      const opened = taskOpenedBy('Claude');
+      const jobId = await replyJob(opened.id, runner.id);
+      expect(jobBrief(ctx.deps, runnerKey, jobId, runner.id).chain).toEqual([
+        { harness: 'claude', model: '', effort: '' },
+        { harness: 'codex', model: '', effort: '' },
+      ]);
+      // A session of this item on this machine wins over the last write.
+      setHarnessSession(ctx.deps, runnerKey, jobId, {
+        runnerId: runner.id,
+        harness: 'codex',
+        sessionId: 'thread-1',
+      });
+      const brief = jobBrief(ctx.deps, runnerKey, jobId, runner.id);
+      expect(brief.chain).toEqual([{ harness: 'codex', model: '', effort: '' }]);
+      expect(brief.chainSource).toBe('account default');
+      expect(brief.resume).toEqual({ codex: 'thread-1' });
+    });
+
+    it('links a run’s session to the tasks it created or replied in, without replacing theirs', async () => {
+      const runner = register();
+      mention(ethanWeb, 'Split this up please @ethan-ai');
+      const [job] = (await nextRunnerJobs(ctx.deps, runnerKey, runner.id, 0)).jobs;
+      const created = taskOpenedBy('Claude');
+      const other = createTaskService(ctx.deps, ethanWeb, projectId, {
+        title: 'Has its own session',
+      });
+      createReply(ctx.deps, ethanWeb, {
+        parentType: 'task',
+        parentId: other.id,
+        body: 'This one too @ethan-ai',
+      });
+      const otherJob =
+        (await nextRunnerJobs(ctx.deps, runnerKey, runner.id, 0)).jobs.find(
+          (item) => item.target.id === other.id,
+        )?.jobId ?? '';
+      setHarnessSession(ctx.deps, runnerKey, otherJob, {
+        runnerId: runner.id,
+        harness: 'claude',
+        sessionId: 'sess-other',
+      });
+      setHarnessSession(ctx.deps, runnerKey, job?.jobId ?? '', {
+        runnerId: runner.id,
+        harness: 'claude',
+        sessionId: 'sess-main',
+        items: [created.id, other.ref, 'BAT-999', 'BAT#1'],
+      });
+      const sessions = ctx.db.orm
+        .select({
+          taskId: s.agentHarnessSession.taskId,
+          sessionId: s.agentHarnessSession.sessionId,
+        })
+        .from(s.agentHarnessSession)
+        .all();
+      expect(new Map(sessions.map((row) => [row.taskId, row.sessionId]))).toEqual(
+        new Map([
+          [task.id, 'sess-main'],
+          [created.id, 'sess-main'],
+          [other.id, 'sess-other'],
+        ]),
+      );
+      // A reply on the created task resumes the session that opened it.
+      const brief = jobBrief(ctx.deps, runnerKey, await replyJob(created.id, runner.id), runner.id);
+      expect(brief.resume).toEqual({ claude: 'sess-main' });
+      expect(brief.chain[0]?.harness).toBe('claude');
+    });
+
+    it('leaves other jobs’ chains to the difficulty', async () => {
+      const runner = register();
+      setModelMappings(ctx.deps, ethanWeb, {
+        default: { chain: [{ harness: 'codex', model: '', effort: '' }], levels: {} },
+        projects: {},
+      });
+      const opened = taskOpenedBy('Claude');
+      updateTask(ctx.deps, ethanWeb, opened.id, { assigneeUsers: { add: [runnerKey.userId] } });
+      const jobs = (await nextRunnerJobs(ctx.deps, runnerKey, runner.id, 0)).jobs;
+      const assigned = jobs.find((item) => item.kind === 'assigned');
+      expect(assigned).toBeDefined();
+      expect(jobBrief(ctx.deps, runnerKey, assigned?.jobId ?? '', runner.id).chain).toEqual([
+        { harness: 'codex', model: '', effort: '' },
+      ]);
+    });
+  });
+
+  it('completes a job whose message went to another job’s running session (BAT#31)', async () => {
+    const runner = register();
+    mention(ethanWeb, 'First @ethan-ai');
+    const [first] = (await nextRunnerJobs(ctx.deps, runnerKey, runner.id, 0)).jobs;
+    mention(ethanWeb, 'Second @ethan-ai');
+    const [second] = (await nextRunnerJobs(ctx.deps, runnerKey, runner.id, 0)).jobs;
+    expect(second?.jobId).not.toBe(first?.jobId);
+    const done = finishJob(ctx.deps, runnerKey, second?.jobId ?? '', 'complete', {
+      usage: [],
+      deliveredTo: first?.jobId ?? '',
+    });
+    expect(done.status).toBe('done');
+    expect(done.payload).toMatchObject({ deliveredTo: first?.jobId });
+    expect(
+      await failure(() =>
+        finishJob(ctx.deps, runnerKey, first?.jobId ?? '', 'complete', {
+          usage: [],
+          deliveredTo: 'nope',
+        }),
+      ),
+    ).toBe('not_found');
   });
 
   it('pauses the agent everywhere with the app’s key', () => {

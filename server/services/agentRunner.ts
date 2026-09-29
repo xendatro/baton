@@ -52,6 +52,7 @@ import { stageOf } from './pipelines';
 import { pipelineIdOfStatus, pipelineRow } from './projectPipelines';
 import { isSessionListening, refreshPresence } from './presence';
 import { resolveTask } from './refs';
+import { catchUpBriefMessages, catchUpPrompt } from './chat';
 import { getUserSummaries } from './users';
 
 /**
@@ -844,7 +845,8 @@ export function jobBrief(
   // Harness sessions on this machine (most recent first).
   const resume: Record<string, string> = {};
   let sessionHarness: HarnessId | null = null;
-  if (runnerId && task) {
+  // A catch-up summary starts fresh: it must not continue (or disturb) the task's work session.
+  if (runnerId && task && job.kind !== 'catch_up') {
     const runner = requireRunner(deps, agent.id, runnerId);
     for (const row of orm
       .select()
@@ -879,6 +881,36 @@ export function jobBrief(
   const me = names.get(agent.id)?.username ?? 'your-agent';
   const owner = names.get(agent.ownerId)?.username ?? 'your owner';
   const ref = context.target.ref ?? 'the item';
+  const briefBase = {
+    jobId: job.id,
+    kind: job.kind,
+    project: context.project,
+    target: {
+      type: job.targetType,
+      ref: context.target.ref,
+      title: context.target.title,
+      url: context.target.url,
+    },
+    difficulty: level ? { id: level.id, name: level.name } : null,
+    chain,
+    chainSource,
+    resume,
+  };
+  if (job.kind === 'catch_up') {
+    return {
+      ...briefBase,
+      prompt: catchUpPrompt({
+        me,
+        owner,
+        ref,
+        title: context.target.title,
+        url: context.target.url,
+        jobId: job.id,
+        instructions: context.instructions,
+        messages: catchUpBriefMessages(orm, job),
+      }),
+    };
+  }
   const stage = task
     ? stageOf(orm, { userId: agent.id, ownerId: agent.ownerId, source: 'api', key: null }, task)
     : null;
@@ -940,28 +972,18 @@ export function jobBrief(
       '## Rules',
       '- Follow the task’s own directions (if it says to push, push). Baton only fills in the blanks: the task, its stage and the replies.',
       '- Keep people informed with add_reply: what you did, what is left, links. Ask with add_reply when something is unclear rather than guessing.',
+      ...(item?.conversationMode === 'chat'
+        ? [
+            '- This conversation is a chat (a flat message stream, like Discord): keep replies short, like chat messages, and answer the message that pinged you with add_reply { inReplyTo }.',
+          ]
+        : []),
       '- When the work of this stage is done, give evidence for the exit criteria and move the task on with move_task, if you may.',
       '- Handshake: when you think a discussion is finished, reply with add_reply { closing: true }. If this job comes from another agent’s closing reply and you agree, call complete_job { jobId, agreeDone: true } without replying.',
       `- Finish by calling complete_job { jobId: "${job.id}" }. If you can’t do it, call release_job { jobId: "${job.id}" } and say why in a reply.`,
     ].join('\n'),
   );
 
-  return {
-    jobId: job.id,
-    kind: job.kind,
-    project: context.project,
-    target: {
-      type: job.targetType,
-      ref: context.target.ref,
-      title: context.target.title,
-      url: context.target.url,
-    },
-    difficulty: level ? { id: level.id, name: level.name } : null,
-    chain,
-    chainSource,
-    resume,
-    prompt: sections.join('\n\n'),
-  };
+  return { ...briefBase, prompt: sections.join('\n\n') };
 }
 
 // ---------------------------------------------------------------------------------------------

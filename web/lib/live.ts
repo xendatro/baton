@@ -177,9 +177,13 @@ export const LIVE_INVALIDATIONS: Readonly<Record<LiveEventType, Invalidation>> =
     queryKeys.account.agentWaiting(),
     queryKeys.account.agentModelFailures(),
     queryKeys.account.agentConnection(),
+    // A catch-up summary arrived, or the catch-up job moved on.
+    queryKeys.catchUp.all(),
   ],
   // Personal: your agent asked for sign-off, or a request was decided or expired (design §6).
   'agent_action.changed': () => [queryKeys.account.agentActions(), queryKeys.notifications.all()],
+  // Ephemeral: the chat's typing indicator listens for it (useLiveEventListener); nothing to fetch.
+  typing: () => [],
 };
 
 /**

@@ -16,6 +16,7 @@ import { apiKeyRoutes } from './apiKeys';
 import { attachmentRoutes } from './attachments';
 import { auditLogRoutes } from './auditLog';
 import { authRoutes } from './auth';
+import { chatRoutes } from './chat';
 import { claimRoutes } from './claims';
 import { dashboardRoutes } from './dashboard';
 import { difficultyRoutes } from './difficulties';
@@ -57,6 +58,7 @@ const routers: ReadonlyArray<Hono<AppEnv>> = [
   attachmentRoutes,
   replyRoutes,
   reactionRoutes,
+  chatRoutes,
   activityRoutes,
   userRoutes,
   subscriptionRoutes,

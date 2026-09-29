@@ -1,5 +1,5 @@
 import { and, eq, isNull, sql } from 'drizzle-orm';
-import type { ReplyParentType } from '@shared/constants';
+import type { ConversationMode, ReplyParentType } from '@shared/constants';
 import { formatIssueRef, formatTaskRef } from '@shared/refs';
 import type { Actor } from '../context';
 import type { DbExecutor, Tx } from '../db';
@@ -28,6 +28,8 @@ export interface ItemInfo {
   /** Markdown body (issue body, task description). */
   body: string;
   authorId: string | null;
+  /** How its replies are shown (chat or forum). */
+  conversationMode: ConversationMode;
   /** `KEY-12` or `KEY#51`. */
   ref: string;
   /** Relative web-app URL. */
@@ -64,6 +66,7 @@ function makeResolver(type: ItemType): ItemResolver {
           title: table.title,
           body: bodyColumn,
           authorId: table.authorId,
+          conversationMode: table.conversationMode,
           projectKey: s.project.key,
           teamSlug: s.team.slug,
         })

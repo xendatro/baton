@@ -86,6 +86,33 @@ export const attachmentDownloadHeaders: MiddlewareHandler<AppEnv> = async (c, ne
   if (c.req.method === 'GET') c.res.headers.set('Content-Security-Policy', DOWNLOAD_CSP);
 };
 
+/**
+ * One `Range: bytes=start-end` (or `start-`, or `-suffix`) within a file of `size` bytes; null
+ * without a usable header (the whole file), `invalid` when it can't be satisfied.
+ */
+export function byteRange(
+  header: string | undefined,
+  size: number,
+): { start: number; end: number } | null | 'invalid' {
+  const match = header ? /^bytes=(\d*)-(\d*)$/.exec(header.trim()) : null;
+  if (!match) return null;
+  const [, from = '', to = ''] = match;
+  if (from === '' && to === '') return null;
+  let start: number;
+  let end: number;
+  if (from === '') {
+    const suffix = Number(to);
+    if (suffix === 0) return 'invalid';
+    start = Math.max(0, size - suffix);
+    end = size - 1;
+  } else {
+    start = Number(from);
+    end = to === '' ? size - 1 : Math.min(Number(to), size - 1);
+  }
+  if (start >= size || end < start) return 'invalid';
+  return { start, end };
+}
+
 /** RFC 6266 `Content-Disposition` with an ASCII fallback and the UTF-8 name. */
 function contentDisposition(type: 'inline' | 'attachment', filename: string): string {
   const fallback = filename.replace(/[^\x20-\x7e]|["\\]/g, '_');
@@ -100,7 +127,7 @@ attachmentRoutes.get(
   '/attachments/:id/:filename',
   validateParams(z.object({ id: idSchema, filename: z.string() })),
   (c) => {
-    const { attachment, path, inline } = getAttachmentFile(
+    const { attachment, path, inline, video } = getAttachmentFile(
       c.var.deps,
       requireActor(c),
       c.req.valid('param').id,
@@ -120,6 +147,22 @@ attachmentRoutes.get(
       ETag: etag,
     };
     if (c.req.header('if-none-match') === etag) return c.body(null, 304, headers);
+    if (video) {
+      // Players ask for byte ranges to start and seek.
+      headers['Accept-Ranges'] = 'bytes';
+      const range = byteRange(c.req.header('range'), attachment.size);
+      if (range === 'invalid') {
+        return c.body(null, 416, { ...headers, 'Content-Range': `bytes */${attachment.size}` });
+      }
+      if (range) {
+        headers['Content-Range'] = `bytes ${range.start}-${range.end}/${attachment.size}`;
+        headers['Content-Length'] = String(range.end - range.start + 1);
+        const part = Readable.toWeb(
+          fs.createReadStream(path, { start: range.start, end: range.end }),
+        ) as ReadableStream<Uint8Array>;
+        return c.body(part, 206, headers);
+      }
+    }
     headers['Content-Length'] = String(attachment.size);
     // Node's web stream type is structurally the DOM ReadableStream Hono expects.
     const stream = Readable.toWeb(fs.createReadStream(path)) as ReadableStream<Uint8Array>;

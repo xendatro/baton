@@ -18,11 +18,14 @@ function event(overrides: Partial<LiveEvent> & Pick<LiveEvent, 'type' | 'entityT
 describe('LIVE_INVALIDATIONS', () => {
   it('handles every live event type', () => {
     expect(Object.keys(LIVE_INVALIDATIONS).sort()).toEqual([...LIVE_EVENT_TYPES].sort());
+    // Ephemeral events refresh nothing (the chat's typing indicator listens for them).
+    const ephemeral = new Set(['typing']);
     for (const type of LIVE_EVENT_TYPES) {
       const keys = LIVE_INVALIDATIONS[type](
         event({ type, entityType: 'task', parentType: 'task', parentId: 't1' }),
       );
-      expect(keys.length, type).toBeGreaterThan(0);
+      if (ephemeral.has(type)) expect(keys, type).toEqual([]);
+      else expect(keys.length, type).toBeGreaterThan(0);
     }
   });
 

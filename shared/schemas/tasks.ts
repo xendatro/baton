@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import {
   CLAIM_LEASE,
+  CONVERSATION_MODES,
   ISSUE_LINK_KINDS,
   LIMITS,
   PRIORITY_KEYS,
@@ -229,6 +230,8 @@ export const taskSchema = taskCardSchema.extend({
    * evidence, approvals, what is missing to move on. Null when the project has no stage rules.
    */
   stage: taskStageSchema.nullable().optional(),
+  /** How the replies are shown: `chat` or `forum` (absent in older fixtures: forum). */
+  conversationMode: z.enum(CONVERSATION_MODES).optional(),
 });
 export type Task = z.infer<typeof taskSchema>;
 
@@ -421,6 +424,8 @@ export const createTaskInputSchema = z.object({
   issueLinks: z.array(issueLinkInputSchema).max(TASK_LIMITS.issueLinks).optional(),
   /** Pending uploads to attach (images and files added in the description editor). */
   attachmentIds: idListSchema(LIMITS.attachmentsPerItem).optional(),
+  /** Response style: `chat` (default) or `forum`. */
+  conversationMode: z.enum(CONVERSATION_MODES).optional(),
 });
 export type CreateTaskInput = z.input<typeof createTaskInputSchema>;
 export type CreateTaskData = z.output<typeof createTaskInputSchema>;

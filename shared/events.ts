@@ -51,6 +51,11 @@ export const LIVE_EVENT_TYPES = [
   'agent_job.changed',
   /** Personal: an agent sign-off request was made, approved, denied or expired (design §6). */
   'agent_action.changed',
+  /**
+   * Chat: someone (`actorId`) is typing in an issue's or task's conversation; entity = the item.
+   * Ephemeral (never stored, no queries to refresh): clients show it for a few seconds.
+   */
+  'typing',
 ] as const;
 
 export type LiveEventType = (typeof LIVE_EVENT_TYPES)[number];

@@ -1,7 +1,7 @@
 import { useRef, useState, type FormEvent } from 'react';
 import { useNavigate } from 'react-router';
 import { toast } from 'sonner';
-import { LIMITS, type PriorityValue } from '@shared/constants';
+import { LIMITS, type ConversationMode, type PriorityValue } from '@shared/constants';
 import type { Attachment, MeProject, MeTeam } from '@shared/schemas/core';
 import { createTaskInputSchema } from '@shared/schemas/tasks';
 import { AttachmentList } from '@web/components/attachments/AttachmentList';
@@ -16,6 +16,7 @@ import { DatePicker } from '@web/components/pickers/DatePicker';
 import { LabelPicker } from '@web/components/pickers/LabelPicker';
 import { DifficultyPicker } from '@web/components/pickers/DifficultyPicker';
 import { PriorityPicker } from '@web/components/pickers/PriorityPicker';
+import { ResponseStylePicker } from '@web/components/chat/ResponseStylePicker';
 import { StatusPicker } from '@web/components/pickers/StatusPicker';
 import { NoStartStageNotice } from '@web/components/common/NewTaskStages';
 import { Button } from '@web/components/ui/button';
@@ -173,6 +174,7 @@ function TaskFields({
   const [priority, setPriority] = useState<PriorityValue>(0);
   const [assignees, setAssignees] = useState<AssigneeValue>({ userIds: [], roleIds: [] });
   const [labelIds, setLabelIds] = useState<string[]>([]);
+  const [conversationMode, setConversationMode] = useState<ConversationMode>('chat');
   const [difficultyId, setDifficultyId] = useState<string | null>(null);
   const [dueDate, setDueDate] = useState<string | null>(null);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
@@ -223,6 +225,7 @@ function TaskFields({
       labelIds,
       difficultyId,
       attachmentIds: attachments.map((attachment) => attachment.id),
+      conversationMode,
     });
     if (!parsed.success) {
       setTitleError(
@@ -373,6 +376,7 @@ function TaskFields({
           pipelineName={creatable.length > 1 ? chosenPipeline?.name : undefined}
         />
       ) : null}
+      <ResponseStylePicker value={conversationMode} onChange={setConversationMode} />
       <FormError message={formError} />
       <div className="flex flex-wrap items-center justify-between gap-3">
         <label className="flex items-center gap-2 text-sm text-muted-foreground">

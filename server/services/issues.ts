@@ -250,6 +250,7 @@ function toIssue(db: DbExecutor, actor: Actor, row: IssueRow, context: ProjectCo
     linkedTasks: linkedTasksOf(db, row.id),
     reactions: reactionsOf(db, 'issue', row.id, actor.userId),
     subscribed: isSubscribed(db, actor.userId, row.id),
+    conversationMode: row.conversationMode,
   };
 }
 
@@ -571,6 +572,8 @@ export function createIssue(
         body,
         authorId: actor.userId,
         viaKeyId: actor.key?.id ?? null,
+        // New issues are chats unless the author picks the forum (existing ones stay forums).
+        conversationMode: input.conversationMode ?? 'chat',
         lastActivityAt: now,
         createdAt: now,
         updatedAt: now,

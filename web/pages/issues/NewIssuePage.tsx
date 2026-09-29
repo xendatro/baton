@@ -1,5 +1,6 @@
 import { LockIcon } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
+import type { ConversationMode } from '@shared/constants';
 import { Link, useNavigate } from 'react-router';
 import { toast } from 'sonner';
 import type { Attachment, MeProject, MeTeam } from '@shared/schemas/core';
@@ -23,6 +24,7 @@ import { useProjectAccess } from '@web/lib/permissions';
 import { useRouteContext } from '@web/lib/routeContext';
 import { useDocumentTitle } from '@web/lib/title';
 import { useLabels } from '@web/pages/projects/queries';
+import { ResponseStylePicker } from '@web/components/chat/ResponseStylePicker';
 import { UnsavedChangesGuard } from '@web/pages/projects/UnsavedChangesGuard';
 import { useCreateLabelOption } from './labels';
 import { useCreateIssue } from './queries';
@@ -50,6 +52,7 @@ function NewIssueForm({ team, project }: { team: MeTeam; project: MeProject }) {
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
   const [labelIds, setLabelIds] = useState<string[]>([]);
+  const [conversationMode, setConversationMode] = useState<ConversationMode>('chat');
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [titleError, setTitleError] = useState<string | null>(null);
   const [created, setCreated] = useState<Issue | null>(null);
@@ -79,6 +82,7 @@ function NewIssueForm({ team, project }: { team: MeTeam; project: MeProject }) {
         body: body.trim(),
         labelIds: labelIds.length > 0 ? labelIds : undefined,
         attachmentIds: attachments.length > 0 ? attachments.map((file) => file.id) : undefined,
+        conversationMode,
       },
       {
         onSuccess: (issue) => {
@@ -199,6 +203,8 @@ function NewIssueForm({ team, project }: { team: MeTeam; project: MeProject }) {
             />
           </div>
         </div>
+
+        <ResponseStylePicker value={conversationMode} onChange={setConversationMode} />
 
         {create.error && !titleError ? (
           <p role="alert" className="text-sm text-destructive">

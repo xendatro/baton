@@ -171,7 +171,8 @@ export type AgentNotificationLevel = (typeof AGENT_NOTIFICATION_LEVELS)[number];
  * `mention` — its username in a reply, task or issue; `assigned` — a task assigned to it;
  * `thread_reply` — someone else replied where it authored, replied or is assigned; `pool` — a
  * task it may claim entered a stage (pipelines); `approval` — it may approve a task's stage;
- * `action_result` — a person decided on an action it asked for (sign-off).
+ * `action_result` — a person decided on an action it asked for (sign-off); `catch_up` — its owner
+ * asked it to summarize a chat's recent messages for them (private, `catch_up_summary`).
  */
 export const AGENT_JOB_KINDS = [
   'mention',
@@ -180,6 +181,7 @@ export const AGENT_JOB_KINDS = [
   'pool',
   'approval',
   'action_result',
+  'catch_up',
 ] as const;
 export type AgentJobKind = (typeof AGENT_JOB_KINDS)[number];
 
@@ -381,6 +383,36 @@ export type IssueLinkKind = (typeof ISSUE_LINK_KINDS)[number];
 
 export const REPLY_PARENT_TYPES = ['issue', 'task'] as const;
 export type ReplyParentType = (typeof REPLY_PARENT_TYPES)[number];
+
+/**
+ * How an issue's or task's replies are shown: `chat` — a flat, Discord-like message stream (the
+ * default for new items); `forum` — the threaded comment tree (BAT-13). Same replies either way.
+ */
+export const CONVERSATION_MODES = ['chat', 'forum'] as const;
+export type ConversationMode = (typeof CONVERSATION_MODES)[number];
+
+/** Chat (typing indicators, catch-up summaries by the viewer's own agent). */
+export const CHAT_LIMITS = {
+  /** Messages per page of the chat stream. */
+  pageSize: 50,
+  maxPageSize: 100,
+  /** Clients ping `typing` at most this often while someone types… */
+  typingPingMs: 3_000,
+  /** …and show "X is typing" this long after the last ping. */
+  typingShowMs: 5_000,
+  /** The server ignores pings of the same person and item closer together than this. */
+  typingServerThrottleMs: 1_000,
+  /** Unread messages from which the Catch up strip is offered. */
+  catchUpThreshold: 10,
+  /** "Last N" ranges of a catch-up summary. */
+  catchUpCounts: [20, 50, 100],
+  /** Most messages one summary covers. */
+  catchUpMaxMessages: 100,
+  /** Longest summary text. */
+  catchUpSummaryMax: 20_000,
+  /** Summaries shown per item. */
+  catchUpShown: 5,
+} as const;
 
 export const ATTACHMENT_PARENT_TYPES = [
   'issue',

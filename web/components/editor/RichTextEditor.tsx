@@ -35,8 +35,15 @@ export interface RichTextEditorProps {
   /** `compact` for replies and short fields, `full` for issue/task bodies and READMEs. */
   variant?: 'compact' | 'full';
   autoFocus?: boolean;
-  /** Ctrl/Cmd+Enter. */
+  /** Ctrl/Cmd+Enter (and plain Enter with `submitOnEnter`). */
   onSubmit?: () => void;
+  /**
+   * Chat style: Enter sends (`onSubmit`) and Shift+Enter makes a new line. An open `@` or `/`
+   * menu keeps Enter for picking its item.
+   */
+  submitOnEnter?: boolean;
+  /** Every change of the text by the person typing (e.g. to ping "is typing"). */
+  onType?: () => void;
   /** Enables `@` mentions and uploads (pasted/dropped images and files) for this team. */
   teamId?: string | null;
   /** Agents of the thread (BAT-12), suggested above the team's people. Needs `teamId`. */
@@ -52,6 +59,16 @@ export interface RichTextEditorProps {
   label?: string;
   className?: string;
   ref?: Ref<RichTextEditorHandle>;
+}
+
+/** Is an `@` mention or `/` command menu open (a suggestion plugin is active)? */
+function suggestionOpen(view: EditorView): boolean {
+  return view.state.plugins.some((plugin) => {
+    const state: unknown = plugin.getState(view.state);
+    return (
+      typeof state === 'object' && state !== null && 'active' in state && state.active === true
+    );
+  });
 }
 
 function filesFrom(list: FileList | null | undefined): File[] {
@@ -70,6 +87,8 @@ export function RichTextEditor({
   variant = 'full',
   autoFocus = false,
   onSubmit,
+  submitOnEnter = false,
+  onType,
   teamId,
   mentionAgents,
   onAttach,
@@ -84,10 +103,10 @@ export function RichTextEditor({
   /** The live editor for the paste/drop handlers, which are created with the editor itself. */
   const editorRef = useRef<Editor | null>(null);
   const lastEmitted = useRef(value);
-  const callbacks = useRef({ onChange, onSubmit, onAttach });
+  const callbacks = useRef({ onChange, onSubmit, onAttach, onType, submitOnEnter });
   const uploadContext = useRef({ teamId, maxUploadMb: config.data?.maxUploadMb });
   useEffect(() => {
-    callbacks.current = { onChange, onSubmit, onAttach };
+    callbacks.current = { onChange, onSubmit, onAttach, onType, submitOnEnter };
     uploadContext.current = { teamId, maxUploadMb: config.data?.maxUploadMb };
   });
 
@@ -160,15 +179,21 @@ export function RichTextEditor({
           'aria-multiline': 'true',
           'aria-label': label,
         },
-        handleKeyDown: (_view: EditorView, event: KeyboardEvent) => {
-          if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
-            const submit = callbacks.current.onSubmit;
-            if (!submit) return false;
-            event.preventDefault();
-            submit();
-            return true;
-          }
-          return false;
+        handleKeyDown: (view: EditorView, event: KeyboardEvent) => {
+          if (event.key !== 'Enter') return false;
+          const submit = callbacks.current.onSubmit;
+          if (!submit) return false;
+          const chord = event.metaKey || event.ctrlKey;
+          const plain =
+            callbacks.current.submitOnEnter &&
+            !event.shiftKey &&
+            !event.altKey &&
+            !event.isComposing &&
+            !suggestionOpen(view);
+          if (!chord && !plain) return false;
+          event.preventDefault();
+          submit();
+          return true;
         },
         handlePaste: (view: EditorView, event: ClipboardEvent) => {
           const files = filesFrom(event.clipboardData?.files);
@@ -198,6 +223,7 @@ export function RichTextEditor({
         if (markdown === lastEmitted.current) return;
         lastEmitted.current = markdown;
         callbacks.current.onChange(markdown);
+        callbacks.current.onType?.();
       },
     },
     [extensions],

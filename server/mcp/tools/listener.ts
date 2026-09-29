@@ -1,8 +1,9 @@
 import { z } from 'zod';
-import { AGENT_JOB_STATUSES, AGENT_LISTENER } from '@shared/constants';
+import { AGENT_JOB_STATUSES, AGENT_LISTENER, CHAT_LIMITS } from '@shared/constants';
 import { HARNESS_IDS, JOB_OUTCOMES } from '@shared/schemas/agentRunner';
 import { completeJob, listJobs, releaseJob, startListener } from '../../services/agentJobs';
 import { recordJobUsage } from '../../services/agentRunner';
+import { submitCatchUp } from '../../services/chat';
 import { defineTool, toolInput, type McpTool } from './define';
 
 /**
@@ -142,9 +143,29 @@ const listJobsTool = defineTool({
   handler: (ctx, input) => listJobs(ctx.deps, ctx.actor, input),
 });
 
+const submitCatchUpTool = defineTool({
+  name: 'submit_catch_up',
+  title: 'Submit catch-up summary',
+  description:
+    "Hands in the summary of a catch_up job: your owner asked you to summarize a chat's recent messages for them. The summary (markdown) is shown only to your owner, never in the chat; it also completes the job. Only for your own catch_up jobs.",
+  input: toolInput({
+    jobId,
+    summary: z
+      .string()
+      .min(1)
+      .max(CHAT_LIMITS.catchUpSummaryMax)
+      .describe(
+        'Markdown: what happened, decisions, open questions, and what needs your owner (who asked what)',
+      ),
+  }),
+  annotations: { destructiveHint: false },
+  handler: (ctx, input) => submitCatchUp(ctx.deps, ctx.actor, input),
+});
+
 export const listenerTools: McpTool[] = [
   startListenerTool,
   completeJobTool,
   releaseJobTool,
   listJobsTool,
+  submitCatchUpTool,
 ];

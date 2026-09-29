@@ -80,11 +80,9 @@ test('the task page moves on with the green button and sends back with a reason'
   await dialog.getByRole('button', { name: 'Send back to Build' }).click();
   await expect(details.getByRole('button', { name: 'Status: Build' })).toBeVisible();
   await expect(page.getByTestId('return-reason')).toContainText('The demo crashes on start');
-  // The reason is a reply in the conversation; the move itself is in the Activity drawer.
+  // The reason is a message in the chat; the move itself is in the Activity drawer.
   await expect(
-    page
-      .getByRole('list', { name: 'Conversation' })
-      .getByText('Sent back from Review: The demo crashes on start'),
+    page.getByTestId('chat-view').getByText('Sent back from Review: The demo crashes on start'),
   ).toBeVisible();
   await page.getByRole('button', { name: /^Activity/ }).click();
   const history = page.getByRole('list', { name: 'History' });

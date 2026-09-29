@@ -302,6 +302,7 @@ export function toTask(db: DbExecutor, viewer: Actor, row: TaskRow, now: Date = 
     reactions: reactionsOf(db, 'task', row.id, viewer.userId),
     subscribed: isSubscribed(db, viewer.userId, row.id),
     ...(stage ? { stage } : {}),
+    conversationMode: row.conversationMode,
   };
 }
 

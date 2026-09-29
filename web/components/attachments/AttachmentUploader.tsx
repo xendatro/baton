@@ -27,6 +27,8 @@ export interface AttachmentUploaderProps {
   /** `button` only, or a `dropzone` with a button inside. */
   variant?: 'button' | 'dropzone';
   disabled?: boolean;
+  /** A paperclip icon button (labelled "Attach files") instead of the text button. */
+  iconOnly?: boolean;
   className?: string;
 }
 
@@ -41,6 +43,7 @@ export function AttachmentUploader({
   multiple = true,
   variant = 'button',
   disabled = false,
+  iconOnly = false,
   className,
 }: AttachmentUploaderProps) {
   const config = useConfig();
@@ -89,7 +92,19 @@ export function AttachmentUploader({
     if (files.length) start(files);
   };
 
-  const button = (
+  const button = iconOnly ? (
+    <Button
+      type="button"
+      variant="outline"
+      size="icon"
+      disabled={disabled}
+      aria-label="Attach files"
+      title="Attach files"
+      onClick={() => input.current?.click()}
+    >
+      <PaperclipIcon aria-hidden="true" />
+    </Button>
+  ) : (
     <Button
       type="button"
       variant={variant === 'dropzone' ? 'secondary' : 'outline'}

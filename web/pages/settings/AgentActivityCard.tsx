@@ -17,6 +17,7 @@ const KIND_LABELS: Record<AgentJobKind, string> = {
   pool: 'Pool hand-off',
   approval: 'Approval',
   action_result: 'Action result',
+  catch_up: 'Catch up',
 };
 
 const STATUS_LABELS: Record<AgentJobStatus, string> = {

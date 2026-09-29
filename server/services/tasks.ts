@@ -616,6 +616,8 @@ export function createTask(
         position: appendPosition(tx, status.id),
         authorId: actor.userId,
         viaKeyId: actor.key?.id ?? null,
+        // New tasks are chats unless the author picks the forum (existing ones stay forums).
+        conversationMode: input.conversationMode ?? 'chat',
         completedAt: rulesOf(status).blocksDependents ? null : now,
         lastActivityAt: now,
         createdAt: now,

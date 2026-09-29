@@ -393,6 +393,44 @@ describe('download', () => {
     ]);
   });
 
+  it('serves playable videos inline with byte ranges (chat players seek)', async () => {
+    const task = createTask(ctx.db, { project: project.project, authorId: member.id });
+    const mp4 = Buffer.concat([
+      Buffer.from([0, 0, 0, 0x18]),
+      Buffer.from('ftypisom'),
+      Buffer.from([0, 0, 2, 0]),
+      Buffer.from('isomiso2mp41'),
+      Buffer.alloc(40, 7),
+    ]);
+    const video = await uploaded(
+      await upload(mp4, 'clip.mp4', { parentType: 'task', parentId: task.id }),
+    );
+    expect(video.mimeType).toBe('video/mp4');
+    expect(video.isImage).toBe(false);
+    const whole = await ctx.app.request(video.url, { headers: bearer(memberKey) });
+    expect(whole.status).toBe(200);
+    expect(whole.headers.get('content-type')).toBe('video/mp4');
+    expect(whole.headers.get('content-disposition')).toMatch(/^inline;/);
+    expect(whole.headers.get('accept-ranges')).toBe('bytes');
+    expect(whole.headers.get('content-security-policy')).toBe("default-src 'none'; sandbox");
+    const part = await ctx.app.request(video.url, {
+      headers: { ...bearer(memberKey), Range: 'bytes=4-11' },
+    });
+    expect(part.status).toBe(206);
+    expect(part.headers.get('content-range')).toBe(`bytes 4-11/${mp4.length}`);
+    expect(Buffer.from(await part.arrayBuffer()).toString()).toBe('ftypisom');
+    const tail = await ctx.app.request(video.url, {
+      headers: { ...bearer(memberKey), Range: 'bytes=-4' },
+    });
+    expect(tail.headers.get('content-range')).toBe(
+      `bytes ${mp4.length - 4}-${mp4.length - 1}/${mp4.length}`,
+    );
+    const beyond = await ctx.app.request(video.url, {
+      headers: { ...bearer(memberKey), Range: `bytes=${mp4.length}-` },
+    });
+    expect(beyond.status).toBe(416);
+  });
+
   it('encodes non-ASCII filenames', async () => {
     const task = createTask(ctx.db, { project: project.project, authorId: member.id });
     const file = await uploaded(

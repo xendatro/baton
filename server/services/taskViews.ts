@@ -37,6 +37,7 @@ import { appPaths } from '../lib/urls';
 import type { Membership } from './access';
 import { attachmentsByParent } from './attachments';
 import { isClaimValid } from './claimLease';
+import { latestRepliesByItem } from './latestReplies';
 import { unreadCountsByItem } from './notifications';
 import { pipelineSummaries, stageOf } from './pipelines';
 import { hiddenStatusIds } from './projectPipelines';
@@ -447,6 +448,8 @@ export function filterConditions(
   }
   if (filters.blocked === 'yes') conditions.push(isBlocked);
   if (filters.blocked === 'no') conditions.push(not(isBlocked));
+  if (filters.completed === 'no') conditions.push(notCompleted);
+  if (filters.completed === 'yes') conditions.push(not(notCompleted));
   return conditions.filter((condition): condition is SQL => condition !== undefined);
 }
 
@@ -552,6 +555,8 @@ function listOrder(query: ListTasksQuery): SQL[] {
       return [direction(s.task.createdAt), direction(s.task.number)];
     case 'updatedAt':
       return [direction(s.task.updatedAt), asc(s.task.number)];
+    case 'lastActivityAt':
+      return [direction(s.task.lastActivityAt), direction(s.task.number)];
   }
 }
 
@@ -575,8 +580,20 @@ export function listOf(
     .offset(offset)
     .all();
   const next = offset + rows.length;
+  const activity = new Map(rows.map((row) => [row.id, row.lastActivityAt.toISOString()]));
+  const latest = query.latestReply
+    ? latestRepliesByItem(
+        db,
+        'task',
+        rows.map((row) => row.id),
+      )
+    : null;
   return {
-    items: withUnreadCounts(db, viewer.userId, toTaskCards(db, rows, now)),
+    items: withUnreadCounts(db, viewer.userId, toTaskCards(db, rows, now)).map((card) => ({
+      ...card,
+      lastActivityAt: activity.get(card.id),
+      ...(latest ? { latestReply: latest.get(card.id) ?? null } : {}),
+    })),
     total,
     nextCursor: next < total && rows.length > 0 ? encodeCursor([next]) : null,
   };

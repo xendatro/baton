@@ -13,6 +13,8 @@ import {
 import { dueDateSchema, idSchema, markdownSchema, timestampSchema, titleSchema } from './common';
 import {
   attachmentSchema,
+  latestReplyFlagSchema,
+  latestReplySchema,
   reactionSummarySchema,
   roleSummarySchema,
   userSummarySchema,
@@ -163,6 +165,10 @@ export const taskCardSchema = taskSummarySchema.extend({
   unreadCount: z.number().int().nonnegative().optional(),
   /** What blocks it in its stage (design §5); null when the stage has no such rules. */
   pipeline: taskPipelineSummarySchema.nullable().optional(),
+  /** Latest reply, edit or move (BAT-44). Sent with the list. */
+  lastActivityAt: timestampSchema.optional(),
+  /** The newest reply (null: none yet). Sent only when the list is asked with `latestReply=true`. */
+  latestReply: latestReplySchema.nullable().optional(),
 });
 export type TaskCard = z.infer<typeof taskCardSchema>;
 
@@ -243,6 +249,8 @@ export const TASK_SORTS = [
   'dueDate',
   'createdAt',
   'updatedAt',
+  /** Latest reply, edit or move (BAT-44: the task rail). */
+  'lastActivityAt',
 ] as const;
 export type TaskSort = (typeof TASK_SORTS)[number];
 
@@ -295,6 +303,8 @@ export const taskFiltersSchema = z.object({
   claimed: z.enum(TASK_CLAIM_FILTERS).optional(),
   /** `yes`: waiting for an open blocker. */
   blocked: z.enum(TASK_BLOCKED_FILTERS).optional(),
+  /** `no`: only tasks not completed (not in a finishing stage); `yes`: only completed ones. */
+  completed: z.enum(['yes', 'no']).optional(),
   /** The viewer's calendar date, for the due filters (default: the server's UTC date). */
   today: dueDateSchema.optional(),
 });
@@ -317,6 +327,8 @@ export const listTasksQuerySchema = taskFiltersSchema.extend({
   order: z.enum(['asc', 'desc']).default('asc'),
   limit: z.coerce.number().int().min(1).max(TASK_LIMITS.listPage).default(100),
   cursor: z.string().min(1).max(100).optional(),
+  /** `true`: each task carries its newest reply (`latestReply`), for the task rail (BAT-44). */
+  latestReply: latestReplyFlagSchema,
 });
 export type ListTasksQuery = z.infer<typeof listTasksQuerySchema>;
 

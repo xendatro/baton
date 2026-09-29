@@ -47,6 +47,7 @@ import {
   unreadCountsByItem,
   type NotificationTarget,
 } from './notifications';
+import { latestRepliesByItem } from './latestReplies';
 import { requireProject } from './projects';
 import { reactionsOf } from './reactions';
 import { buildFtsQuery, indexSearch } from './search';
@@ -439,10 +440,18 @@ export function listIssues(
     'issue',
     page.map((row) => row.id),
   );
+  const latest = query.latestReply
+    ? latestRepliesByItem(
+        orm,
+        'issue',
+        page.map((row) => row.id),
+      )
+    : null;
   return {
     items: toSummaries(orm, page, contextOf(access)).map((item) => ({
       ...item,
       unreadCount: unread.get(item.id) ?? 0,
+      ...(latest ? { latestReply: latest.get(item.id) ?? null } : {}),
     })),
     nextCursor: hasMore && last ? encodeCursor([spec.value(last), last.number]) : null,
     counts: countsOf(orm, filters),

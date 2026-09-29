@@ -677,6 +677,46 @@ describe('board and list', () => {
     expect(titles({ assignee: `unassigned,user:${bob.id}` })).toEqual(['Bob', 'Nobody']);
   });
 
+  it('lists open tasks by latest activity with their newest reply (BAT-44: the task rail)', () => {
+    const older = newTask('Older');
+    const newer = newTask('Newer');
+    const finished = newTask('Finished', { statusId: statusId(done) });
+    createReply(ctx.deps, web(mia), { parentType: 'task', parentId: older.id, body: 'Ping' });
+    const times: Array<[string, number]> = [
+      [older.id, 5000],
+      [newer.id, 3000],
+      [finished.id, 9000],
+    ];
+    for (const [id, ms] of times) {
+      ctx.db.orm
+        .update(s.task)
+        .set({ lastActivityAt: new Date(ms) })
+        .where(eq(s.task.id, id))
+        .run();
+    }
+    const rail = taskListResponseSchema.parse(
+      listTasks(
+        ctx.deps,
+        web(owner),
+        project.project.id,
+        listTasksQuerySchema.parse({
+          sort: 'lastActivityAt',
+          order: 'desc',
+          completed: 'no',
+          latestReply: 'true',
+        }),
+      ),
+    );
+    expect(rail.items.map((task) => task.title)).toEqual(['Older', 'Newer']);
+    expect(rail.items[0]).toMatchObject({
+      lastActivityAt: new Date(5000).toISOString(),
+      latestReply: { author: { id: mia.id }, excerpt: 'Ping' },
+    });
+    expect(rail.items[1]?.latestReply).toBeNull();
+    expect(titles({ completed: 'yes' })).toEqual(['Finished']);
+    expect(titles({}).length).toBe(3);
+  });
+
   it('filters by due date, labels, priority, text, claim and blocked state', () => {
     const label = ctx.db.orm
       .insert(s.label)

@@ -45,6 +45,11 @@ export interface ChatViewProps {
   projectId: string;
   /** The task or issue: its ref and path, and its author for `@` suggestions. */
   item: ThreadWrite & { ref: string; path: string };
+  /**
+   * BAT-43: fill the parent's height (a flex column of fixed height): the stream takes what the
+   * header and composer leave and scrolls on its own, with the composer pinned at the bottom.
+   */
+  fill?: boolean;
 }
 
 /** Within this many pixels of the end, the stream follows new messages. */
@@ -55,7 +60,14 @@ const STICK_PX = 80;
  * author), a "new messages" divider at the first unread one, "Jump to latest", who is typing or
  * which agent is working, the Catch up panel, and the composer pinned at the bottom.
  */
-export function ChatView({ parentType, parentId, teamId, projectId, item }: ChatViewProps) {
+export function ChatView({
+  parentType,
+  parentId,
+  teamId,
+  projectId,
+  item,
+  fill = false,
+}: ChatViewProps) {
   const query = useChatMessages(parentType, parentId);
   const viewerId = useSession().data?.user.id ?? null;
   const members = useMembers(teamId).data?.items;
@@ -276,7 +288,7 @@ export function ChatView({ parentType, parentId, teamId, projectId, item }: Chat
   }
 
   return (
-    <div className="flex flex-col gap-2" data-testid="chat-view">
+    <div className={cn('flex flex-col gap-2', fill && 'min-h-0 flex-1')} data-testid="chat-view">
       <div className="flex items-center justify-between gap-2">
         <h2 className="flex items-center gap-2 text-sm font-semibold">
           <MessageCircleIcon className="size-4 text-muted-foreground" aria-hidden="true" />
@@ -327,14 +339,17 @@ export function ChatView({ parentType, parentId, teamId, projectId, item }: Chat
           </Button>
         </div>
       ) : null}
-      <div className="relative rounded-lg border bg-card">
+      <div className={cn('relative rounded-lg border bg-card', fill && 'min-h-0 flex-1')}>
         <div
           ref={scroller}
           onScroll={onScroll}
           role="log"
           aria-label={`Chat of ${item.ref}`}
           tabIndex={0}
-          className="h-[min(65vh,640px)] min-h-72 overflow-y-auto px-1 outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+          className={cn(
+            'overflow-y-auto px-1 outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50',
+            fill ? 'h-full' : 'h-[min(65vh,640px)] min-h-72',
+          )}
           data-testid="chat-scroller"
         >
           {/* Few messages sit at the bottom, next to the composer, as in a chat app. */}

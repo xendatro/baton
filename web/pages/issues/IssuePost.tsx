@@ -8,6 +8,7 @@ import { AttachmentList } from '@web/components/attachments/AttachmentList';
 import { AttachmentUploader } from '@web/components/attachments/AttachmentUploader';
 import { ActorAvatar } from '@web/components/common/AgentAvatar';
 import { ConfirmDialog } from '@web/components/common/ConfirmDialog';
+import { ReadMore } from '@web/components/common/ReadMore';
 import { Kbd } from '@web/components/common/Kbd';
 import { RelativeTime } from '@web/components/common/RelativeTime';
 import { Spinner } from '@web/components/common/Spinner';
@@ -35,11 +36,14 @@ export function IssuePost({
   access,
   editing,
   onEditingChange,
+  collapsible = false,
 }: {
   issue: Issue;
   access: TeamAccess;
   editing: boolean;
   onEditingChange: (editing: boolean) => void;
+  /** BAT-43 (chat issues): a long post is cut to a few lines with "Read more". */
+  collapsible?: boolean;
 }) {
   const queryClient = useQueryClient();
   const canEdit = access.canEdit(issue.author?.id);
@@ -92,42 +96,49 @@ export function IssuePost({
       {editing ? (
         <BodyEditor issue={issue} onClose={() => onEditingChange(false)} />
       ) : (
-        <div className="space-y-4 px-4 py-4">
-          {issue.body.trim() ? (
-            <MarkdownView markdown={issue.body} teamId={issue.teamId} />
-          ) : (
-            <p className="text-sm text-muted-foreground italic">No description provided.</p>
-          )}
-          {files.length > 0 || canEdit ? (
-            <div className="space-y-2">
-              <AttachmentList
-                attachments={files}
-                canDelete={(attachment) => access.canDelete(attachment.uploader?.id)}
-                onDelete={async (attachment) => {
-                  await deleteAttachment.mutateAsync(attachment.id);
-                  await refresh();
-                  toast.success(`${attachment.filename} moved to Trash`);
-                }}
-              />
-              {canEdit ? (
-                <AttachmentUploader
-                  teamId={issue.teamId}
-                  parentType="issue"
-                  parentId={issue.id}
-                  onUploaded={() => void refresh()}
+        <ReadMore
+          disabled={!collapsible}
+          fadeClassName="from-card"
+          collapsedHeight={80}
+          className="px-4 py-4"
+        >
+          <div className="space-y-4">
+            {issue.body.trim() ? (
+              <MarkdownView markdown={issue.body} teamId={issue.teamId} />
+            ) : (
+              <p className="text-sm text-muted-foreground italic">No description provided.</p>
+            )}
+            {files.length > 0 || canEdit ? (
+              <div className="space-y-2">
+                <AttachmentList
+                  attachments={files}
+                  canDelete={(attachment) => access.canDelete(attachment.uploader?.id)}
+                  onDelete={async (attachment) => {
+                    await deleteAttachment.mutateAsync(attachment.id);
+                    await refresh();
+                    toast.success(`${attachment.filename} moved to Trash`);
+                  }}
                 />
-              ) : null}
-            </div>
-          ) : null}
-          <ReactionBar
-            targetType="issue"
-            targetId={issue.id}
-            teamId={issue.teamId}
-            projectId={issue.projectId}
-            reactions={issue.reactions}
-            queryKey={queryKeys.issues.detail(issue.projectId, issue.number)}
-          />
-        </div>
+                {canEdit ? (
+                  <AttachmentUploader
+                    teamId={issue.teamId}
+                    parentType="issue"
+                    parentId={issue.id}
+                    onUploaded={() => void refresh()}
+                  />
+                ) : null}
+              </div>
+            ) : null}
+            <ReactionBar
+              targetType="issue"
+              targetId={issue.id}
+              teamId={issue.teamId}
+              projectId={issue.projectId}
+              reactions={issue.reactions}
+              queryKey={queryKeys.issues.detail(issue.projectId, issue.number)}
+            />
+          </div>
+        </ReadMore>
       )}
     </article>
   );

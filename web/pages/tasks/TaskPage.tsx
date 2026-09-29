@@ -9,6 +9,7 @@ import {
   HandIcon,
   LinkIcon,
   MoreHorizontalIcon,
+  PanelRightIcon,
   PencilIcon,
   SignalHighIcon,
   TagIcon,
@@ -35,6 +36,8 @@ import { Kbd } from '@web/components/common/Kbd';
 import { LabelChip } from '@web/components/common/LabelChip';
 import { NotFound } from '@web/components/common/NotFound';
 import { PageContainer } from '@web/components/common/PageContainer';
+import { ReadMore } from '@web/components/common/ReadMore';
+import { ViewportFill } from '@web/components/common/ViewportFill';
 import { PriorityIcon } from '@web/components/common/PriorityIcon';
 import { RelativeTime } from '@web/components/common/RelativeTime';
 import { RoleChip } from '@web/components/common/RoleChip';
@@ -54,6 +57,7 @@ import { StatusPicker } from '@web/components/pickers/StatusPicker';
 import { useDeleteAttachment } from '@web/components/replies/queries';
 import { ActivitySheet } from '@web/components/replies/ActivitySheet';
 import { Conversation, ConversationModeMenuItem } from '@web/components/chat/Conversation';
+import { ItemPageFrame, ItemRailToggle } from '@web/components/itemRail/ItemPageFrame';
 import { Button } from '@web/components/ui/button';
 import {
   DropdownMenu,
@@ -63,6 +67,7 @@ import {
   DropdownMenuTrigger,
 } from '@web/components/ui/dropdown-menu';
 import { Input } from '@web/components/ui/input';
+import { Sheet, SheetContent, SheetDescription, SheetTitle } from '@web/components/ui/sheet';
 import { Skeleton } from '@web/components/ui/skeleton';
 import { isAgentUser } from '@web/lib/agentMembers';
 import { errorMessage, isApiError } from '@web/lib/api';
@@ -73,6 +78,7 @@ import { queryKeys } from '@web/lib/queryKeys';
 import { useProjectAccess } from '@web/lib/permissions';
 import { useRouteContext } from '@web/lib/routeContext';
 import { useDocumentTitle } from '@web/lib/title';
+import { useMediaQuery } from '@web/lib/useMediaQuery';
 import { cn } from '@web/lib/utils';
 import { useMarkItemRead } from '../inbox/useMarkItemRead';
 import { copyText } from '../teams/clipboard';
@@ -95,6 +101,7 @@ import {
 } from './queries';
 import { tasksViewPath, useTaskView } from './filters';
 import { projectSettingsPath } from './settingsPaths';
+import { TaskRail } from './TaskRail';
 import { TaskRelations } from './TaskRelations';
 
 /**
@@ -108,11 +115,24 @@ export default function TaskPage() {
   const params = useParams();
   const number = Number(params.number);
   if (!team || !project) return null;
-  if (!Number.isSafeInteger(number) || number < 1) return <NotFound what="Task" />;
+  const valid = Number.isSafeInteger(number) && number >= 1;
+  // BAT-44: the rail stays mounted while the viewer switches tasks (it keeps its scroll).
   return (
-    <TaskLoader key={`${project.id}:${number}`} team={team} project={project} number={number} />
+    <ItemPageFrame
+      label="Tasks"
+      rail={<TaskRail team={team} project={project} currentNumber={number} />}
+    >
+      {valid ? (
+        <TaskLoader key={`${project.id}:${number}`} team={team} project={project} number={number} />
+      ) : (
+        <NotFound what="Task" />
+      )}
+    </ItemPageFrame>
   );
 }
+
+/** The details column sits beside a chat task from here; narrower, it opens as a sheet. */
+const DETAILS_BESIDE_QUERY = '(min-width: 1024px)';
 
 function TaskLoader({
   team,
@@ -184,6 +204,11 @@ function TaskView({ task, team, project }: { task: Task; team: MeTeam; project: 
   const [editingTitle, setEditingTitle] = useState(false);
   const [editingDescription, setEditingDescription] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  // BAT-43: a chat task is one screen tall; below lg its details open as a sheet.
+  const chat = task.conversationMode === 'chat';
+  const wide = useMediaQuery(DETAILS_BESIDE_QUERY);
+  const detailsInSheet = chat && !wide;
+  const [detailsOpen, setDetailsOpen] = useState(false);
   /** A move the stage rules block, which the viewer may force (owner / administrator). */
   const [forcing, setForcing] = useState<{ statusId: string; reason: string } | null>(null);
   /** BAT-27: a status picked from the earlier stages it may go back to (asks for the reason). */
@@ -227,7 +252,10 @@ function TaskView({ task, team, project }: { task: Task; team: MeTeam; project: 
     });
   };
 
-  const openPicker = (which: Picker) => () => setPicker(which);
+  const openPicker = (which: Picker) => () => {
+    if (detailsInSheet) setDetailsOpen(true);
+    setPicker(which);
+  };
   useHotkey('s', openPicker('status'), {
     description: 'Change status',
     group: 'Task',
@@ -428,449 +456,445 @@ function TaskView({ task, team, project }: { task: Task; team: MeTeam; project: 
     );
   };
 
-  return (
-    <PageContainer>
-      <BackLink {...backOptions} />
-      {/* One column on small screens (header, details, body); two from lg (details on the right). */}
-      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_19rem] lg:grid-rows-[auto_1fr] lg:gap-x-8 lg:gap-y-0">
-        <header className="min-w-0 lg:col-start-1 lg:row-start-1">
-          <div className="flex items-start gap-2">
-            <div className="min-w-0 flex-1">
-              <TaskLocation task={task} team={team} project={project} />
-              {editingTitle ? (
-                <TitleEditor
-                  initial={task.title}
-                  pending={update.isPending}
-                  onCancel={() => setEditingTitle(false)}
-                  onSave={(title) => {
-                    if (title === task.title) {
-                      setEditingTitle(false);
-                      return;
-                    }
-                    quietly(save({ title }, { title }).then(() => setEditingTitle(false)));
-                  }}
-                />
-              ) : (
-                <h1
-                  className={cn(
-                    'text-xl leading-tight font-semibold tracking-tight break-words sm:text-2xl',
-                    canEditText && 'cursor-text rounded-sm hover:bg-muted/60',
-                  )}
-                  onDoubleClick={canEditText ? () => setEditingTitle(true) : undefined}
-                >
-                  {task.title}
-                </h1>
+  const header = (
+    <header
+      className={cn('min-w-0', chat ? 'shrink-0 border-b pb-3' : 'lg:col-start-1 lg:row-start-1')}
+    >
+      <div className="flex items-start gap-2">
+        <div className="min-w-0 flex-1">
+          <TaskLocation task={task} team={team} project={project} />
+          {editingTitle ? (
+            <TitleEditor
+              initial={task.title}
+              pending={update.isPending}
+              onCancel={() => setEditingTitle(false)}
+              onSave={(title) => {
+                if (title === task.title) {
+                  setEditingTitle(false);
+                  return;
+                }
+                quietly(save({ title }, { title }).then(() => setEditingTitle(false)));
+              }}
+            />
+          ) : (
+            <h1
+              className={cn(
+                'text-xl leading-tight font-semibold tracking-tight break-words sm:text-2xl',
+                canEditText && 'cursor-text rounded-sm hover:bg-muted/60',
               )}
-            </div>
-            <ActivitySheet
-              parentType="task"
-              parentId={task.id}
-              itemRef={task.ref}
-              group="Task"
-              className="mt-4"
-            />
-            {canDelete ? <DeleteTaskButton onDelete={() => setConfirmDelete(true)} /> : null}
-            <TaskMenu
-              task={task}
-              canEditText={canEditText}
-              canDelete={canDelete}
-              onEditTitle={() => setEditingTitle(true)}
-              onToggleSubscription={() => subscription.mutate(!task.subscribed)}
-              onDelete={() => setConfirmDelete(true)}
-              url={url}
-            />
-          </div>
-          <p className="mt-2 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-sm text-muted-foreground">
-            <span>Opened by</span>
-            <UserName user={task.author} via={task.via} avatar="xs" />
-            <RelativeTime value={task.createdAt} />
-            {task.editedAt ? (
-              <span title="The title or description was edited">· edited</span>
-            ) : null}
-          </p>
-        </header>
-
-        <aside
-          aria-label="Task details"
-          className="grid min-w-0 grid-cols-1 content-start gap-5 self-start border-b pb-6 lg:sticky lg:top-4 lg:col-start-2 lg:row-span-2 lg:row-start-1 lg:border-b-0 lg:pb-0"
-        >
-          <ClaimPanel
-            task={task}
-            viewerId={viewerId}
-            canClaim={canUpdate || Boolean(task.stage?.pool?.canClaim)}
-            canTakeOver={access.has('UPDATE_TASKS')}
-            claimable={stageClaimable}
-          />
-          <dl className="grid grid-cols-1 gap-1">
-            <Property label="Status" hotkey="s">
-              <StatusPicker
-                statuses={statusList}
-                value={task.status.id}
-                open={picker === 'status'}
-                onOpenChange={(open) => setPicker(open ? 'status' : null)}
-                disabled={!canUpdate}
-                align="end"
-                reasons={blockedMoves}
-                onChange={changeStatus}
-                groupOf={pipelineList.length > 1 ? pipelineNameOf : undefined}
-              >
-                <PropertyButton disabled={!canUpdate} label={`Status: ${task.status.name}`}>
-                  <StatusBadge status={task.status} />
-                </PropertyButton>
-              </StatusPicker>
-            </Property>
-            {task.status.pipeline ? (
-              <Property label="Pipeline">
-                <Link
-                  to={pipelineBoardPath(
-                    `/t/${team.slug}/p/${project.key}`,
-                    task.status.pipeline.id,
-                  )}
-                  className="flex h-8 items-center gap-1.5 rounded-md px-2 text-sm outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
-                  title={
-                    pipelineList.length > 1
-                      ? 'Its board. Pick a stage of another pipeline to move it there'
-                      : 'Its board'
-                  }
-                >
-                  <WorkflowIcon className="size-3.5 text-muted-foreground" aria-hidden="true" />
-                  {task.status.pipeline.name}
-                </Link>
-              </Property>
-            ) : null}
-            <Property label="Priority" hotkey="p">
-              <PriorityPicker
-                value={task.priority}
-                open={picker === 'priority'}
-                onOpenChange={(open) => setPicker(open ? 'priority' : null)}
-                disabled={!canUpdate}
-                align="end"
-                onChange={(priority: PriorityValue) => {
-                  if (priority !== task.priority) quietly(save({ priority }, { priority }));
-                }}
-              >
-                <PropertyButton
-                  disabled={!canUpdate}
-                  label={`Priority: ${PRIORITIES[task.priority]?.label ?? 'No priority'}`}
-                >
-                  <PriorityIcon value={task.priority} showLabel />
-                </PropertyButton>
-              </PriorityPicker>
-            </Property>
-            <Property label="Assignees" hotkey="a">
-              <AssigneePicker
-                users={people.users}
-                roles={people.roles}
-                currentUserId={viewerId ?? undefined}
-                value={{
-                  userIds: task.assignees.users.map((user) => user.id),
-                  roleIds: task.assignees.roles.map((role) => role.id),
-                }}
-                open={picker === 'assignees'}
-                onOpenChange={(open) => setPicker(open ? 'assignees' : null)}
-                disabled={!canUpdate}
-                align="end"
-                // Each toggle applies at once as its own add/remove, in the current stage.
-                note={`Assigned in ${task.status.name}. Changes apply right away.`}
-                onToggle={(toggle) => {
-                  const pooled = toggle.add && Boolean(task.stage?.pool);
-                  toggleAssignee.mutateAsync(toggle).then(
-                    () => {
-                      if (pooled) {
-                        toast.success(`Assigned ${toggle.assignee.name}`, {
-                          description: `${task.ref} no longer waits in the ${task.status.name} pool.`,
-                        });
-                      }
-                    },
-                    (error: unknown) =>
-                      toast.error(
-                        errorMessage(
-                          error,
-                          `Couldn’t ${toggle.add ? 'assign' : 'unassign'} ${toggle.assignee.name}.`,
-                        ),
-                      ),
-                  );
-                }}
-              >
-                <PropertyButton
-                  disabled={!canUpdate}
-                  label={`Assignees: ${assigneeNames(task) || 'none'}`}
-                >
-                  {task.assignees.users.length || task.assignees.roles.length ? (
-                    <span className="flex min-w-0 flex-wrap items-center gap-1.5">
-                      {task.assignees.users.map((user) => (
-                        <span key={user.id} className="inline-flex min-w-0 items-center gap-1">
-                          <UserAvatar user={user} size="xs" />
-                          <span className="truncate">{user.name}</span>
-                          {isAgentUser(user) ? <AgentBadge /> : null}
-                        </span>
-                      ))}
-                      {task.assignees.roles.map((role) => (
-                        <RoleChip key={role.id} role={role} />
-                      ))}
-                    </span>
-                  ) : (
-                    <span className="text-muted-foreground">Unassigned</span>
-                  )}
-                </PropertyButton>
-              </AssigneePicker>
-              <p className="px-2 text-xs text-muted-foreground">
-                {canUpdate
-                  ? `In ${task.status.name}`
-                  : `In ${task.status.name}. Only the author or members who can update tasks change assignees.`}
-              </p>
-            </Property>
-            <Property label="Labels" hotkey="l">
-              <LabelPicker
-                labels={labelList}
-                value={task.labels.map((label) => label.id)}
-                open={picker === 'labels'}
-                onOpenChange={(open) => setPicker(open ? 'labels' : null)}
-                disabled={!canUpdate}
-                align="end"
-                onCreate={
-                  access.has('MANAGE_LABELS')
-                    ? (name) => createLabel.mutateAsync({ name })
-                    : undefined
-                }
-                manageHref={
-                  access.has('MANAGE_LABELS')
-                    ? projectSettingsPath(`/t/${team.slug}/p/${project.key}`, 'labels')
-                    : undefined
-                }
-                onChange={(labelIds) =>
-                  quietly(
-                    save(
-                      { labels: { set: labelIds } },
-                      {
-                        labels: labelList
-                          .filter((label) => labelIds.includes(label.id))
-                          .map(({ id, name, color }) => ({ id, name, color })),
-                      },
-                    ),
-                  )
-                }
-              >
-                <PropertyButton
-                  disabled={!canUpdate}
-                  label={`Labels: ${task.labels.map((label) => label.name).join(', ') || 'none'}`}
-                >
-                  {task.labels.length ? (
-                    <span className="flex flex-wrap gap-1">
-                      {task.labels.map((label) => (
-                        <LabelChip key={label.id} label={label} />
-                      ))}
-                    </span>
-                  ) : (
-                    <span className="text-muted-foreground">No labels</span>
-                  )}
-                </PropertyButton>
-              </LabelPicker>
-            </Property>
-            <Property label="Due date">
-              <DatePicker
-                value={task.dueDate}
-                open={picker === 'due'}
-                onOpenChange={(open) => setPicker(open ? 'due' : null)}
-                disabled={!canUpdate}
-                align="end"
-                onChange={(dueDate) => quietly(save({ dueDate }, { dueDate }))}
-              >
-                <PropertyButton disabled={!canUpdate} label={`Due date: ${task.dueDate ?? 'none'}`}>
-                  {task.dueDate ? (
-                    <DueDate
-                      value={task.dueDate}
-                      done={task.completedAt !== null}
-                      className="text-sm"
-                    />
-                  ) : (
-                    <span className="text-muted-foreground">No due date</span>
-                  )}
-                </PropertyButton>
-              </DatePicker>
-            </Property>
-          </dl>
-          <div className="border-t pt-4">
-            <TaskRelations
-              task={task}
-              editable={canUpdate}
-              onChange={(input) => quietly(save(input))}
-            />
-          </div>
-          <ItemAgentRuns item={{ type: 'task', id: task.id }} className="border-t pt-4" />
-          <dl className="grid gap-2 border-t pt-4 text-sm">
-            <div className="flex items-center justify-between gap-2">
-              <dt className="text-muted-foreground">Created</dt>
-              <dd>
-                <RelativeTime value={task.createdAt} />
-              </dd>
-            </div>
-            <div className="flex items-center justify-between gap-2">
-              <dt className="text-muted-foreground">Updated</dt>
-              <dd>
-                <RelativeTime value={task.updatedAt} />
-              </dd>
-            </div>
-            {task.completedAt ? (
-              <div className="flex items-center justify-between gap-2">
-                <dt className="text-muted-foreground">Completed</dt>
-                <dd>
-                  <RelativeTime value={task.completedAt} />
-                </dd>
-              </div>
-            ) : null}
-          </dl>
-          <div className="grid gap-1.5">
-            <Button
-              variant="outline"
-              size="sm"
-              className="justify-self-start"
-              aria-pressed={task.subscribed}
-              onClick={() => subscription.mutate(!task.subscribed)}
+              onDoubleClick={canEditText ? () => setEditingTitle(true) : undefined}
             >
-              {task.subscribed ? (
-                <BellOffIcon aria-hidden="true" />
-              ) : (
-                <BellIcon aria-hidden="true" />
-              )}
-              {task.subscribed ? 'Unsubscribe' : 'Subscribe'}
-            </Button>
-            <p className="text-xs text-muted-foreground">
-              {task.subscribed
-                ? 'You’re notified about replies to this task.'
-                : 'You’re not notified about replies to this task.'}
-            </p>
-          </div>
-        </aside>
-
-        <div className="min-w-0 lg:col-start-1 lg:row-start-2">
-          <AgentConnectionNotice
-            projectId={task.projectId}
-            taskId={task.id}
-            when={(connection) => connection.taskInvolvesAgent === true}
-            waitingNote={(connection) =>
-              connection.pendingJobsForTask
-                ? `${connection.pendingJobsForTask} job${connection.pendingJobsForTask === 1 ? '' : 's'} for your agent on this task.`
-                : null
-            }
-            dismissKey="task"
-            className="mb-4 lg:mt-6 lg:mb-0"
-          />
-          {task.stage ? (
-            <div className="lg:mt-6">
-              <StagePanel
-                task={{ ...task, stage: task.stage }}
-                teamId={team.id}
-                // Also while the shown status is ahead of the stage (an optimistic move): the
-                // stage's buttons would act on the stage the task is leaving.
-                moving={update.isPending || task.status.id !== task.stage.status.id}
-                onMoveOn={
-                  task.stage.next
-                    ? () => changeStatus(task.stage?.next?.id ?? task.status.id)
-                    : undefined
-                }
-                onSendBack={canUpdate || task.stage.approvals?.canApprove ? sendBack : undefined}
-              />
-            </div>
-          ) : null}
-          <section
-            aria-labelledby="description-heading"
-            className={cn(task.stage ? 'mt-6' : 'lg:mt-6')}
-          >
-            <div className="mb-2 flex items-center justify-between gap-2">
-              <h2 id="description-heading" className="text-sm font-semibold">
-                Description
-              </h2>
-              {canEditText && !editingDescription ? (
-                <Button variant="ghost" size="sm" onClick={() => setEditingDescription(true)}>
-                  <PencilIcon aria-hidden="true" />
-                  Edit
-                </Button>
-              ) : null}
-            </div>
-            {editingDescription ? (
-              <DescriptionEditor
-                teamId={team.id}
-                initial={task.description}
-                pending={update.isPending}
-                onCancel={() => setEditingDescription(false)}
-                onSave={(description, attachmentIds) =>
-                  quietly(
-                    save(
-                      {
-                        description,
-                        ...(attachmentIds.length ? { attachmentIds } : {}),
-                      },
-                      undefined,
-                      'Description saved',
-                    ).then(() => setEditingDescription(false)),
-                  )
-                }
-              />
-            ) : task.description.trim() ? (
-              <MarkdownView markdown={task.description} teamId={team.id} />
-            ) : (
-              <p className="rounded-lg border border-dashed px-3 py-4 text-sm text-muted-foreground">
-                No description.
-                {canEditText ? ' Add one to give agents and teammates the full context.' : ''}
-              </p>
-            )}
-            {editingDescription ? null : (
-              <ReactionBar
-                targetType="task"
-                targetId={task.id}
-                teamId={team.id}
-                projectId={task.projectId}
-                reactions={task.reactions}
-                queryKey={queryKeys.tasks.detail(task.projectId, task.number)}
-                className="mt-3"
-              />
-            )}
-          </section>
-
-          <section aria-labelledby="files-heading" className="mt-6">
-            <div className="mb-2 flex items-center justify-between gap-2">
-              <h2 id="files-heading" className="text-sm font-semibold">
-                Files
-              </h2>
-              {canEditText || canUpdate ? (
-                <AttachmentUploader
-                  teamId={team.id}
-                  parentType="task"
-                  parentId={task.id}
-                  onUploaded={() => void refreshTask()}
-                />
-              ) : null}
-            </div>
-            {files.length ? (
-              <AttachmentList
-                attachments={files}
-                canDelete={(attachment) => access.canDelete(attachment.uploader?.id)}
-                onDelete={(attachment) =>
-                  deleteAttachment.mutateAsync(attachment.id).then(() => {
-                    void refreshTask();
-                    toast.success(`Moved ${attachment.filename} to Trash`);
-                  })
-                }
-              />
-            ) : (
-              <p className="text-sm text-muted-foreground">No files.</p>
-            )}
-          </section>
-
-          <section aria-label="Conversation" className="mt-8">
-            <Conversation
-              parentType="task"
-              parentId={task.id}
-              teamId={team.id}
-              projectId={task.projectId}
-              mode={task.conversationMode}
-              item={task}
-              forumHeading={<h2 className="text-sm font-semibold">Conversation</h2>}
-            />
-          </section>
+              {task.title}
+            </h1>
+          )}
         </div>
+        <ActivitySheet
+          parentType="task"
+          parentId={task.id}
+          itemRef={task.ref}
+          group="Task"
+          className="mt-4"
+        />
+        {detailsInSheet ? (
+          <Button
+            variant="outline"
+            size="sm"
+            className="mt-4 shrink-0"
+            onClick={() => setDetailsOpen(true)}
+          >
+            <PanelRightIcon aria-hidden="true" />
+            Details
+          </Button>
+        ) : null}
+        {canDelete ? <DeleteTaskButton onDelete={() => setConfirmDelete(true)} /> : null}
+        <TaskMenu
+          task={task}
+          canEditText={canEditText}
+          canDelete={canDelete}
+          onEditTitle={() => setEditingTitle(true)}
+          onToggleSubscription={() => subscription.mutate(!task.subscribed)}
+          onDelete={() => setConfirmDelete(true)}
+          url={url}
+        />
       </div>
+      <p className="mt-2 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-sm text-muted-foreground">
+        <span>Opened by</span>
+        <UserName user={task.author} via={task.via} avatar="xs" />
+        <RelativeTime value={task.createdAt} />
+        {task.editedAt ? <span title="The title or description was edited">· edited</span> : null}
+      </p>
+    </header>
+  );
+  const details = (
+    <>
+      <ClaimPanel
+        task={task}
+        viewerId={viewerId}
+        canClaim={canUpdate || Boolean(task.stage?.pool?.canClaim)}
+        canTakeOver={access.has('UPDATE_TASKS')}
+        claimable={stageClaimable}
+      />
+      <dl className="grid grid-cols-1 gap-1">
+        <Property label="Status" hotkey="s">
+          <StatusPicker
+            statuses={statusList}
+            value={task.status.id}
+            open={picker === 'status'}
+            onOpenChange={(open) => setPicker(open ? 'status' : null)}
+            disabled={!canUpdate}
+            align="end"
+            reasons={blockedMoves}
+            onChange={changeStatus}
+            groupOf={pipelineList.length > 1 ? pipelineNameOf : undefined}
+          >
+            <PropertyButton disabled={!canUpdate} label={`Status: ${task.status.name}`}>
+              <StatusBadge status={task.status} />
+            </PropertyButton>
+          </StatusPicker>
+        </Property>
+        {task.status.pipeline ? (
+          <Property label="Pipeline">
+            <Link
+              to={pipelineBoardPath(`/t/${team.slug}/p/${project.key}`, task.status.pipeline.id)}
+              className="flex h-8 items-center gap-1.5 rounded-md px-2 text-sm outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
+              title={
+                pipelineList.length > 1
+                  ? 'Its board. Pick a stage of another pipeline to move it there'
+                  : 'Its board'
+              }
+            >
+              <WorkflowIcon className="size-3.5 text-muted-foreground" aria-hidden="true" />
+              {task.status.pipeline.name}
+            </Link>
+          </Property>
+        ) : null}
+        <Property label="Priority" hotkey="p">
+          <PriorityPicker
+            value={task.priority}
+            open={picker === 'priority'}
+            onOpenChange={(open) => setPicker(open ? 'priority' : null)}
+            disabled={!canUpdate}
+            align="end"
+            onChange={(priority: PriorityValue) => {
+              if (priority !== task.priority) quietly(save({ priority }, { priority }));
+            }}
+          >
+            <PropertyButton
+              disabled={!canUpdate}
+              label={`Priority: ${PRIORITIES[task.priority]?.label ?? 'No priority'}`}
+            >
+              <PriorityIcon value={task.priority} showLabel />
+            </PropertyButton>
+          </PriorityPicker>
+        </Property>
+        <Property label="Assignees" hotkey="a">
+          <AssigneePicker
+            users={people.users}
+            roles={people.roles}
+            currentUserId={viewerId ?? undefined}
+            value={{
+              userIds: task.assignees.users.map((user) => user.id),
+              roleIds: task.assignees.roles.map((role) => role.id),
+            }}
+            open={picker === 'assignees'}
+            onOpenChange={(open) => setPicker(open ? 'assignees' : null)}
+            disabled={!canUpdate}
+            align="end"
+            // Each toggle applies at once as its own add/remove, in the current stage.
+            note={`Assigned in ${task.status.name}. Changes apply right away.`}
+            onToggle={(toggle) => {
+              const pooled = toggle.add && Boolean(task.stage?.pool);
+              toggleAssignee.mutateAsync(toggle).then(
+                () => {
+                  if (pooled) {
+                    toast.success(`Assigned ${toggle.assignee.name}`, {
+                      description: `${task.ref} no longer waits in the ${task.status.name} pool.`,
+                    });
+                  }
+                },
+                (error: unknown) =>
+                  toast.error(
+                    errorMessage(
+                      error,
+                      `Couldn’t ${toggle.add ? 'assign' : 'unassign'} ${toggle.assignee.name}.`,
+                    ),
+                  ),
+              );
+            }}
+          >
+            <PropertyButton
+              disabled={!canUpdate}
+              label={`Assignees: ${assigneeNames(task) || 'none'}`}
+            >
+              {task.assignees.users.length || task.assignees.roles.length ? (
+                <span className="flex min-w-0 flex-wrap items-center gap-1.5">
+                  {task.assignees.users.map((user) => (
+                    <span key={user.id} className="inline-flex min-w-0 items-center gap-1">
+                      <UserAvatar user={user} size="xs" />
+                      <span className="truncate">{user.name}</span>
+                      {isAgentUser(user) ? <AgentBadge /> : null}
+                    </span>
+                  ))}
+                  {task.assignees.roles.map((role) => (
+                    <RoleChip key={role.id} role={role} />
+                  ))}
+                </span>
+              ) : (
+                <span className="text-muted-foreground">Unassigned</span>
+              )}
+            </PropertyButton>
+          </AssigneePicker>
+          <p className="px-2 text-xs text-muted-foreground">
+            {canUpdate
+              ? `In ${task.status.name}`
+              : `In ${task.status.name}. Only the author or members who can update tasks change assignees.`}
+          </p>
+        </Property>
+        <Property label="Labels" hotkey="l">
+          <LabelPicker
+            labels={labelList}
+            value={task.labels.map((label) => label.id)}
+            open={picker === 'labels'}
+            onOpenChange={(open) => setPicker(open ? 'labels' : null)}
+            disabled={!canUpdate}
+            align="end"
+            onCreate={
+              access.has('MANAGE_LABELS') ? (name) => createLabel.mutateAsync({ name }) : undefined
+            }
+            manageHref={
+              access.has('MANAGE_LABELS')
+                ? projectSettingsPath(`/t/${team.slug}/p/${project.key}`, 'labels')
+                : undefined
+            }
+            onChange={(labelIds) =>
+              quietly(
+                save(
+                  { labels: { set: labelIds } },
+                  {
+                    labels: labelList
+                      .filter((label) => labelIds.includes(label.id))
+                      .map(({ id, name, color }) => ({ id, name, color })),
+                  },
+                ),
+              )
+            }
+          >
+            <PropertyButton
+              disabled={!canUpdate}
+              label={`Labels: ${task.labels.map((label) => label.name).join(', ') || 'none'}`}
+            >
+              {task.labels.length ? (
+                <span className="flex flex-wrap gap-1">
+                  {task.labels.map((label) => (
+                    <LabelChip key={label.id} label={label} />
+                  ))}
+                </span>
+              ) : (
+                <span className="text-muted-foreground">No labels</span>
+              )}
+            </PropertyButton>
+          </LabelPicker>
+        </Property>
+        <Property label="Due date">
+          <DatePicker
+            value={task.dueDate}
+            open={picker === 'due'}
+            onOpenChange={(open) => setPicker(open ? 'due' : null)}
+            disabled={!canUpdate}
+            align="end"
+            onChange={(dueDate) => quietly(save({ dueDate }, { dueDate }))}
+          >
+            <PropertyButton disabled={!canUpdate} label={`Due date: ${task.dueDate ?? 'none'}`}>
+              {task.dueDate ? (
+                <DueDate
+                  value={task.dueDate}
+                  done={task.completedAt !== null}
+                  className="text-sm"
+                />
+              ) : (
+                <span className="text-muted-foreground">No due date</span>
+              )}
+            </PropertyButton>
+          </DatePicker>
+        </Property>
+      </dl>
+      <div className="border-t pt-4">
+        <TaskRelations
+          task={task}
+          editable={canUpdate}
+          onChange={(input) => quietly(save(input))}
+        />
+      </div>
+      <ItemAgentRuns item={{ type: 'task', id: task.id }} className="border-t pt-4" />
+      <dl className="grid gap-2 border-t pt-4 text-sm">
+        <div className="flex items-center justify-between gap-2">
+          <dt className="text-muted-foreground">Created</dt>
+          <dd>
+            <RelativeTime value={task.createdAt} />
+          </dd>
+        </div>
+        <div className="flex items-center justify-between gap-2">
+          <dt className="text-muted-foreground">Updated</dt>
+          <dd>
+            <RelativeTime value={task.updatedAt} />
+          </dd>
+        </div>
+        {task.completedAt ? (
+          <div className="flex items-center justify-between gap-2">
+            <dt className="text-muted-foreground">Completed</dt>
+            <dd>
+              <RelativeTime value={task.completedAt} />
+            </dd>
+          </div>
+        ) : null}
+      </dl>
+      <div className="grid gap-1.5">
+        <Button
+          variant="outline"
+          size="sm"
+          className="justify-self-start"
+          aria-pressed={task.subscribed}
+          onClick={() => subscription.mutate(!task.subscribed)}
+        >
+          {task.subscribed ? <BellOffIcon aria-hidden="true" /> : <BellIcon aria-hidden="true" />}
+          {task.subscribed ? 'Unsubscribe' : 'Subscribe'}
+        </Button>
+        <p className="text-xs text-muted-foreground">
+          {task.subscribed
+            ? 'You’re notified about replies to this task.'
+            : 'You’re not notified about replies to this task.'}
+        </p>
+      </div>
+    </>
+  );
+  const notice = (
+    <AgentConnectionNotice
+      projectId={task.projectId}
+      taskId={task.id}
+      when={(connection) => connection.taskInvolvesAgent === true}
+      waitingNote={(connection) =>
+        connection.pendingJobsForTask
+          ? `${connection.pendingJobsForTask} job${connection.pendingJobsForTask === 1 ? '' : 's'} for your agent on this task.`
+          : null
+      }
+      dismissKey="task"
+      className={chat ? undefined : 'mb-4 lg:mt-6 lg:mb-0'}
+    />
+  );
+  const stagePanel = task.stage ? (
+    <StagePanel
+      task={{ ...task, stage: task.stage }}
+      teamId={team.id}
+      // Also while the shown status is ahead of the stage (an optimistic move): the
+      // stage's buttons would act on the stage the task is leaving.
+      moving={update.isPending || task.status.id !== task.stage.status.id}
+      onMoveOn={
+        task.stage.next ? () => changeStatus(task.stage?.next?.id ?? task.status.id) : undefined
+      }
+      onSendBack={canUpdate || task.stage.approvals?.canApprove ? sendBack : undefined}
+    />
+  ) : null;
+  const description = (
+    <section
+      aria-labelledby="description-heading"
+      className={chat ? undefined : cn(task.stage ? 'mt-6' : 'lg:mt-6')}
+    >
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <h2 id="description-heading" className="text-sm font-semibold">
+          Description
+        </h2>
+        {canEditText && !editingDescription ? (
+          <Button variant="ghost" size="sm" onClick={() => setEditingDescription(true)}>
+            <PencilIcon aria-hidden="true" />
+            Edit
+          </Button>
+        ) : null}
+      </div>
+      {editingDescription ? (
+        <DescriptionEditor
+          teamId={team.id}
+          initial={task.description}
+          pending={update.isPending}
+          onCancel={() => setEditingDescription(false)}
+          onSave={(description, attachmentIds) =>
+            quietly(
+              save(
+                {
+                  description,
+                  ...(attachmentIds.length ? { attachmentIds } : {}),
+                },
+                undefined,
+                'Description saved',
+              ).then(() => setEditingDescription(false)),
+            )
+          }
+        />
+      ) : task.description.trim() ? (
+        <MarkdownView markdown={task.description} teamId={team.id} />
+      ) : (
+        <p className="rounded-lg border border-dashed px-3 py-4 text-sm text-muted-foreground">
+          No description.
+          {canEditText ? ' Add one to give agents and teammates the full context.' : ''}
+        </p>
+      )}
+      {editingDescription ? null : (
+        <ReactionBar
+          targetType="task"
+          targetId={task.id}
+          teamId={team.id}
+          projectId={task.projectId}
+          reactions={task.reactions}
+          queryKey={queryKeys.tasks.detail(task.projectId, task.number)}
+          className="mt-3"
+        />
+      )}
+    </section>
+  );
+  const filesSection = (
+    <section aria-labelledby="files-heading" className={chat ? 'mt-4' : 'mt-6'}>
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <h2 id="files-heading" className="text-sm font-semibold">
+          Files
+        </h2>
+        {canEditText || canUpdate ? (
+          <AttachmentUploader
+            teamId={team.id}
+            parentType="task"
+            parentId={task.id}
+            onUploaded={() => void refreshTask()}
+          />
+        ) : null}
+      </div>
+      {files.length ? (
+        <AttachmentList
+          attachments={files}
+          canDelete={(attachment) => access.canDelete(attachment.uploader?.id)}
+          onDelete={(attachment) =>
+            deleteAttachment.mutateAsync(attachment.id).then(() => {
+              void refreshTask();
+              toast.success(`Moved ${attachment.filename} to Trash`);
+            })
+          }
+        />
+      ) : (
+        <p className="text-sm text-muted-foreground">No files.</p>
+      )}
+    </section>
+  );
+  const conversation = (
+    <Conversation
+      parentType="task"
+      parentId={task.id}
+      teamId={team.id}
+      projectId={task.projectId}
+      mode={task.conversationMode}
+      item={task}
+      fill={chat}
+      forumHeading={<h2 className="text-sm font-semibold">Conversation</h2>}
+    />
+  );
+  const dialogs = (
+    <>
       <ForceMoveDialog
         open={forcing !== null}
         onOpenChange={(open) => (open ? undefined : setForcing(null))}
@@ -907,6 +931,97 @@ function TaskView({ task, team, project }: { task: Task; team: MeTeam; project: 
         destructive
         onConfirm={deleteTask}
       />
+    </>
+  );
+
+  if (chat) {
+    // BAT-43: exactly one screen below the app header. The description and files are cut to a
+    // few lines ("Read more"); the chat takes the rest, scrolls on its own and keeps its composer
+    // at the bottom. The agent notice and stage panel sit above the description, in the same
+    // scrollable top area; the details sit in the right column (a sheet below lg).
+    return (
+      <ViewportFill
+        className="mx-auto flex h-[calc(100dvh-3rem)] w-full max-w-6xl flex-col px-4 pt-3 pb-3 sm:px-6"
+        data-testid="task-chat-layout"
+      >
+        <div className="flex shrink-0 items-center gap-1">
+          <ItemRailToggle className="-ml-1.5" />
+          <BackLink {...backOptions} className="mb-0" />
+        </div>
+        {header}
+        <div className="mt-4 grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)] gap-6 lg:grid-cols-[minmax(0,1fr)_19rem] lg:gap-x-8">
+          <div className="flex min-h-0 min-w-0 flex-col gap-4">
+            <div className="max-h-[60%] min-h-0 shrink overflow-y-auto">
+              <div className="mb-4 grid gap-4 empty:hidden">
+                {notice}
+                {stagePanel}
+              </div>
+              <ReadMore disabled={editingDescription}>
+                {description}
+                {filesSection}
+              </ReadMore>
+            </div>
+            <section aria-label="Conversation" className="flex min-h-56 min-w-0 flex-1 flex-col">
+              {conversation}
+            </section>
+          </div>
+          {detailsInSheet ? null : (
+            <aside
+              aria-label="Task details"
+              className="grid min-h-0 min-w-0 grid-cols-1 content-start gap-5 overflow-y-auto pr-1 pb-2"
+            >
+              {details}
+            </aside>
+          )}
+        </div>
+        {detailsInSheet ? (
+          <Sheet open={detailsOpen} onOpenChange={setDetailsOpen}>
+            <SheetContent side="right" className="w-80 overflow-y-auto p-4 pt-12 sm:max-w-sm">
+              <SheetTitle className="sr-only">Task details</SheetTitle>
+              <SheetDescription className="sr-only">
+                The claim, status, priority, assignees, labels, due date and links.
+              </SheetDescription>
+              <aside aria-label="Task details" className="grid grid-cols-1 content-start gap-5">
+                {details}
+              </aside>
+            </SheetContent>
+          </Sheet>
+        ) : null}
+        {dialogs}
+      </ViewportFill>
+    );
+  }
+
+  return (
+    <PageContainer>
+      <div className="flex items-center gap-1">
+        <ItemRailToggle className="mb-3 -ml-1.5" />
+        <BackLink {...backOptions} />
+      </div>
+      {/* One column on small screens (header, details, body); two from lg (details on the right). */}
+      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_19rem] lg:grid-rows-[auto_1fr] lg:gap-x-8 lg:gap-y-0">
+        {header}
+
+        <aside
+          aria-label="Task details"
+          className="grid min-w-0 grid-cols-1 content-start gap-5 self-start border-b pb-6 lg:sticky lg:top-4 lg:col-start-2 lg:row-span-2 lg:row-start-1 lg:border-b-0 lg:pb-0"
+        >
+          {details}
+        </aside>
+
+        <div className="min-w-0 lg:col-start-1 lg:row-start-2">
+          {notice}
+          {stagePanel ? <div className="lg:mt-6">{stagePanel}</div> : null}
+          {description}
+
+          {filesSection}
+
+          <section aria-label="Conversation" className="mt-8">
+            {conversation}
+          </section>
+        </div>
+      </div>
+      {dialogs}
     </PageContainer>
   );
 }

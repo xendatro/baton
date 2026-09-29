@@ -8,7 +8,14 @@ import {
   timestampSchema,
   titleSchema,
 } from './common';
-import { attachmentSchema, reactionSummarySchema, userSummarySchema, viaKeySchema } from './core';
+import {
+  attachmentSchema,
+  latestReplyFlagSchema,
+  latestReplySchema,
+  reactionSummarySchema,
+  userSummarySchema,
+  viaKeySchema,
+} from './core';
 
 /**
  * Wire contracts of the issues module (SPEC §1.7): forum-style issues, numbered per project
@@ -76,6 +83,8 @@ export const issueSummarySchema = z.object({
    * issue list.
    */
   unreadCount: z.number().int().nonnegative().optional(),
+  /** The newest reply (null: none yet). Sent only when the list is asked with `latestReply=true`. */
+  latestReply: latestReplySchema.nullable().optional(),
 });
 export type IssueSummary = z.infer<typeof issueSummarySchema>;
 
@@ -160,6 +169,8 @@ export const listIssuesQuerySchema = cursorPaginationSchema.extend({
   /** Full-text search over titles, bodies and replies; `#12` or `12` also matches that number. */
   q: z.string().trim().max(LIMITS.searchQuery.max).optional(),
   sort: z.enum(ISSUE_SORTS).default('latest-activity'),
+  /** `true`: each issue carries its newest reply (`latestReply`), for the issue rail (BAT-44). */
+  latestReply: latestReplyFlagSchema,
 });
 export type ListIssuesQuery = z.infer<typeof listIssuesQuerySchema>;
 export type ListIssuesQueryInput = z.input<typeof listIssuesQuerySchema>;

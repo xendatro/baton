@@ -72,7 +72,7 @@ test('a mention shows as a badge on the card and in the Inbox until the task is 
   await card.click();
   await expect(page).toHaveURL(new RegExp(`/t/${team.slug}/p/NT/tasks/1$`));
   await expect(page.getByRole('heading', { level: 1, name: 'Ship the badge' })).toBeVisible();
-  await expect(page.getByText('can you check this?')).toBeVisible();
+  await expect(page.getByRole('log').getByText('can you check this?')).toBeVisible();
   await expect(inboxLink).not.toHaveAccessibleName(/unread/);
 
   // Back on the board, the card has no badge.

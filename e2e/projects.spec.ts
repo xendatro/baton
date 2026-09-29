@@ -147,6 +147,9 @@ test('manage stages: add, set default, pick an icon, reorder by keyboard, delete
   await expect(page).toHaveURL(new RegExp(`/t/${team.slug}/p/BRD/settings/pipelines$`));
   await expect(page.getByRole('heading', { name: 'Pipelines', level: 2 })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Stages of Main' })).toBeVisible();
+  // The visual editor comes first; the list is one click away.
+  await expect(page.getByTestId('stage-node')).toHaveCount(5);
+  await page.getByRole('button', { name: 'List', exact: true }).click();
   // A new project's five stages.
   await expect(page.getByTestId('status-row')).toHaveCount(5);
   // The rows are items of a real list inside the radio group (UX-15).

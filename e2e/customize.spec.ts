@@ -54,15 +54,16 @@ test('Customize → Edit stages opens the pipeline settings, and ← Board comes
   await expect(page).toHaveURL(new RegExp(`${project.path}/tasks\\?pipeline=\\w+$`));
   await expect(page.getByRole('region', { name: 'Board' })).toBeVisible();
 
-  // A column's "…" menu goes to that status, highlighted and ready to rename.
+  // A column's "…" menu goes to that stage, whose panel opens.
   const done = project.statuses.find((status) => status.name === 'Done');
   expect(done).toBeDefined();
   await page.getByRole('button', { name: 'Done column actions' }).click();
   await page.getByRole('menuitem', { name: 'Edit stage' }).click();
   await expect(page).toHaveURL(new RegExp(`/settings/pipelines\\?status=${done!.id}$`));
-  const row = page.locator('[data-testid="status-row"][data-targeted="true"]');
-  await expect(row.getByRole('textbox')).toHaveValue('Done');
-  await expect(row.getByRole('textbox')).toBeFocused();
+  const panel = page.getByTestId('stage-panel');
+  await expect(panel.getByRole('textbox', { name: 'Stage name' })).toHaveValue('Done');
+  await page.keyboard.press('Escape');
+  await expect(panel).toBeHidden();
 
   // Labels: the toolbar menu too.
   await page.goBack();

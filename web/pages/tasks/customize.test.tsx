@@ -209,7 +209,7 @@ describe('Tasks page → Customize menu', { timeout: 30_000 }, () => {
 });
 
 describe('board column menu', { timeout: 30_000 }, () => {
-  it('links a column to its status in the settings, which highlights it', async () => {
+  it('links a column to its stage in the settings, which opens its panel', async () => {
     const user = userEvent.setup();
     mockProjectApi([...MEMBER, 'MANAGE_STATUSES']);
     const router = renderAt('/t/acme/p/WEB/tasks');
@@ -222,10 +222,8 @@ describe('board column menu', { timeout: 30_000 }, () => {
     await user.click(item);
     await waitFor(() => expect(router.state.location.search).toBe('?status=s-review'), LAZY);
 
-    const rows = await screen.findAllByTestId('status-row', {}, LAZY);
-    const targeted = rows.filter((row) => row.dataset.targeted === 'true');
-    expect(targeted).toHaveLength(1);
-    expect(within(targeted[0]!).getByRole('textbox')).toHaveValue('In Review');
+    const panel = await screen.findByTestId('stage-panel', {}, LAZY);
+    expect(within(panel).getByRole('textbox', { name: 'Stage name' })).toHaveValue('In Review');
   });
 });
 

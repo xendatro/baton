@@ -264,6 +264,35 @@ describe('project MCP tools', () => {
     ).toMatch(/Status not found/);
   });
 
+  it('creates pipelines and projects from a template', async () => {
+    const client = await connect(owner);
+    await call(client, 'create_project', {
+      team: 'acme',
+      name: 'Bugs',
+      key: 'BUGS',
+      template: 'bug_triage',
+    });
+    const first = await call<{ statuses: Array<{ name: string }> }>(client, 'list_statuses', {
+      project: 'BUGS',
+    });
+    expect(first.statuses.map((status) => status.name)).toEqual([
+      'Reported',
+      'Triaged',
+      'Fixing',
+      'Verifying',
+      'Closed',
+    ]);
+    const pipeline = await call<{ name: string; statusCount: number }>(client, 'create_pipeline', {
+      project: 'BUGS',
+      name: 'Agents',
+      template: 'ai_loop',
+    });
+    expect(pipeline).toMatchObject({ name: 'Agents', statusCount: 4 });
+    expect(
+      await callError(client, 'create_pipeline', { project: 'BUGS', name: 'X', template: 'nope' }),
+    ).toMatch(/template/i);
+  });
+
   it('manages labels by name', async () => {
     const client = await connect(member);
     const ownerClient = await connect(owner);

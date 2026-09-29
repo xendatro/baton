@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { LIMITS, STATUS_CATEGORIES, STATUS_ICONS } from '@shared/constants';
+import { PIPELINE_TEMPLATE_IDS, PIPELINE_TEMPLATE_LIST } from '@shared/pipelineTemplates';
 import {
   createLabelInputSchema,
   createProjectInputSchema,
@@ -108,11 +109,17 @@ const getProjectTool = defineTool({
     withUrl(ctx, getProject(ctx.deps, ctx.actor, projectContext(ctx, input.project).id)),
 });
 
+/** Pipeline templates (shared/pipelineTemplates.ts), for create_project and create_pipeline. */
+const templateField = z.enum(PIPELINE_TEMPLATE_IDS).optional();
+const TEMPLATE_HELP = PIPELINE_TEMPLATE_LIST.map(
+  (template) => `${template.id} (${template.stages.map((stage) => stage.name).join(' → ')})`,
+).join(', ');
+
 const createProjectTool = defineTool({
   name: 'create_project',
   title: 'Create project',
   description:
-    'Creates a project in a team (needs MANAGE_PROJECTS). Every project has at least one pipeline: it starts with one (named by `pipeline`, else "Main") whose stages are Backlog (default), To do, In progress, In review and Done. The key is derived from the name unless given.',
+    'Creates a project in a team (needs MANAGE_PROJECTS). Every project has at least one pipeline: it starts with one (named by `pipeline`, else "Main") whose stages come from `template` (default simple: Backlog (default), To do, In progress, In review and Done). The key is derived from the name unless given.',
   input: toolInput({
     team: z.string().min(1).describe('Team slug or id'),
     name: z.string().min(1).max(LIMITS.projectName.max).describe('Project name'),
@@ -135,12 +142,19 @@ const createProjectTool = defineTool({
       .max(40)
       .optional()
       .describe('Name of the project’s first pipeline (e.g. Development); "Main" if omitted'),
+    template: templateField.describe(
+      `Stages of its first pipeline: ${TEMPLATE_HELP}. Default simple.`,
+    ),
   }),
   annotations: { destructiveHint: false },
   handler: (ctx, input) => {
-    const { team, pipeline, ...fields } = input;
+    const { team, pipeline, template, ...fields } = input;
     const teamId = resolveTeam(ctx.deps, ctx.actor, team).team.id;
-    const parsed = parseInput(createProjectInputSchema, { ...fields, pipelineName: pipeline });
+    const parsed = parseInput(createProjectInputSchema, {
+      ...fields,
+      pipelineName: pipeline,
+      pipelineTemplate: template,
+    });
     return withUrl(ctx, createProject(ctx.deps, ctx.actor, teamId, parsed));
   },
 });
@@ -369,15 +383,20 @@ const createPipelineTool = defineTool({
   name: 'create_pipeline',
   title: 'Create pipeline',
   description:
-    'Adds a pipeline to a project (needs MANAGE_STATUSES), starting with the stages Backlog (default), To do, In progress, In review and Done: rename, delete or add stages with update_status / delete_status / create_status { pipeline }.',
+    'Adds a pipeline to a project (needs MANAGE_STATUSES), starting with the stages of `template` (default simple: Backlog (default), To do, In progress, In review and Done): rename, delete or add stages with update_status / delete_status / create_status { pipeline }.',
   input: toolInput({
     project: projectRef,
     name: z.string().min(1).max(40).describe('Pipeline name, e.g. Modeling'),
     color: colorField.optional(),
+    template: templateField.describe(`Stages it starts with: ${TEMPLATE_HELP}. Default simple.`),
   }),
   annotations: { destructiveHint: false },
   handler: (ctx, input) => {
-    const parsed = parseInput(createPipelineInputSchema, { name: input.name, color: input.color });
+    const parsed = parseInput(createPipelineInputSchema, {
+      name: input.name,
+      color: input.color,
+      template: input.template,
+    });
     return createPipeline(ctx.deps, ctx.actor, projectContext(ctx, input.project).id, parsed);
   },
 });

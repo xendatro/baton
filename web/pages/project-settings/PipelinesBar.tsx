@@ -1,9 +1,16 @@
 import { ArrowLeftIcon, ArrowRightIcon, PlusIcon, Settings2Icon, Trash2Icon } from 'lucide-react';
 import { useId, useState, type FormEvent } from 'react';
 import { toast } from 'sonner';
+import {
+  DEFAULT_PIPELINE_TEMPLATE,
+  PIPELINE_TEMPLATE_LIST,
+  PIPELINE_TEMPLATES,
+  type PipelineTemplateId,
+} from '@shared/pipelineTemplates';
 import type { PrincipalRule } from '@shared/principals';
 import { pipelineNameSchema, type Pipeline, type Status } from '@shared/schemas/projects';
 import { Spinner } from '@web/components/common/Spinner';
+import { StatusIcon } from '@web/components/common/StatusBadge';
 import { PrincipalRulePicker } from '@web/components/pickers/PrincipalRulePicker';
 import type { PrincipalOptions } from '@web/components/pickers/principals';
 import { Button } from '@web/components/ui/button';
@@ -17,6 +24,7 @@ import {
 } from '@web/components/ui/dialog';
 import { Input } from '@web/components/ui/input';
 import { Label } from '@web/components/ui/label';
+import { RadioGroup, RadioGroupItem } from '@web/components/ui/radio-group';
 import { Switch } from '@web/components/ui/switch';
 import { errorMessage } from '@web/lib/api';
 import { pluralize } from '@web/lib/format';
@@ -106,7 +114,7 @@ export function PipelinesBar({
         </Button>
       ) : null}
       <Dialog open={creating} onOpenChange={setCreating}>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
           {creating ? (
             <CreatePipelineForm
               projectId={projectId}
@@ -155,6 +163,7 @@ function CreatePipelineForm({
   const nameId = useId();
   const create = useCreatePipeline(projectId);
   const [name, setName] = useState('');
+  const [template, setTemplate] = useState<PipelineTemplateId>(DEFAULT_PIPELINE_TEMPLATE);
   const [error, setError] = useState<string | null>(null);
   const submit = (event: FormEvent) => {
     event.preventDefault();
@@ -165,10 +174,14 @@ function CreatePipelineForm({
     }
     setError(null);
     create.mutate(
-      { name: parsed.data },
+      { name: parsed.data, template },
       {
         onSuccess: (pipeline) => {
-          toast.success(`Added the ${pipeline.name} pipeline`);
+          const setup = PIPELINE_TEMPLATES[template].setup;
+          toast.success(
+            `Added the ${pipeline.name} pipeline`,
+            setup ? { description: setup, duration: 10_000 } : undefined,
+          );
           onCreated(pipeline);
           onClose();
         },
@@ -181,8 +194,8 @@ function CreatePipelineForm({
       <DialogHeader>
         <DialogTitle>New pipeline</DialogTitle>
         <DialogDescription>
-          A separate set of stages with its own board, e.g. Modeling next to Scripting. It starts
-          with Backlog, To do, In progress, In review and Done; rename or add stages next.
+          A separate set of stages with its own board, e.g. Modeling next to Scripting. Start from a
+          template; you can rename, add or change stages next.
         </DialogDescription>
       </DialogHeader>
       <div className="grid gap-1.5">
@@ -202,6 +215,7 @@ function CreatePipelineForm({
           </p>
         ) : null}
       </div>
+      <TemplatePicker value={template} onChange={setTemplate} />
       <DialogFooter>
         <Button type="button" variant="outline" onClick={onClose} disabled={create.isPending}>
           Cancel
@@ -496,6 +510,65 @@ function RuleSetting({
       ) : (
         <p className="text-xs text-muted-foreground">{everyone}.</p>
       )}
+    </div>
+  );
+}
+
+/** The template a new pipeline starts from, each with a preview of its stages. */
+export function TemplatePicker({
+  value,
+  onChange,
+  label = 'Start from',
+}: {
+  value: PipelineTemplateId;
+  onChange: (template: PipelineTemplateId) => void;
+  label?: string;
+}) {
+  const id = useId();
+  return (
+    <div className="grid gap-1.5">
+      <span id={id} className="text-sm font-medium">
+        {label}
+      </span>
+      <RadioGroup
+        value={value}
+        onValueChange={(next) => onChange(next as PipelineTemplateId)}
+        aria-labelledby={id}
+        className="gap-2"
+      >
+        {PIPELINE_TEMPLATE_LIST.map((template) => (
+          <label
+            key={template.id}
+            htmlFor={`${id}-${template.id}`}
+            className={cn(
+              'grid cursor-pointer grid-cols-[auto_minmax(0,1fr)] gap-x-2.5 gap-y-1.5 rounded-md border p-3 hover:bg-accent/50',
+              value === template.id && 'border-primary bg-primary/5',
+            )}
+          >
+            <RadioGroupItem value={template.id} id={`${id}-${template.id}`} className="mt-0.5" />
+            <span className="grid gap-0.5">
+              <span className="text-sm font-medium">{template.name}</span>
+              <span className="text-xs text-muted-foreground">{template.description}</span>
+            </span>
+            <ol
+              aria-label={`${template.name} stages`}
+              className="col-start-2 flex flex-wrap items-center gap-1 text-xs"
+            >
+              {template.stages.map((stage, index) => (
+                <li key={stage.name} className="flex items-center gap-1">
+                  {index > 0 ? (
+                    <ArrowRightIcon className="size-3 text-muted-foreground" aria-hidden="true" />
+                  ) : null}
+                  <span className="inline-flex items-center gap-1 rounded border bg-background px-1.5 py-0.5">
+                    <StatusIcon status={stage} className="size-3" />
+                    {stage.name}
+                  </span>
+                </li>
+              ))}
+            </ol>
+          </label>
+        ))}
+      </RadioGroup>
     </div>
   );
 }

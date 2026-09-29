@@ -41,7 +41,7 @@ test('a new project has five stages, and Create adds a plain one to rename in pl
     'Done',
   ]);
 
-  await page.goto(`/t/${slug}/p/STG/settings/pipelines`);
+  await page.goto(`/t/${slug}/p/STG/settings/pipelines?view=list`);
   const rows = page.getByTestId('status-row');
   await expect(rows).toHaveCount(5);
   await page.getByRole('button', { name: 'New stage', exact: true }).click();
@@ -80,7 +80,7 @@ test('Create from existing copies another stage’s settings under a new name', 
     },
   });
 
-  await page.goto(`/t/${slug}/p/STG/settings/pipelines`);
+  await page.goto(`/t/${slug}/p/STG/settings/pipelines?view=list`);
   await expect(page.getByTestId('status-row')).toHaveCount(5);
   await page.getByRole('button', { name: 'More ways to create a stage' }).click();
   await page.getByRole('menuitem', { name: /Create from existing/ }).click();

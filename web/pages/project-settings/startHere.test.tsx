@@ -124,7 +124,7 @@ function setup({ canManage = true, fail = false } = {}) {
     'PATCH /api/statuses/s-done': patch('s-done'),
   });
   const router = createMemoryRouter(routes, {
-    initialEntries: ['/t/acme/p/WEB/settings/pipelines'],
+    initialEntries: ['/t/acme/p/WEB/settings/pipelines?view=list'],
   });
   render(
     <QueryClientProvider client={createQueryClient()}>

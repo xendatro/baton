@@ -30,8 +30,8 @@ test('adds a pipeline, shows its tab on the board and starts a task in it', asyn
   await page.getByRole('dialog').getByLabel('Name').fill('Modeling');
   await page.getByRole('button', { name: 'Add pipeline' }).click();
   await expect(bar.getByRole('tab', { name: /Modeling/ })).toHaveAttribute('aria-selected', 'true');
-  // It starts with the five default stages.
-  await expect(page.getByTestId('status-row')).toHaveCount(5);
+  // It starts with the five default stages (the Simple board template).
+  await expect(page.getByTestId('stage-node')).toHaveCount(5);
 
   // A task in Modeling, then the board's tabs.
   const pipelines = (await (

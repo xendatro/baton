@@ -19,6 +19,7 @@ import {
   type TestContext,
   type UserRow,
 } from '../test/helpers';
+import { createProject as createProjectService } from './projects';
 import { listStatuses, updateStatus } from './statuses';
 import { listMyTasks } from './myWork';
 import {
@@ -237,5 +238,79 @@ describe('pipelines (BAT-25)', () => {
       'Main',
       'Audio',
     ]);
+    const unknown = await ctx.app.request(
+      `/api/projects/${project.project.id}/pipelines`,
+      json('POST', { name: 'Bugs', template: 'kanban' }, bearer(key)),
+    );
+    expect(unknown.status).toBe(400);
+    const triage = await ctx.app.request(
+      `/api/projects/${project.project.id}/pipelines`,
+      json('POST', { name: 'Bugs', template: 'bug_triage' }, bearer(key)),
+    );
+    expect(triage.status).toBe(201);
+    expect(await triage.json()).toMatchObject({ name: 'Bugs', statusCount: 5 });
+  });
+});
+
+describe('pipeline templates', () => {
+  it('starts an AI loop with agent instructions, criteria and a human approval at Review', () => {
+    const loop = createPipeline(ctx.deps, actorOf(owner), project.project.id, {
+      name: 'Agents',
+      template: 'ai_loop',
+    });
+    const stages = listStatuses(ctx.deps, actorOf(owner), project.project.id, loop.id).items;
+    expect(stages.map((status) => [status.name, status.isDefault])).toEqual([
+      ['Plan', true],
+      ['Build', false],
+      ['Review', false],
+      ['Done', false],
+    ]);
+    const [plan, build, review, done] = stages;
+    expect(plan?.rules?.allowCreate).toBe(true);
+    expect(plan?.rules?.instructions).toContain('plan');
+    expect(build?.rules?.exitCriteria.map((criterion) => criterion.id)).toEqual([
+      'tests',
+      'summary',
+    ]);
+    expect(review?.rules?.approvals).toEqual({
+      count: 1,
+      rule: { allow: [{ type: 'everyone', scope: 'people' }], deny: [] },
+      dismissOnChange: true,
+    });
+    // Review can send the task back to Build (and Plan); Done finishes it.
+    expect(review?.rules?.sendBackTo).toEqual([plan?.id, build?.id]);
+    expect(done?.rules).toMatchObject({ blocksDependents: false, claimable: false });
+
+    // A task created in it starts in Plan and needs the plan to move on.
+    const task = createTask(ctx.deps, actorOf(owner), project.project.id, {
+      pipelineId: loop.id,
+      title: 'Add dark mode',
+    });
+    expect(task.status.name).toBe('Plan');
+    expect(() =>
+      moveTask(ctx.deps, actorOf(owner), task.id, { statusId: build?.id ?? '' }),
+    ).toThrow(/Missing/);
+  });
+
+  it('keeps the simple board as the default and seeds a new project from a template', () => {
+    const plain = createPipeline(ctx.deps, actorOf(owner), project.project.id, {
+      name: 'Plain',
+      template: 'simple',
+    });
+    expect(
+      listStatuses(ctx.deps, actorOf(owner), project.project.id, plain.id).items.map(
+        (status) => status.name,
+      ),
+    ).toEqual(['Backlog', 'To do', 'In progress', 'In review', 'Done']);
+    const created = createProjectService(ctx.deps, actorOf(owner), team.team.id, {
+      name: 'Bugs',
+      pipelineTemplate: 'bug_triage',
+    });
+    const [first] = listPipelines(ctx.deps, actorOf(owner), created.id).items;
+    expect(
+      listStatuses(ctx.deps, actorOf(owner), created.id, first?.id).items.map(
+        (status) => status.name,
+      ),
+    ).toEqual(['Reported', 'Triaged', 'Fixing', 'Verifying', 'Closed']);
   });
 });

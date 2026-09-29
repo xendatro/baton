@@ -3,6 +3,12 @@ import { useState, type FormEvent } from 'react';
 import { useNavigate } from 'react-router';
 import { toast } from 'sonner';
 import { DEFAULT_PROJECT_COLOR, LIMITS } from '@shared/constants';
+import {
+  DEFAULT_PIPELINE_TEMPLATE,
+  PIPELINE_TEMPLATE_LIST,
+  PIPELINE_TEMPLATES,
+  type PipelineTemplateId,
+} from '@shared/pipelineTemplates';
 import type { MeTeam } from '@shared/schemas/core';
 import {
   createProjectInputSchema,
@@ -117,6 +123,7 @@ function NewProjectForm({
   const [description, setDescription] = useState('');
   // Pipelines are mandatory: a project starts with one, named here.
   const [pipelineName, setPipelineName] = useState('');
+  const [template, setTemplate] = useState<PipelineTemplateId>(DEFAULT_PIPELINE_TEMPLATE);
   const [icon, setIcon] = useState<string | null>(null);
   const [color, setColor] = useState<string>(DEFAULT_PROJECT_COLOR);
   const [errors, setErrors] = useState<Partial<Record<Field, string>>>({});
@@ -164,6 +171,7 @@ function NewProjectForm({
       icon,
       color,
       pipelineName,
+      ...(template !== DEFAULT_PIPELINE_TEMPLATE ? { pipelineTemplate: template } : {}),
     };
     const parsed = createProjectInputSchema.safeParse(input);
     if (!parsed.success) Object.assign(nextErrors, fieldErrors<Field>(parsed.error));
@@ -289,7 +297,7 @@ function NewProjectForm({
       <FormField
         label="Name your first pipeline"
         error={errors.pipelineName}
-        hint="Every task sits in a stage of a pipeline. It starts with Backlog, To do, In progress, In review and Done; change them and add pipelines later."
+        hint="Every task sits in a stage of a pipeline. Change its stages and add pipelines later."
       >
         {(field) => (
           <Input
@@ -301,6 +309,29 @@ function NewProjectForm({
             autoComplete="off"
             required
           />
+        )}
+      </FormField>
+
+      <FormField
+        label="Its stages"
+        hint={PIPELINE_TEMPLATES[template].stages.map((stage) => stage.name).join(' → ')}
+      >
+        {(field) => (
+          <Select
+            value={template}
+            onValueChange={(value) => setTemplate(value as PipelineTemplateId)}
+          >
+            <SelectTrigger {...field} className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {PIPELINE_TEMPLATE_LIST.map((option) => (
+                <SelectItem key={option.id} value={option.id}>
+                  {option.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         )}
       </FormField>
 

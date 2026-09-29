@@ -167,7 +167,7 @@ function setup() {
     },
   });
   const router = createMemoryRouter(routes, {
-    initialEntries: ['/t/acme/p/WEB/settings/pipelines'],
+    initialEntries: ['/t/acme/p/WEB/settings/pipelines?view=list'],
   });
   render(
     <QueryClientProvider client={createQueryClient()}>

@@ -19,6 +19,7 @@ import {
 import { CSS } from '@dnd-kit/utilities';
 import { GaugeIcon, GripVerticalIcon, PlusIcon, Trash2Icon } from 'lucide-react';
 import { useId, useState, type FormEvent, type KeyboardEvent } from 'react';
+import { Link } from 'react-router';
 import { toast } from 'sonner';
 import { COLOR_PALETTE, LIMITS } from '@shared/constants';
 import { createDifficultyInputSchema, type Difficulty } from '@shared/schemas/projects';
@@ -60,8 +61,8 @@ import { BoardBackLink, ReadOnlyNotice, SettingsCard, SettingsHeader } from './c
 /**
  * Project settings → Difficulty (BAT-24): the project's difficulty levels, shown hardest at the top
  * (BAT-30; stored easiest first). A task has one level or none; each person maps levels to the
- * models their agent runs (Account settings). Rename and recolor in place, drag the grip (or use
- * its arrow keys) to reorder, add and delete.
+ * models their agent runs in their own settings for the project (BAT-29, linked from the header).
+ * Rename and recolor in place, drag the grip (or use its arrow keys) to reorder, add and delete.
  */
 export default function DifficultySettingsPage() {
   const { team, project } = useRouteContext();
@@ -70,12 +71,26 @@ export default function DifficultySettingsPage() {
   return (
     <>
       <BoardBackLink team={team} project={project} />
-      <Levels key={project.id} teamId={team.id} projectId={project.id} />
+      <Levels
+        key={project.id}
+        teamId={team.id}
+        projectId={project.id}
+        mySettingsPath={`/t/${team.slug}/p/${project.key}/me`}
+      />
     </>
   );
 }
 
-function Levels({ teamId, projectId }: { teamId: string; projectId: string }) {
+function Levels({
+  teamId,
+  projectId,
+  mySettingsPath,
+}: {
+  teamId: string;
+  projectId: string;
+  /** Your settings for this project (BAT-29), where each person maps levels to models. */
+  mySettingsPath: string;
+}) {
   const access = useProjectAccess(teamId, projectId);
   const canManage = access.has('MANAGE_LABELS');
   const levels = useDifficulties(projectId);
@@ -110,7 +125,19 @@ function Levels({ teamId, projectId }: { teamId: string; projectId: string }) {
     <div>
       <SettingsHeader
         title="Difficulty"
-        description="How hard a task is, hardest at the top. Each person picks which model their agent uses for each level (Account settings → Agent); a task without a level uses their default."
+        description={
+          <>
+            How hard a task is, hardest at the top. Each person picks which model their agent uses
+            for each level in{' '}
+            <Link
+              to={mySettingsPath}
+              className="font-medium text-foreground underline underline-offset-4 hover:text-primary"
+            >
+              Your settings for this project
+            </Link>{' '}
+            (Models by difficulty); a task without a level uses their default.
+          </>
+        }
         actions={items.length > 0 ? newButton : null}
       />
       {canManage ? null : <ReadOnlyNotice permission="Manage labels" />}

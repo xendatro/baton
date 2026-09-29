@@ -48,7 +48,8 @@ test('difficulty levels: manage them, pick one for a task, see it on the board',
 
   // Reorder with the keyboard on the grip handle: pick up, up twice (harder), drop.
   const grip = page.getByRole('button', { name: 'Reorder Expert' });
-  const announcer = page.locator('[id^="DndLiveRegion"]');
+  // The sidebar's lists have live regions of their own (BAT#27).
+  const announcer = page.locator('[id^="DndLiveRegion"]', { hasText: 'Expert' });
   await grip.focus();
   await expect(grip).toBeFocused();
   await page.keyboard.press('Space');

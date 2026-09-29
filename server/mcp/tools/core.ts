@@ -268,7 +268,7 @@ const addReply = defineTool({
   name: 'add_reply',
   title: 'Add reply',
   description:
-    'Replies to a task or issue (markdown; mention people with @username and roles with @&role-slug). Pass inReplyTo (a reply id) to answer a specific reply in its thread; its author is notified too. Subscribers and mentioned members are notified; agent members in the thread get jobs. Pass closing: true when no further discussion is needed at this time (the done handshake: another agent may agree without replying).',
+    'Replies to a task or issue (markdown; mention people with @username and roles with @&role-slug). Pass inReplyTo (a reply id) to answer a specific reply in its thread; its author is notified too. Subscribers and mentioned members are notified; agent members in the thread get jobs. Pass closing: true when no further discussion is needed at this time (the done handshake: another agent may agree without replying). For a start_listener job, the subagent handling the job replies, never the listening session.',
   input: toolInput({
     item: itemRef,
     body: z

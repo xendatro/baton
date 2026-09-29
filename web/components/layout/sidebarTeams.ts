@@ -1,6 +1,7 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   meResponseSchema,
+  type MeProject,
   type MeResponse,
   type MeTeam,
   type UpdateMyTeamInput,
@@ -9,9 +10,10 @@ import { api } from '@web/lib/api';
 import { queryKeys } from '@web/lib/queryKeys';
 
 /**
- * Your own sidebar (BAT-36): the order of your teams, pins and folded teams, saved on the server so
- * every browser and the desktop app show the same. Both mutations update the cached `me` at once
- * and roll back if the server refuses.
+ * Your own sidebar (BAT-36): the order of your teams, pins and folded teams, and (BAT#27) the order
+ * of each team's projects, saved on the server so every browser and the desktop app show the same.
+ * The mutations update the cached `me` at once and roll back if the server refuses (the query
+ * client toasts the error).
  */
 
 /** Pinned teams first, keeping the given order within each group (what the server sends). */
@@ -95,5 +97,45 @@ export function useUpdateMyTeam() {
           ),
         ),
       }) satisfies MeResponse,
+  );
+}
+
+/** `ids` with `activeId` moved to `overId`'s place (a team's projects), or null when nothing moves. */
+export function moveProject(
+  projects: readonly MeProject[],
+  activeId: string,
+  overId: string,
+): string[] | null {
+  const ids = projects.map((project) => project.id);
+  const from = ids.indexOf(activeId);
+  const to = ids.indexOf(overId);
+  if (from < 0 || to < 0 || from === to) return null;
+  const next = [...ids];
+  next.splice(from, 1);
+  next.splice(to, 0, activeId);
+  return next;
+}
+
+/** Saves your order of one team's projects (BAT#27; projects only move within their team). */
+export function useReorderMyProjects() {
+  return useOptimisticMe(
+    ({ teamId, projectIds }: { teamId: string; projectIds: string[] }) =>
+      api.put(
+        `/api/me/teams/${encodeURIComponent(teamId)}/projects/order`,
+        { projectIds },
+        { schema: meResponseSchema },
+      ),
+    (me, { teamId, projectIds }) => {
+      const rank = new Map(projectIds.map((id, index) => [id, index]));
+      const at = (project: MeProject) => rank.get(project.id) ?? Number.MAX_SAFE_INTEGER;
+      return {
+        ...me,
+        teams: me.teams.map((team) =>
+          team.id === teamId
+            ? { ...team, projects: [...team.projects].sort((a, b) => at(a) - at(b)) }
+            : team,
+        ),
+      };
+    },
   );
 }

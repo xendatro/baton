@@ -1,11 +1,13 @@
 import { and, asc, eq, inArray, isNull, or } from 'drizzle-orm';
 import { MAX_ANY_USERNAME_LENGTH } from '@shared/constants';
 import {
+  reorderMyProjectsInputSchema,
   reorderMyTeamsInputSchema,
   updateMyTeamInputSchema,
   type MeResponse,
   type MentionablesQuery,
   type MentionablesResponse,
+  type ReorderMyProjectsInput,
   type ReorderMyTeamsInput,
   type RoleSummary,
   type UpdateMyTeamInput,
@@ -164,6 +166,21 @@ export function getMe(deps: AppDeps, actor: Actor): MeResponse {
           .where(and(inArray(s.project.teamId, teamIds), isNull(s.project.deletedAt)))
           .orderBy(asc(s.project.name))
           .all();
+  // BAT#27: your order of each team's projects (the ones never arranged follow, by name).
+  const projectPlaces = new Map(
+    orm
+      .select({ id: s.sidebarProjectOrder.projectId, position: s.sidebarProjectOrder.position })
+      .from(s.sidebarProjectOrder)
+      .where(eq(s.sidebarProjectOrder.userId, actor.userId))
+      .all()
+      .map((row) => [row.id, row.position]),
+  );
+  const projectPlace = (id: string) => projectPlaces.get(id) ?? Number.POSITIVE_INFINITY;
+  const orderedProjects = [...projects].sort((a, b) => {
+    const left = projectPlace(a.id);
+    const right = projectPlace(b.id);
+    return left === right ? 0 : left < right ? -1 : 1;
+  });
 
   return {
     user: {
@@ -188,7 +205,7 @@ export function getMe(deps: AppDeps, actor: Actor): MeResponse {
         permissions: membership?.permissions ?? [],
         pinned: sidebar.get(team.id)?.pinned ?? false,
         collapsed: sidebar.get(team.id)?.collapsed ?? false,
-        projects: projects
+        projects: orderedProjects
           .filter((project) => project.teamId === team.id && access.has(project.id))
           .map(({ teamId: _teamId, ...project }) => ({
             ...project,
@@ -275,6 +292,61 @@ export function updateMyTeam(
         ...(input.collapsed !== undefined ? { sidebarCollapsed: input.collapsed } : {}),
       })
       .where(and(eq(s.teamMember.teamId, teamId), eq(s.teamMember.userId, actor.userId)))
+      .run();
+    emitSidebarChanged(tx, actor.userId);
+  });
+  return getMe(deps, actor);
+}
+
+/**
+ * `PUT /api/me/teams/:teamId/projects/order`: arranges the team's projects in your sidebar
+ * (BAT#27). `projectIds` are projects of that team you can see, top first; projects only move
+ * within their team. Any left out (say, created meanwhile) follow the listed ones, by name.
+ * Personal like the team order: no activity, `me.updated` for your other tabs.
+ */
+export function reorderMyProjects(
+  deps: AppDeps,
+  actor: Actor,
+  teamId: string,
+  rawInput: ReorderMyProjectsInput,
+): MeResponse {
+  const input = reorderMyProjectsInputSchema.parse(rawInput);
+  const { orm } = deps.db;
+  requireMember(orm, actor, teamId);
+  const visible = new Set(
+    listProjectMemberships(orm, actor.userId, { teamIds: [teamId] })
+      .filter(canViewProject)
+      .map((project) => project.projectId),
+  );
+  const unknown = input.projectIds.filter((id) => !visible.has(id));
+  if (unknown.length > 0) {
+    throw errors.validation('Projects can only be reordered within their own team', {
+      projectIds: unknown,
+    });
+  }
+  const teamProjectIds = orm
+    .select({ id: s.project.id })
+    .from(s.project)
+    .where(eq(s.project.teamId, teamId))
+    .all()
+    .map((row) => row.id);
+  deps.db.write((tx) => {
+    tx.delete(s.sidebarProjectOrder)
+      .where(
+        and(
+          eq(s.sidebarProjectOrder.userId, actor.userId),
+          inArray(s.sidebarProjectOrder.projectId, teamProjectIds),
+        ),
+      )
+      .run();
+    tx.insert(s.sidebarProjectOrder)
+      .values(
+        input.projectIds.map((projectId, position) => ({
+          userId: actor.userId,
+          projectId,
+          position,
+        })),
+      )
       .run();
     emitSidebarChanged(tx, actor.userId);
   });

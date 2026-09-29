@@ -1,4 +1,10 @@
-import { CircleStopIcon, ExternalLinkIcon, MonitorIcon, SettingsIcon } from 'lucide-react';
+import {
+  CircleStopIcon,
+  ExternalLinkIcon,
+  MonitorIcon,
+  RotateCwIcon,
+  SettingsIcon,
+} from 'lucide-react';
 import { useId } from 'react';
 import { Link } from 'react-router';
 import { toast } from 'sonner';
@@ -22,7 +28,7 @@ import { useDocumentTitle } from '@web/lib/title';
 import { useDecideWaitingJob, useWaitingJobs } from '../settings/automaticAgentsQueries';
 import { useAgentSettings, useUpdateAgentSettings } from '../settings/queries';
 import { WaitingJobsList } from '../settings/WaitingJobs';
-import { DesktopOnly } from './common';
+import { DesktopOnly, UsageLimit } from './common';
 
 /**
  * `/desktop`: your agents running on this computer right now (BAT-26): each job with its harness,
@@ -96,7 +102,7 @@ function Agents() {
         <div className="grid gap-4">
           <PauseSwitches state={state} />
           <UncoveredProjects state={state} />
-          <WaitingHere />
+          <WaitingHere state={state} />
           {runner?.jobs.length ? (
             <ul className="grid gap-4" aria-label="Running jobs">
               {runner.jobs.map((job) => (
@@ -234,18 +240,38 @@ const STATE_TEXT: Record<string, string> = {
   starting: 'Starting',
   running: 'Running',
   blocked: 'Waiting for your OK',
-  'waiting-usage': 'Out of usage, waiting',
+  'waiting-usage': 'Waiting on usage',
   finishing: 'Finishing',
 };
 
-/** Stopped jobs (and others waiting for your OK), right here: Run again or Trash. */
-function WaitingHere() {
+function plural(count: number, word: string): string {
+  return `${count} ${word}${count === 1 ? '' : 's'}`;
+}
+
+/**
+ * Stopped jobs (and others waiting for your OK), right here: Retry now or Trash. Jobs stopped on
+ * this computer say why (the harness's own error). Retry now ignores the usage limits stored
+ * here for that attempt (BAT#30).
+ */
+function WaitingHere({ state }: { state: DesktopState }) {
   const waiting = useWaitingJobs();
   if (!waiting.data?.length) return null;
+  const bridge = desktopBridge();
+  const notes = Object.fromEntries(
+    (state.runner?.finished ?? []).flatMap((item) =>
+      item.note ? [[item.jobId, `Stopped here: ${item.note}`] as const] : [],
+    ),
+  );
   return (
     <section className="rounded-lg border bg-card px-4 py-2" aria-label="Waiting for your OK">
       <h2 className="pt-1 text-sm font-medium">Waiting for your OK ({waiting.data.length})</h2>
-      <WaitingJobsList jobs={waiting.data} />
+      <WaitingJobsList
+        jobs={waiting.data}
+        notes={notes}
+        {...(bridge?.retryNow
+          ? { beforeRunAgain: (jobId: string) => bridge.retryNow?.(jobId), runLabel: 'Retry now' }
+          : {})}
+      />
     </section>
   );
 }
@@ -272,6 +298,11 @@ function JobCard({ job }: { job: DesktopJob }) {
           },
         }),
       )
+      .catch((cause: unknown) => toast.error(errorMessage(cause)));
+  const retry = () =>
+    void desktopBridge()
+      ?.retryNow?.(job.jobId)
+      .then(() => toast.success('Trying again now'))
       .catch((cause: unknown) => toast.error(errorMessage(cause)));
   return (
     <li
@@ -300,6 +331,12 @@ function JobCard({ job }: { job: DesktopJob }) {
             <Badge variant={job.state === 'blocked' ? 'destructive' : 'secondary'}>
               {STATE_TEXT[job.state] ?? job.state}
             </Badge>
+            {job.delivered ? (
+              <Badge variant="outline">{plural(job.delivered, 'message')} delivered</Badge>
+            ) : null}
+            {job.queued ? (
+              <Badge variant="outline">{plural(job.queued, 'message')} queued for next turn</Badge>
+            ) : null}
           </p>
         </div>
         <div className="flex gap-2">
@@ -317,7 +354,26 @@ function JobCard({ job }: { job: DesktopJob }) {
           </Button>
         </div>
       </div>
-      {job.note ? <p className="mt-2 text-sm text-muted-foreground">{job.note}</p> : null}
+      {job.state === 'waiting-usage' && job.waitingOn?.length ? (
+        <div
+          className="mt-3 grid gap-2 rounded-md border border-amber-500/40 bg-amber-500/5 p-3"
+          aria-label="Waiting on usage"
+        >
+          {job.waitingOn.map((item) => (
+            <UsageLimit key={item.harness} harness={item.harness} until={item.until} />
+          ))}
+          {desktopBridge()?.retryNow ? (
+            <div>
+              <Button size="sm" onClick={retry}>
+                <RotateCwIcon aria-hidden="true" />
+                Retry now
+              </Button>
+            </div>
+          ) : null}
+        </div>
+      ) : job.note ? (
+        <p className="mt-2 text-sm text-muted-foreground">{job.note}</p>
+      ) : null}
       <pre
         className="mt-3 max-h-64 overflow-auto rounded-md bg-zinc-950 p-3 text-xs whitespace-pre-wrap text-zinc-100"
         aria-label="Live output"

@@ -38,11 +38,22 @@ export const runnerJobSchema = z.object({
   project: z.object({ id: z.string(), ref: z.string(), name: z.string() }).nullable(),
   target: z.object({
     type: z.string(),
+    /** The item's id (jobs about the same item share a session, BAT#31). */
+    id: z.string().optional(),
     ref: z.string().nullable(),
     title: z.string().nullable(),
     url: z.string().nullable(),
   }),
-  trigger: z.object({ body: z.string() }).nullable().optional(),
+  trigger: z
+    .object({
+      body: z.string(),
+      replyId: z.string().optional(),
+      author: z.object({ username: z.string().nullable() }).nullable().optional(),
+    })
+    .nullable()
+    .optional(),
+  /** What the job asks, in words (for a job merged into a running session). */
+  instructions: z.string().optional(),
   createdAt: z.string(),
 });
 export type RunnerJob = z.infer<typeof runnerJobSchema>;

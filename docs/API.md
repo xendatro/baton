@@ -237,11 +237,22 @@ lastSeenAt, online }, paused, pausedReason, waitingCount }`. One runner per (age
   `payload.statusId` when it names another stage the task has been in, else its current stage;
   the prompt's "Difficulty" line names the stage) (its level, else the closest mapped
   level below, then above, else the account default for a level of that name, else the default
-  chain); `resume` lists the harness sessions of that task on the runner's machine.
-- `PUT /api/agent/jobs/:jobId/session { runnerId, harness, sessionId }` stores the harness session
-  a task's job ran in (per agent, task, machine and harness).
-- `POST /api/agent/jobs/:jobId/complete { usage: JobUsage[], agreeDone? }` and `…/release { usage }`
-  complete or release the job (release of a finished job returns it unchanged), recording usage
+  chain); `resume` lists the harness sessions of that task on the runner's machine. BAT#28: for
+  `thread_reply` and `mention` jobs the harness that has been working on the item comes first —
+  the one with the most recent stored session of that task on the runner's machine, else the
+  harness of the agent's most recent write there (creating it or replying), from the write's
+  agent name ("Claude" → `claude`, "Codex" → `codex`) — with its chain entry's model and effort
+  (empty for its defaults when the chain lacks it) and the rest of the chain after it;
+  `chainSource` then ends with "; <Harness> first: it has been working on this task".
+- `PUT /api/agent/jobs/:jobId/session { runnerId, harness, sessionId, items? }` stores the harness
+  session a task's job ran in (per agent, task, machine and harness). `items` (BAT#28, at most 50
+  refs or ids): tasks the run created or replied in, read by the app from the harness's Baton
+  tool calls; each gets the same session unless it already has one for that harness there
+  (never replaced); refs the agent can't see and issues are skipped.
+- `POST /api/agent/jobs/:jobId/complete { usage: JobUsage[], agreeDone?, deliveredTo? }` and
+  `…/release { usage, hold? }` complete or release the job (release of a finished job returns it
+  unchanged). `deliveredTo` (BAT#31): the job's message went into the running session of that
+  other job of the agent on the same runner; it is kept as `payload.deliveredTo`. Both record usage
   `{ harness, model, effort, tokensIn, tokensOut, costUsd, durationMs, outcome: done | released |
 killed | out_of_usage | failed | permission_denied }`. MCP `complete_job` / `release_job` take
   the same optional `usage`.

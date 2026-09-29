@@ -49,11 +49,16 @@ export async function capture(
 export interface SpawnedRun {
   /** Resolves with the exit code (null when killed by a signal). */
   exit: Promise<number | null>;
+  /** Writes to stdin while it is open (`keepStdinOpen`); false once it is closed. */
+  write(text: string): boolean;
+  /** Closes stdin (the harness finishes once it has read everything). */
+  end(): void;
 }
 
 /**
- * Runs `command args` in `cwd`, writing `stdin` then closing it, and calls `onLine` for each line
- * of stdout and stderr. Aborting `signal` kills the process tree.
+ * Runs `command args` in `cwd`, writing `stdin` then closing it (or keeping it open for more with
+ * `keepStdinOpen`), and calls `onLine` for each line of stdout and stderr. Aborting `signal` kills
+ * the process tree.
  */
 export function spawnLines(
   command: string,
@@ -61,6 +66,8 @@ export function spawnLines(
   options: {
     cwd: string;
     stdin: string | null;
+    /** Leave stdin open after `stdin` (write more with `write`, close with `end`). */
+    keepStdinOpen?: boolean;
     env?: NodeJS.ProcessEnv;
     signal: AbortSignal;
     onLine: (line: string, stream: 'stdout' | 'stderr') => void;
@@ -93,8 +100,22 @@ export function spawnLines(
   };
   if (options.signal.aborted) kill();
   else options.signal.addEventListener('abort', kill, { once: true });
-  if (options.stdin !== null) child.stdin.end(options.stdin);
-  else child.stdin.end();
+  let stdinOpen = true;
+  child.stdin.on('error', () => {
+    stdinOpen = false;
+  });
+  const write = (text: string): boolean => {
+    if (!stdinOpen || !child.stdin.writable) return false;
+    child.stdin.write(text);
+    return true;
+  };
+  const end = () => {
+    if (!stdinOpen) return;
+    stdinOpen = false;
+    child.stdin.end();
+  };
+  if (options.stdin !== null) write(options.stdin);
+  if (!options.keepStdinOpen) end();
   const exit = new Promise<number | null>((resolve) => {
     child.on('error', (error) => {
       options.onLine(`Couldn’t start ${command}: ${error.message}`, 'stderr');
@@ -104,11 +125,12 @@ export function spawnLines(
       for (const stream of ['stdout', 'stderr'] as const) {
         if (buffers[stream]) options.onLine(buffers[stream], stream);
       }
+      stdinOpen = false;
       options.signal.removeEventListener('abort', kill);
       resolve(code);
     });
   });
-  return { exit };
+  return { exit, write, end };
 }
 
 /** A JSON object from a line of output, or null. */

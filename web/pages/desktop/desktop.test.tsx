@@ -4,12 +4,13 @@ import userEvent from '@testing-library/user-event';
 import type { ReactNode } from 'react';
 import { MemoryRouter } from 'react-router';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { BatonDesktopBridge, DesktopState } from '@shared/desktopBridge';
+import type { BatonDesktopBridge, DesktopJob, DesktopState } from '@shared/desktopBridge';
 import { TooltipProvider } from '@web/components/ui/tooltip';
 import { createQueryClient } from '@web/lib/queryClient';
 import { jsonResponse, mockApi, testMe } from '@web/test/mockApi';
 import { DesktopUpdateNotice } from '@web/components/layout/DesktopUpdateNotice';
 import { DesktopVersionLine } from '@web/components/layout/DesktopVersionLine';
+import { usageClock } from '@web/lib/desktop';
 import DesktopAgentsPage from './DesktopAgentsPage';
 import DesktopFoldersPage from './DesktopFoldersPage';
 import DesktopHarnessesPage from './DesktopHarnessesPage';
@@ -129,6 +130,70 @@ describe('desktop pages', () => {
     expect(bridge.kill).toHaveBeenCalledWith('job-1');
     await user.click(screen.getByRole('switch', { name: 'Pause on this computer' }));
     expect(bridge.pauseHere).toHaveBeenCalledWith(true);
+  });
+
+  it('show a job waiting on usage with Retry now and Clear usage limit, and merged messages (BAT#30, BAT#31)', async () => {
+    const user = userEvent.setup();
+    mockApi({
+      '/api/me': testMe(),
+      '/api/me/agent': {
+        agent: { id: 'a', username: 'ada-ai', name: 'Ada AI', image: null },
+        pausedAt: null,
+        notifications: 'needs_me',
+      },
+    });
+    const until = new Date();
+    until.setHours(23, 30, 0, 0);
+    const [running] = baseState.runner?.jobs ?? [];
+    const bridge = mockBridge({
+      ...baseState,
+      runner: {
+        ...(baseState.runner as NonNullable<DesktopState['runner']>),
+        jobs: [
+          {
+            ...(running as DesktopJob),
+            jobId: 'job-2',
+            ref: 'baton/BAT-25',
+            title: 'Waiting',
+            state: 'waiting-usage',
+            harness: null,
+            waitingOn: [{ harness: 'codex', until: until.getTime() }],
+          },
+          { ...(running as DesktopJob), delivered: 1, queued: 1 },
+        ],
+      },
+    });
+    const retryNow = vi.fn(() => Promise.resolve());
+    const clearUsageLimit = vi.fn(() => Promise.resolve(baseState));
+    Object.assign(bridge, { retryNow, clearUsageLimit });
+    renderPage(<DesktopAgentsPage />);
+    const waiting = await screen.findByRole('listitem', { name: /baton\/BAT-25 Waiting/ });
+    expect(within(waiting).getByLabelText('Waiting on usage')).toHaveTextContent(
+      `Out of usage until ${usageClock(until.getTime())} (Codex)`,
+    );
+    await user.click(within(waiting).getByRole('button', { name: 'Retry now' }));
+    expect(retryNow).toHaveBeenCalledWith('job-2');
+    await user.click(within(waiting).getByRole('button', { name: 'Clear usage limit' }));
+    expect(clearUsageLimit).toHaveBeenCalledWith('codex');
+    const working = screen.getByRole('listitem', { name: /baton\/BAT-24 Desktop app/ });
+    expect(working).toHaveTextContent('1 message delivered');
+    expect(working).toHaveTextContent('1 message queued for next turn');
+  });
+
+  it('show a harness out of usage on the Harnesses page, with Clear usage limit', async () => {
+    const user = userEvent.setup();
+    mockApi({ '/api/me': testMe() });
+    const bridge = mockBridge({
+      ...baseState,
+      exhaustedUntil: { claude: Date.now() + 3_600_000 },
+    });
+    const clearUsageLimit = vi.fn(() => Promise.resolve(baseState));
+    Object.assign(bridge, { clearUsageLimit });
+    bridge.harnesses.mockImplementation(() => Promise.resolve([claudeHarness]) as never);
+    renderPage(<DesktopHarnessesPage />);
+    expect(await screen.findByText(/Out of usage until .* \(Claude Code\)/)).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Clear usage limit' }));
+    expect(clearUsageLimit).toHaveBeenCalledWith('claude');
   });
 
   it('set up this computer with a key made for it, signed in as you', async () => {

@@ -343,7 +343,7 @@ function JobCard({ job }: { job: DesktopJob }) {
             <span>{job.kind.replace('_', ' ')}</span>
             <span>
               {job.harness
-                ? `${HARNESS_LABELS[job.harness]}${job.model ? ` · ${job.model}` : ''}`
+                ? [HARNESS_LABELS[job.harness], job.model, job.effort].filter(Boolean).join(' · ')
                 : 'Starting…'}
             </span>
             <span>{elapsed(job.startedAt, now)}</span>

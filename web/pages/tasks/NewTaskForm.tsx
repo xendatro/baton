@@ -14,7 +14,6 @@ import { RichTextEditor, type RichTextEditorHandle } from '@web/components/edito
 import { AssigneePicker, type AssigneeValue } from '@web/components/pickers/AssigneePicker';
 import { DatePicker } from '@web/components/pickers/DatePicker';
 import { LabelPicker } from '@web/components/pickers/LabelPicker';
-import { DifficultyPicker } from '@web/components/pickers/DifficultyPicker';
 import { PriorityPicker } from '@web/components/pickers/PriorityPicker';
 import { ResponseStylePicker } from '@web/components/chat/ResponseStylePicker';
 import { StatusPicker } from '@web/components/pickers/StatusPicker';
@@ -39,7 +38,6 @@ import { Switch } from '@web/components/ui/switch';
 import { errorMessage, isApiError } from '@web/lib/api';
 import { useMe } from '@web/lib/auth';
 import { acceptsNewTasks } from '@web/lib/newTaskStages';
-import { useDifficulties } from '../projects/difficultyQueries';
 import { useCreateLabel, useLabels, usePipelines, useStatuses } from '../projects/queries';
 import { useAssignables, useCreateTask } from './queries';
 
@@ -161,7 +159,6 @@ function TaskFields({
   const statuses = useStatuses(project.id);
   const pipelines = usePipelines(project.id);
   const labels = useLabels(project.id);
-  const difficulties = useDifficulties(project.id);
   const createLabel = useCreateLabel(project.id);
   const people = useAssignables(team.id);
   const create = useCreateTask(project.id);
@@ -175,7 +172,6 @@ function TaskFields({
   const [assignees, setAssignees] = useState<AssigneeValue>({ userIds: [], roleIds: [] });
   const [labelIds, setLabelIds] = useState<string[]>([]);
   const [conversationMode, setConversationMode] = useState<ConversationMode>('chat');
-  const [difficultyId, setDifficultyId] = useState<string | null>(null);
   const [dueDate, setDueDate] = useState<string | null>(null);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [createMore, setCreateMore] = useState(false);
@@ -227,7 +223,6 @@ function TaskFields({
       assigneeUserIds: assignees.userIds,
       assigneeRoleIds: assignees.roleIds,
       labelIds,
-      difficultyId,
       attachmentIds: attachments.map((attachment) => attachment.id),
       conversationMode,
     });
@@ -354,11 +349,6 @@ function TaskFields({
         ) : null}
         <StatusPicker statuses={statusList} value={effectiveStatus} onChange={setStatusId} />
         <PriorityPicker value={priority} onChange={setPriority} />
-        <DifficultyPicker
-          levels={difficulties.data ?? []}
-          value={difficultyId}
-          onChange={setDifficultyId}
-        />
         <AssigneePicker
           users={people.users}
           roles={people.roles}

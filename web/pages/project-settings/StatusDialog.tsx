@@ -22,6 +22,7 @@ import { StatusIcon } from '@web/components/common/StatusBadge';
 import { STATUS_ICON_SHAPES } from '@web/components/common/statusIcons';
 import { RichTextEditor } from '@web/components/editor/RichTextEditor';
 import { PrincipalRulePicker } from '@web/components/pickers/PrincipalRulePicker';
+import { SuggestedModelPicker } from '@web/components/pickers/SuggestedModelPicker';
 import { EMPTY_RULE, type PrincipalOptions } from '@web/components/pickers/principals';
 import { StatusIconPicker } from '@web/components/pickers/StatusIconPicker';
 import { Button } from '@web/components/ui/button';
@@ -29,10 +30,10 @@ import { Checkbox } from '@web/components/ui/checkbox';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@web/components/ui/dialog';
 import { Input } from '@web/components/ui/input';
 import { Label } from '@web/components/ui/label';
+import { useSuggestableModels } from '@web/lib/agentModels';
 import { errorMessage } from '@web/lib/api';
 import { FINISHED_STAGE_RULES, LIMITS } from '@shared/constants';
 import { cn } from '@web/lib/utils';
-import { DifficultySelect, type DifficultyLevel } from '../tasks/DifficultySelect';
 import {
   approvalsSentence,
   CUSTOM_HANDOFF_LABELS,
@@ -61,8 +62,8 @@ export interface StatusDialogProps {
   onClose: () => void;
   onCreate: (input: CreateStatusInput) => Promise<Status>;
   onUpdate: (id: string, input: UpdateStatusInput) => Promise<unknown>;
-  /** BAT-28: the project's difficulty levels, easiest first (for the default difficulty). */
-  difficulties?: readonly DifficultyLevel[] | undefined;
+  /** The project, for the models a stage may suggest. */
+  projectId?: string | undefined;
 }
 
 const SECTIONS = [
@@ -80,14 +81,12 @@ interface Draft {
   icon: StatusIconShape;
   color: string;
   isDefault: boolean;
-  /** BAT-28: the difficulty of a task's first visit. */
-  defaultDifficultyId: string | null;
   rules: StageRules;
 }
 
 /** The rules each category saves. */
 const SECTION_RULES: Record<Exclude<SectionId, 'basics'>, ReadonlyArray<keyof StageRules>> = {
-  instructions: ['instructions'],
+  instructions: ['instructions', 'suggestedModel'],
   arrival: ['handoff', 'onEnter', 'notify'],
   while: ['blocksDependents', 'claimable'],
   criteria: ['exitCriteria'],
@@ -157,7 +156,6 @@ function sameSection(section: SectionId, a: Draft, b: Draft): boolean {
       a.icon === b.icon &&
       a.color === b.color &&
       a.isDefault === b.isDefault &&
-      a.defaultDifficultyId === b.defaultDifficultyId &&
       a.rules.allowCreate === b.rules.allowCreate
     );
   }
@@ -174,7 +172,6 @@ function withSection(section: SectionId, base: Draft, from: Draft): Draft {
       icon: from.icon,
       color: from.color,
       isDefault: from.isDefault,
-      defaultDifficultyId: from.defaultDifficultyId,
       // BAT-34: "New tasks can start here" sits with the basics.
       rules: { ...base.rules, allowCreate: from.rules.allowCreate },
     };
@@ -229,7 +226,7 @@ function StatusForm({
   onDirtyChange,
   confirmingClose,
   onKeepEditing,
-  difficulties,
+  projectId,
 }: Omit<StatusDialogProps, 'state'> & {
   state: NonNullable<StatusDialogState>;
   onDirtyChange: (dirty: boolean) => void;
@@ -245,7 +242,6 @@ function StatusForm({
         icon: 'circle',
         color: suggestColor(statuses),
         isDefault: false,
-        defaultDifficultyId: null,
         // A new stage starts plain (nothing assigned or gated) and goes last: by default it can
         // send tasks back to every stage before it.
         rules: { ...DEFAULT_STAGE_RULES, sendBackTo: statuses.map((other) => other.id) },
@@ -259,7 +255,6 @@ function StatusForm({
       icon: status.icon,
       color: status.color,
       isDefault: status.isDefault,
-      defaultDifficultyId: status.defaultDifficultyId ?? null,
       rules: { ...rules, sendBackTo: rules.sendBackTo.filter((id) => earlier.has(id)) },
     };
   });
@@ -318,7 +313,6 @@ function StatusForm({
       icon: draft.icon,
       color: draft.color,
       ...(draft.isDefault ? { isDefault: true } : {}),
-      ...(draft.defaultDifficultyId ? { defaultDifficultyId: draft.defaultDifficultyId } : {}),
       rules: cleanRules(draft.rules),
     }).then(
       (created) => {
@@ -348,9 +342,6 @@ function StatusForm({
         icon: draft.icon,
         color: draft.color,
         ...(draft.isDefault && !saved.isDefault ? { isDefault: true as const } : {}),
-        ...(draft.defaultDifficultyId !== saved.defaultDifficultyId
-          ? { defaultDifficultyId: draft.defaultDifficultyId }
-          : {}),
         ...(draft.rules.allowCreate !== saved.rules.allowCreate
           ? { rules: { allowCreate: draft.rules.allowCreate } }
           : {}),
@@ -482,15 +473,22 @@ function StatusForm({
               canManage={canManage}
               isFinal={isFinal(draft.rules)}
               onMakeFinal={makeFinal}
-              difficulties={difficulties}
             />
           ) : section === 'instructions' ? (
-            <InstructionsSection
-              value={draft.rules.instructions}
-              onChange={(value) => setRules('instructions', value)}
-              teamId={teamId}
-              editable={canManage}
-            />
+            <>
+              <InstructionsSection
+                value={draft.rules.instructions}
+                onChange={(value) => setRules('instructions', value)}
+                teamId={teamId}
+                editable={canManage}
+              />
+              <SuggestedModelField
+                projectId={projectId ?? status?.projectId ?? statuses[0]?.projectId}
+                value={draft.rules.suggestedModel ?? null}
+                onChange={(value) => setRules('suggestedModel', value)}
+                disabled={!canManage}
+              />
+            </>
           ) : section === 'arrival' ? (
             <ArrivalSection
               rules={draft.rules}
@@ -619,7 +617,6 @@ function BasicsSection({
   canManage,
   isFinal: final,
   onMakeFinal,
-  difficulties,
 }: {
   draft: Draft;
   setDraft: (update: (current: Draft) => Draft) => void;
@@ -628,10 +625,8 @@ function BasicsSection({
   canManage: boolean;
   isFinal: boolean;
   onMakeFinal: () => void;
-  difficulties?: readonly DifficultyLevel[] | undefined;
 }) {
   const nameId = useId();
-  const difficultyId = useId();
   return (
     <div className="grid max-w-md gap-5">
       <div className="grid gap-1.5">
@@ -665,27 +660,6 @@ function BasicsSection({
           </Button>
         </StatusIconPicker>
       </div>
-      {difficulties && difficulties.length > 0 ? (
-        <div className="grid gap-1.5">
-          <div className="flex items-center gap-1.5">
-            <Label htmlFor={difficultyId}>Default difficulty</Label>
-            <HelpTip topic="Default difficulty">
-              The difficulty a task gets the first time it enters this stage (it picks the models
-              agents run). Coming back, it keeps the difficulty it had here last time. No
-              difficulty: it keeps the one it came with.
-            </HelpTip>
-          </div>
-          <DifficultySelect
-            id={difficultyId}
-            levels={difficulties}
-            value={draft.defaultDifficultyId}
-            onChange={(value) =>
-              setDraft((current) => ({ ...current, defaultDifficultyId: value }))
-            }
-            className="max-w-sm"
-          />
-        </div>
-      ) : null}
       <CheckRow
         label="New tasks can start here"
         help={
@@ -1300,5 +1274,42 @@ function NativeSelect({
     >
       {children}
     </select>
+  );
+}
+
+/**
+ * The model the stage suggests for its agents' runs ("Planning → Opus"): only a suggestion, each
+ * owner's agent runs it when one of their computers has it (a requester's own suggestion wins).
+ */
+export function SuggestedModelField({
+  projectId,
+  value,
+  onChange,
+  disabled,
+}: {
+  projectId: string | undefined;
+  value: StageRules['suggestedModel'];
+  onChange: (value: StageRules['suggestedModel']) => void;
+  disabled?: boolean;
+}) {
+  const options = useSuggestableModels(projectId);
+  return (
+    <div className="mt-5 grid max-w-xl gap-1.5" data-testid="stage-suggested-model">
+      <div className="flex items-center gap-1.5">
+        <span className="text-sm font-medium">Suggested model</span>
+        <HelpTip topic="Suggested model">
+          The model this stage suggests to the agents that work here, e.g. Opus for planning. Each
+          person’s agent runs it when one of their computers has it, else their own default for the
+          project. A model someone suggests when asking an agent wins over the stage’s.
+        </HelpTip>
+      </div>
+      <SuggestedModelPicker
+        label="Suggested model"
+        value={value ?? null}
+        onChange={onChange}
+        options={options.data}
+        {...(disabled ? { disabled } : {})}
+      />
+    </div>
   );
 }

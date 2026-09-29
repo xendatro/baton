@@ -22,6 +22,7 @@ import { statusNameSchema, type Status, type UpdateStatusInput } from '@shared/s
 import { StatusIcon } from '@web/components/common/StatusBadge';
 import { STATUS_ICON_SHAPES } from '@web/components/common/statusIcons';
 import { PrincipalRulePicker } from '@web/components/pickers/PrincipalRulePicker';
+import { SuggestedModelPicker } from '@web/components/pickers/SuggestedModelPicker';
 import { EMPTY_RULE, type PrincipalOptions } from '@web/components/pickers/principals';
 import { StatusIconPicker } from '@web/components/pickers/StatusIconPicker';
 import { Button } from '@web/components/ui/button';
@@ -43,6 +44,7 @@ import {
 } from '@web/components/ui/sheet';
 import { Switch } from '@web/components/ui/switch';
 import { Textarea } from '@web/components/ui/textarea';
+import { useSuggestableModels } from '@web/lib/agentModels';
 import { acceptsNewTasks } from '@web/lib/newTaskStages';
 import { cn } from '@web/lib/utils';
 import { useUpdateStatus } from '../projects/queries';
@@ -202,7 +204,12 @@ function PanelBody({
         <legend className="sr-only">{status.name} settings</legend>
         <WhoWorksHere rules={rules} options={options} onSave={saveRules} />
         <NeededToMoveOn rules={rules} options={options} onSave={saveRules} />
-        <AgentStage rules={rules} options={options} onSave={saveRules} />
+        <AgentStage
+          rules={rules}
+          options={options}
+          onSave={saveRules}
+          projectId={status.projectId}
+        />
       </fieldset>
       <Advanced
         status={status}
@@ -569,10 +576,12 @@ function AgentStage({
   rules,
   options,
   onSave,
+  projectId,
 }: {
   rules: StageRules;
   options: PrincipalOptions;
   onSave: OnSave;
+  projectId: string;
 }) {
   const switchId = useId();
   const instructionsId = useId();
@@ -667,7 +676,62 @@ function AgentStage({
           Markdown. Shown on the task and sent to agents in their job brief.
         </p>
       </div>
+      <StageSuggestedModel rules={rules} onSave={onSave} projectId={projectId} />
     </Question>
+  );
+}
+
+/**
+ * The model the stage suggests for its agents' runs ("Planning → Opus"). Saved when the harness
+ * changes and when focus leaves the model and effort fields.
+ */
+function StageSuggestedModel({
+  rules,
+  onSave,
+  projectId,
+}: {
+  rules: StageRules;
+  onSave: OnSave;
+  projectId: string;
+}) {
+  const saved = rules.suggestedModel ?? null;
+  const options = useSuggestableModels(projectId);
+  const [draft, setDraft] = useState(saved);
+  const [savedKey, setSavedKey] = useState(JSON.stringify(saved));
+  if (JSON.stringify(saved) !== savedKey) {
+    setSavedKey(JSON.stringify(saved));
+    setDraft(saved);
+  }
+  const commit = (value: StageRules['suggestedModel']) => {
+    const next = value
+      ? { harness: value.harness, model: value.model.trim(), effort: value.effort.trim() }
+      : null;
+    if (JSON.stringify(next) !== savedKey) onSave({ suggestedModel: next });
+  };
+  return (
+    <div
+      className="grid gap-1.5"
+      data-testid="stage-suggested-model"
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget)) commit(draft);
+      }}
+    >
+      <span className="text-sm font-medium">Suggested model</span>
+      <SuggestedModelPicker
+        label="Suggested model"
+        value={draft}
+        options={options.data}
+        onChange={(value) => {
+          const harnessChanged = (value?.harness ?? null) !== (draft?.harness ?? null);
+          setDraft(value);
+          if (harnessChanged) commit(value);
+        }}
+      />
+      <p className="text-xs text-muted-foreground">
+        Only a suggestion, e.g. Opus for planning: each person’s agent runs it when one of their
+        computers has it, else their own default. A model someone suggests when asking wins.
+      </p>
+    </div>
   );
 }
 
@@ -765,7 +829,7 @@ function Advanced({
         </fieldset>
         <p className="text-xs text-muted-foreground">
           Other rules: {stageSummary(rules)}. All settings holds where tasks go next or back to, who
-          may move them on, notifications, claiming, the default difficulty and more.
+          may move them on, notifications, claiming, the suggested model and more.
         </p>
         <div className="flex flex-wrap items-center gap-2">
           {/* Works read-only too: the dialog shows every setting. */}

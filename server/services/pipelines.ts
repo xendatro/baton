@@ -1,5 +1,6 @@
 import { and, asc, count, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type { Principal, PrincipalRule } from '@shared/principals';
+import { stepLabel } from '@shared/agentChains';
 import { formatTaskRef } from '@shared/refs';
 import type { StatusIconShape } from '@shared/constants';
 import { backStagesOf, earlierStageIds, nextStageOf } from '@shared/stageMoves';
@@ -32,7 +33,6 @@ import { emitAfterCommit } from './events';
 import { queueLinkedIssueEvents } from './linkEvents';
 import { notifyAssigned, notifyUsers, type NotifiedSet } from './notifications';
 import { insertChangeReply } from './replies';
-import { resolveDifficulty } from './difficulties';
 import { onStageApprovalsReset, onTaskEnteredStage } from './pipelineHooks';
 import { pipelinePermissions } from './projectPipelines';
 import { matchesRule, expandRule } from './principals';
@@ -104,6 +104,7 @@ export function rulesOf(row: StatusRow): StageRules {
     autoAdvance: row.autoAdvance,
     nextStatusId: row.nextStatusId,
     sendBackTo: row.sendBackTo,
+    suggestedModel: row.suggestedModel ?? null,
   };
 }
 
@@ -141,6 +142,7 @@ export function ruleColumns(rules: StageRules) {
     autoAdvance: rules.autoAdvance,
     nextStatusId: rules.nextStatusId,
     sendBackTo: rules.sendBackTo,
+    suggestedModel: rules.suggestedModel ?? null,
   };
 }
 
@@ -356,6 +358,7 @@ function ruleSummaries(db: DbExecutor, rules: StageRules): Record<keyof StageRul
     autoAdvance: rules.autoAdvance,
     nextStatusId: statusName(rules.nextStatusId),
     sendBackTo: rules.sendBackTo.map((id) => statusName(id) ?? 'a deleted stage'),
+    suggestedModel: rules.suggestedModel ? stepLabel(rules.suggestedModel) : null,
   };
 }
 
@@ -1121,82 +1124,6 @@ export interface EnterOptions {
    * visit, posted in the task's thread ("Sent back from …: …") and given to its agents' jobs.
    */
   returned?: { reason: string };
-  /**
-   * BAT-28: the difficulty for `to` (a level of the project, or null for none), over the default
-   * rules (its last value there, else the stage's default, else the current one).
-   */
-  difficultyId?: string | null | undefined;
-}
-
-// ---------------------------------------------------------------------------------------------
-// Difficulty per stage (BAT-28)
-// ---------------------------------------------------------------------------------------------
-
-/** The task's difficulty in `statusId` when it has been there (undefined: never). */
-function stageDifficultyRow(
-  db: DbExecutor,
-  taskId: string,
-  statusId: string,
-): { difficultyId: string | null } | undefined {
-  return db
-    .select({ difficultyId: s.taskStageDifficulty.difficultyId })
-    .from(s.taskStageDifficulty)
-    .where(
-      and(eq(s.taskStageDifficulty.taskId, taskId), eq(s.taskStageDifficulty.statusId, statusId)),
-    )
-    .get();
-}
-
-/**
- * The difficulty the task gets entering `to` by the default rules (BAT-28): the one it had there
- * last time, else the stage's default, else the one it has now (from the stage it comes from).
- */
-export function difficultyOnEntry(
-  db: DbExecutor,
-  task: Pick<TaskRow, 'id' | 'difficultyId'>,
-  to: Pick<StatusRow, 'id' | 'defaultDifficultyId'>,
-): string | null {
-  const row = stageDifficultyRow(db, task.id, to.id);
-  if (row) return row.difficultyId;
-  return to.defaultDifficultyId ?? task.difficultyId;
-}
-
-/**
- * Records the task's difficulty in `statusId` (BAT-28), and on its visit there when it is the
- * current one. The caller keeps `task.difficulty_id` (the current stage's) in step.
- */
-export function setStageDifficulty(
-  tx: Tx,
-  taskId: string,
-  statusId: string,
-  difficultyId: string | null,
-  now: Date,
-): void {
-  tx.insert(s.taskStageDifficulty)
-    .values({ taskId, statusId, difficultyId, updatedAt: now })
-    .onConflictDoUpdate({
-      target: [s.taskStageDifficulty.taskId, s.taskStageDifficulty.statusId],
-      set: { difficultyId, updatedAt: now },
-    })
-    .run();
-  tx.update(s.taskStageEntry)
-    .set({ difficultyId })
-    .where(
-      and(
-        eq(s.taskStageEntry.taskId, taskId),
-        eq(s.taskStageEntry.statusId, statusId),
-        isNull(s.taskStageEntry.leftAt),
-      ),
-    )
-    .run();
-}
-
-function difficultyName(db: DbExecutor, id: string | null): string | null {
-  if (!id) return null;
-  return (
-    db.select({ name: s.difficulty.name }).from(s.difficulty).where(eq(s.difficulty.id, id)).get()
-      ?.name ?? null
-  );
 }
 
 /**
@@ -1264,7 +1191,6 @@ export function enterStage(
           enteredAt: task.createdAt,
           leftAt: now,
           holderUserIds: holders,
-          difficultyId: task.difficultyId,
         })
         .run();
     }
@@ -1297,28 +1223,6 @@ export function enterStage(
   const patch: Partial<TaskRow> = {};
   if (task.poolRule) patch.poolRule = null;
 
-  // BAT-28: the difficulty it has in `to`.
-  const difficultyId =
-    options.difficultyId !== undefined ? options.difficultyId : difficultyOnEntry(tx, task, to);
-  if (difficultyId !== task.difficultyId) {
-    patch.difficultyId = difficultyId;
-    if (from) {
-      recordActivity(tx, actor, {
-        teamId: task.teamId,
-        projectId: task.projectId,
-        entityType: 'task',
-        entityId: task.id,
-        action: 'task.updated',
-        changes: {
-          difficulty: change(
-            difficultyName(tx, task.difficultyId),
-            difficultyName(tx, difficultyId),
-          ),
-        },
-        meta: { ...taskMeta(task, context.projectKey), stage: to.name },
-      });
-    }
-  }
   let assignedUserIds: string[] = [];
   let pool: PrincipalRule | null = null;
   let after: Assignees;
@@ -1432,7 +1336,6 @@ export function enterStage(
       enteredViaKeyId: actor?.key?.id ?? null,
       handoffMode: rules.handoff.mode,
       assignedUserIds,
-      difficultyId,
       ...(returned
         ? {
             returnReason: returned.reason,
@@ -1443,7 +1346,6 @@ export function enterStage(
         : {}),
     })
     .run();
-  setStageDifficulty(tx, task.id, to.id, difficultyId, now);
   if (returned && actor) {
     insertChangeReply(
       tx,
@@ -1787,19 +1689,6 @@ export function decideApproval(
         );
       }
     }
-    // BAT-28: the difficulty for the stage it goes back to.
-    let difficultyId: string | null | undefined;
-    if (input.difficultyId !== undefined) {
-      if (!sendBackTo) {
-        throw errors.validation(
-          'A difficulty only goes with requesting changes that send the task back',
-          { field: 'difficultyId' },
-        );
-      }
-      difficultyId = input.difficultyId
-        ? resolveDifficulty(tx, task.projectId, input.difficultyId).id
-        : null;
-    }
     tx.insert(s.taskApproval)
       .values({
         id: newId(),
@@ -1839,7 +1728,7 @@ export function decideApproval(
           sendBackTo,
           now,
           { changesRequested: true, direction: 'back', reason: comment },
-          { returned: { reason: comment }, difficultyId },
+          { returned: { reason: comment } },
         );
       }
       return;
@@ -2031,7 +1920,6 @@ export function stageOf(db: DbExecutor, viewer: Actor, task: TaskRow): TaskStage
         ? {
             id: next.id,
             name: next.name,
-            difficultyId: difficultyOnEntry(db, task, next),
             missing: [
               ...(canUpdate ? [] : ['permission to move tasks']),
               ...(nextCheck.forbidden ? [nextCheck.forbidden] : []),
@@ -2039,13 +1927,7 @@ export function stageOf(db: DbExecutor, viewer: Actor, task: TaskRow): TaskStage
             ],
           }
         : null,
-    back: mayBack
-      ? back.map((row) => ({
-          id: row.id,
-          name: row.name,
-          difficultyId: difficultyOnEntry(db, task, row),
-        }))
-      : [],
+    back: mayBack ? back.map((row) => ({ id: row.id, name: row.name })) : [],
   };
   const assigned = stageUserIds(db, task.id, task.statusId).includes(viewer.userId);
 
@@ -2069,17 +1951,8 @@ export function stageOf(db: DbExecutor, viewer: Actor, task: TaskRow): TaskStage
           at: currentVisit.enteredAt.toISOString(),
         }
       : null;
-  const levels = new Map(
-    db
-      .select({ id: s.difficulty.id, name: s.difficulty.name, color: s.difficulty.color })
-      .from(s.difficulty)
-      .where(eq(s.difficulty.projectId, task.projectId))
-      .all()
-      .map((row) => [row.id, row]),
-  );
   const visits = entries.map((entry) => ({
     id: entry.id,
-    difficulty: entry.difficultyId ? (levels.get(entry.difficultyId) ?? null) : null,
     status: ref(entry.statusId),
     enteredAt: entry.enteredAt.toISOString(),
     leftAt: entry.leftAt?.toISOString() ?? null,

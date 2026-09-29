@@ -60,11 +60,11 @@ import type { ReadmeSource } from '../../shared/schemas/github';
 import { AGENT_REQUEST_DECISIONS, type AgentAccessRules } from '../../shared/schemas/agentAccess';
 import type {
   Chain,
+  ChainEntry,
   ClearedReason,
-  DefaultMapping,
   HarnessInfo,
   JobSources,
-  ProjectMapping,
+  StoredDefaultMapping,
 } from '../../shared/schemas/agentRunner';
 import type { FieldChange } from '../../shared/schemas/core';
 import type { ProjectNotifications } from '../../shared/schemas/projectSettings';
@@ -638,8 +638,13 @@ export const status = sqliteTable(
       .notNull()
       .default(sql`'[]'`),
     /**
-     * BAT-28: the difficulty a task gets on its first visit to this stage (a level of the same
-     * project; null: none, it keeps the difficulty it had in the stage it came from).
+     * The model the stage suggests for its agents' runs (null: none). Only a suggestion: each
+     * owner's agent runs it when one of their computers has it (2026-09-29, replaces
+     * `default_difficulty_id`).
+     */
+    suggestedModel: text('suggested_model', { mode: 'json' }).$type<ChainEntry>(),
+    /**
+     * Legacy (BAT-28; difficulty was removed 2026-09-29): kept, no longer read or written.
      */
     defaultDifficultyId: text('default_difficulty_id').references(
       (): AnySQLiteColumn => difficulty.id,
@@ -674,7 +679,10 @@ export const label = sqliteTable(
   (t) => [uniqueIndex('label_project_name_unique').on(t.projectId, t.name)],
 );
 
-/** Difficulty levels of a project (BAT-24), easiest first. */
+/**
+ * Difficulty levels of a project (BAT-24), easiest first. Legacy: difficulty was removed
+ * (2026-09-29); the rows are kept but no longer read or written.
+ */
 export const difficulty = sqliteTable(
   'difficulty',
   {
@@ -1102,6 +1110,8 @@ export const reply = sqliteTable(
     body: text('body').notNull(),
     /** "No further discussion needed at this time" (the agents' done handshake, design §4). */
     closing: bool('closing').notNull().default(false),
+    /** The model its author suggested to the agents it starts (2026-09-29; null: none). */
+    suggestedModel: text('suggested_model', { mode: 'json' }).$type<ChainEntry>(),
     createdAt: createdAtColumn(),
     updatedAt: updatedAtColumn(),
     editedAt: timestamp('edited_at'),
@@ -1698,11 +1708,15 @@ export const agentSettings = sqliteTable('agent_settings', {
     .primaryKey()
     .references(() => user.id, { onDelete: 'cascade' }),
   jobSources: text('job_sources', { mode: 'json' }).$type<JobSources>(),
-  defaultMapping: text('default_mapping', { mode: 'json' }).$type<DefaultMapping>(),
+  /** The account default chain (`levels`: legacy chains by difficulty name, not read). */
+  defaultMapping: text('default_mapping', { mode: 'json' }).$type<StoredDefaultMapping>(),
   updatedAt: updatedAtColumn(),
 });
 
-/** A person's model mapping for one project: difficulty level id → chain. */
+/**
+ * A person's own default chain for one project (`chain`, null: the account default). `levels`
+ * (difficulty level id → chain) is legacy (difficulty was removed 2026-09-29), kept, not read.
+ */
 export const agentProjectMapping = sqliteTable(
   'agent_project_mapping',
   {
@@ -1713,9 +1727,10 @@ export const agentProjectMapping = sqliteTable(
       .notNull()
       .references(() => project.id, { onDelete: 'cascade' }),
     levels: text('levels', { mode: 'json' })
-      .$type<ProjectMapping['levels']>()
+      .$type<Record<string, Chain>>()
       .notNull()
       .default(sql`'{}'`),
+    chain: text('chain', { mode: 'json' }).$type<Chain>(),
     updatedAt: updatedAtColumn(),
   },
   (t) => [
@@ -1759,7 +1774,7 @@ export const agentUsage = sqliteTable(
       .references(() => user.id, { onDelete: 'cascade' }),
     jobId: text('job_id').references(() => agentJob.id, { onDelete: 'set null' }),
     projectId: text('project_id').references(() => project.id, { onDelete: 'set null' }),
-    /** The task's level when it ran (name, kept if the level is renamed or deleted). */
+    /** Legacy: the task's difficulty level when it ran (null since difficulty was removed). */
     difficulty: text('difficulty'),
     harness: text('harness').notNull(),
     /** The chain's model as written ('' = the harness's default). */

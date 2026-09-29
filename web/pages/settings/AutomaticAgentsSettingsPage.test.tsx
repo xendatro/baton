@@ -64,7 +64,6 @@ const stats: AgentStats = {
     { harness: 'codex', model: 'gpt-5', ...gpt },
     { harness: 'codex', model: 'gpt-6-sol', ...sol },
   ],
-  byDifficulty: [],
   byOutcome: [],
 };
 
@@ -122,6 +121,7 @@ describe('Automatic agents settings', () => {
               error: null,
               harness: 'claude',
               model: 'opus',
+              effort: 'high',
               endedAt: new Date().toISOString(),
               hasOutput: false,
             },

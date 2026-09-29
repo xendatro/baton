@@ -14,28 +14,21 @@ import {
 import { Label } from '@web/components/ui/label';
 import { Textarea } from '@web/components/ui/textarea';
 import { errorMessage } from '@web/lib/api';
-import { DifficultySelect, type DifficultyLevel } from './DifficultySelect';
 
 /**
  * Sending a task back (BAT-27): pick one of the earlier stages its stage allows, then give the
  * required reason. It is stored on the stage's new visit, posted in the thread and given to whoever
- * works on it next. The task page's Send back…, Request changes and board drops use it. With the
- * project's difficulty levels, it also asks the difficulty for that stage (BAT-28), prefilled with
- * what the stage would get anyway.
+ * works on it next. The task page's Send back…, Request changes and board drops use it.
  */
 
 export interface SendBackStage {
   id: string;
   name: string;
-  /** The difficulty it gets there by default (its last one there, else the stage's default). */
-  difficultyId?: string | null | undefined;
 }
 
 export interface SendBackResult {
   statusId: string;
   reason: string;
-  /** Present when levels were offered: the difficulty for that stage (null: none). */
-  difficultyId?: string | null;
 }
 
 export interface SendBackDialogProps {
@@ -51,8 +44,6 @@ export interface SendBackDialogProps {
   initialReason?: string | undefined;
   title?: string;
   confirmLabel?: string;
-  /** BAT-28: the project's difficulty levels (easiest first); none: no difficulty field. */
-  difficulties?: readonly DifficultyLevel[] | undefined;
   onConfirm: (result: SendBackResult) => Promise<unknown>;
 }
 
@@ -73,7 +64,6 @@ function SendBackForm({
   initialReason,
   title = 'Send back',
   confirmLabel = 'Send back',
-  difficulties,
   onConfirm,
   onOpenChange,
 }: SendBackDialogProps) {
@@ -87,9 +77,6 @@ function SendBackForm({
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   const target = stages.find((stage) => stage.id === statusId);
-  // Prefilled from the stage picked until the difficulty is changed by hand.
-  const [difficulty, setDifficulty] = useState<{ value: string | null } | null>(null);
-  const difficultyId = difficulty ? difficulty.value : (target?.difficultyId ?? null);
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
@@ -103,11 +90,7 @@ function SendBackForm({
     }
     setError(null);
     setPending(true);
-    onConfirm({
-      statusId: target.id,
-      reason: reason.trim(),
-      ...(difficulties ? { difficultyId } : {}),
-    }).then(
+    onConfirm({ statusId: target.id, reason: reason.trim() }).then(
       () => {
         setPending(false);
         onOpenChange(false);
@@ -150,17 +133,6 @@ function SendBackForm({
           Back to <strong>{target?.name}</strong>
         </p>
       )}
-      {difficulties && target ? (
-        <div className="grid gap-1.5">
-          <Label htmlFor={`${id}-difficulty`}>Difficulty for {target.name}</Label>
-          <DifficultySelect
-            id={`${id}-difficulty`}
-            levels={difficulties}
-            value={difficultyId}
-            onChange={(value) => setDifficulty({ value })}
-          />
-        </div>
-      ) : null}
       <div className="grid gap-1.5">
         <Label htmlFor={`${id}-reason`}>Reason</Label>
         <Textarea

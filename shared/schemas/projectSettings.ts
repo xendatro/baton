@@ -1,11 +1,10 @@
 import { z } from 'zod';
 import { AGENT_NOTIFICATION_LEVELS, type NotificationType } from '../constants';
 import { chainSchema, defaultMappingSchema } from './agentRunner';
-import { idSchema } from './common';
 
 /**
  * Your settings for one project (BAT-29), like Discord's per-server settings: that project's
- * notifications and your models by difficulty there. Personal: anyone who can see the project
+ * notifications and your agent's default model there. Personal: anyone who can see the project
  * has their own. Everything left unset falls back to the account's settings.
  */
 
@@ -77,8 +76,8 @@ export const myProjectSettingsSchema = z.object({
   notifications: projectNotificationsSchema.nullable(),
   /** Your agent's activity in this project; null: the account's level. */
   agentNotifications: agentLevelSchema.nullable(),
-  /** Your models by this project's difficulty level ids; a level left out uses your defaults. */
-  models: z.object({ levels: z.record(z.string(), chainSchema) }),
+  /** Your agent's default chain in this project; empty: your account default. */
+  models: z.object({ chain: chainSchema }),
   /** What "Use my defaults" means for each part. */
   defaults: z.object({
     notifications: projectNotificationsSchema,
@@ -92,7 +91,7 @@ export type MyProjectSettings = z.infer<typeof myProjectSettingsSchema>;
 export const updateMyProjectSettingsInputSchema = z.object({
   notifications: projectNotificationsSchema.nullable().optional(),
   agentNotifications: agentLevelSchema.nullable().optional(),
-  /** Level id → chain; an empty chain (or a level left out) uses your defaults. */
-  models: z.object({ levels: z.record(idSchema, chainSchema) }).optional(),
+  /** This project's default chain; an empty chain uses your account default. */
+  models: z.object({ chain: chainSchema }).optional(),
 });
 export type UpdateMyProjectSettingsInput = z.input<typeof updateMyProjectSettingsInputSchema>;

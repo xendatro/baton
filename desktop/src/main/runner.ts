@@ -71,6 +71,8 @@ export interface RunningJob {
   kind: string;
   harness: HarnessId | null;
   model: string;
+  /** The chain step's effort ('' = the harness's default). */
+  effort: string;
   startedAt: number;
   state: RunningState;
   note: string | null;
@@ -477,6 +479,7 @@ export class Runner extends EventEmitter {
       kind: job.kind,
       harness: null,
       model: '',
+      effort: '',
       startedAt: this.now(),
       state: 'starting',
       note: null,
@@ -723,6 +726,7 @@ export class Runner extends EventEmitter {
     if (!adapter) throw new Error(`No adapter for ${step.harness}`);
     entry.harness = step.harness;
     entry.model = step.model;
+    entry.effort = step.effort;
     entry.state = 'running';
     entry.note = null;
     const queued = internals.queue.splice(0);

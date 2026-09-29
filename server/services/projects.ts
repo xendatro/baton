@@ -40,7 +40,6 @@ import { emitAfterCommit } from './events';
 import { labelsOf } from './labels';
 import { notifyMentions, refreshNotificationText } from './notifications';
 import { requireSignoff } from './signoff';
-import { difficultiesOf, seedDifficulties } from './difficulties';
 import { pipelinesFor, seedDefaultPipeline } from './projectPipelines';
 import { statusesOf } from './statuses';
 import { taskCountsByProject } from './taskViews';
@@ -192,7 +191,6 @@ export function toProject(
     ),
     pipelines,
     labels: labelsOf(db, project.id),
-    difficulties: difficultiesOf(db, project.id),
     agentsPausedAt: project.agentsPausedAt?.toISOString() ?? null,
   };
 }
@@ -521,7 +519,6 @@ export function createProject(
       input.pipelineName,
       PIPELINE_TEMPLATES[input.pipelineTemplate ?? DEFAULT_PIPELINE_TEMPLATE].stages,
     );
-    seedDifficulties(tx, id);
     if (readme) {
       attachToParent(tx, actor, referencedPendingUploads(tx, actor, teamId, readme), {
         type: 'project',

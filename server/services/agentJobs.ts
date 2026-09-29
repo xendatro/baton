@@ -111,6 +111,35 @@ export function jobChanged(
 }
 
 /**
+ * The job's payload with the models suggested for it: the requester's (from the reply that
+ * started it: `suggestedModel`, `suggestedById`) and its stage's (`stageModel`, for jobs of a
+ * stage: `payload.statusId`). Only suggestions: the owner's computers decide at run time.
+ */
+function withSuggestions(tx: Tx, job: QueueJobInput): Record<string, unknown> {
+  const payload: Record<string, unknown> = { ...job.payload };
+  if (job.triggerReplyId && payload.suggestedModel === undefined) {
+    const reply = tx
+      .select({ suggestedModel: s.reply.suggestedModel, authorId: s.reply.authorId })
+      .from(s.reply)
+      .where(eq(s.reply.id, job.triggerReplyId))
+      .get();
+    if (reply?.suggestedModel) {
+      payload.suggestedModel = reply.suggestedModel;
+      payload.suggestedById = reply.authorId;
+    }
+  }
+  if (typeof payload.statusId === 'string' && payload.stageModel === undefined) {
+    const status = tx
+      .select({ suggestedModel: s.status.suggestedModel })
+      .from(s.status)
+      .where(eq(s.status.id, payload.statusId))
+      .get();
+    if (status?.suggestedModel) payload.stageModel = status.suggestedModel;
+  }
+  return payload;
+}
+
+/**
  * Queues agent jobs inside the caller's transaction, the generic entry point for every source
  * (mentions, assignments and thread replies here; pipelines' `pool`/`approval` hand-offs and
  * sign-off's `action_result` call it too). Skips users that aren't agent members, agents that
@@ -144,6 +173,7 @@ export function queueJobs(tx: Tx, jobs: readonly QueueJobInput[]): string[] {
       continue;
     }
     const accepted = level === 'auto';
+    const jobPayload = withSuggestions(tx, job);
     const existing = tx
       .select()
       .from(s.agentJob)
@@ -161,7 +191,7 @@ export function queueJobs(tx: Tx, jobs: readonly QueueJobInput[]): string[] {
       .orderBy(asc(s.agentJob.createdAt))
       .get();
     if (existing) {
-      const payload = { ...existing.payload, ...job.payload };
+      const payload = { ...existing.payload, ...jobPayload };
       const newTrigger = job.triggerReplyId ?? null;
       if (newTrigger && existing.triggerReplyId && newTrigger !== existing.triggerReplyId) {
         const earlier = Array.isArray(existing.payload.earlierReplyIds)
@@ -211,7 +241,7 @@ export function queueJobs(tx: Tx, jobs: readonly QueueJobInput[]): string[] {
         targetType: job.targetType,
         targetId: job.targetId,
         triggerReplyId: job.triggerReplyId ?? null,
-        payload: job.payload ?? {},
+        payload: jobPayload,
         closing: job.closing ?? false,
         triggeredById: job.triggeredById ?? null,
         status: 'pending',

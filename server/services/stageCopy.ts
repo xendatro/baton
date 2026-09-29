@@ -23,7 +23,6 @@ import { pipelinePermissions } from './projectPipelines';
 
 export interface CopiedStage {
   rules: StageRules;
-  defaultDifficultyId: string | null;
   /** "Team / KEY / Pipeline / Stage", shorter when the source is closer. */
   from: string;
   dropped: string[];
@@ -142,36 +141,11 @@ export function copyStageRules(
     sendBackTo,
   };
 
-  // BAT-28: the default difficulty, by level name in another project.
-  let defaultDifficultyId: string | null = null;
-  if (source.status.defaultDifficultyId) {
-    if (source.project.id === target.projectId) {
-      defaultDifficultyId = source.status.defaultDifficultyId;
-    } else {
-      const level = db
-        .select({ name: s.difficulty.name })
-        .from(s.difficulty)
-        .where(eq(s.difficulty.id, source.status.defaultDifficultyId))
-        .get();
-      const match = level
-        ? db
-            .select({ id: s.difficulty.id, name: s.difficulty.name })
-            .from(s.difficulty)
-            .where(eq(s.difficulty.projectId, target.projectId))
-            .all()
-            .find((row) => row.name.toLowerCase() === level.name.toLowerCase())
-        : undefined;
-      if (match) defaultDifficultyId = match.id;
-      else if (level)
-        dropped.push(`Default difficulty “${level.name}” (no level of that name here)`);
-    }
-  }
-
   const from = [
     ...(source.project.teamId === target.teamId ? [] : [source.team.name]),
     ...(source.project.id === target.projectId ? [] : [source.project.key]),
     ...(samePipeline ? [] : [source.pipeline.name]),
     source.status.name,
   ].join(' / ');
-  return { rules, defaultDifficultyId, from, dropped };
+  return { rules, from, dropped };
 }

@@ -12,6 +12,7 @@ import {
   reactionInputSchema,
   updateReplyInputSchema,
 } from '@shared/schemas/core';
+import { HARNESS_IDS } from '@shared/schemas/agentRunner';
 import { errors } from '../../lib/errors';
 import { parseInput } from '../../lib/validate';
 import { consumeRateLimit } from '../../middleware/rateLimit';
@@ -291,6 +292,19 @@ const addReply = defineTool({
       .boolean()
       .optional()
       .describe('No further discussion needed at this time (ends an agent-to-agent exchange)'),
+    suggestModel: z
+      .object({
+        harness: z
+          .enum(HARNESS_IDS)
+          .describe('Harness: claude (Claude Code), codex, gemini, cursor or opencode'),
+        model: z.string().optional().describe('Model name or alias (empty: the harness default)'),
+        effort: z.string().optional().describe('Effort (empty: the harness default)'),
+      })
+      .strict()
+      .optional()
+      .describe(
+        'Suggest a model to the agents this reply starts (mentioned or in the thread), e.g. { harness: "codex", model: "gpt-6-sol" }. Only a suggestion: each owner’s agent runs it when one of their computers has it, else their own default',
+      ),
   }),
   annotations: { destructiveHint: false },
   handler: (ctx, input) => {
@@ -302,6 +316,13 @@ const addReply = defineTool({
       body: input.body,
       attachmentIds: input.attachmentIds,
       closing: input.closing,
+      suggestedModel: input.suggestModel
+        ? {
+            harness: input.suggestModel.harness,
+            model: input.suggestModel.model ?? '',
+            effort: input.suggestModel.effort ?? '',
+          }
+        : undefined,
     });
     return replyForAgent(ctx, createReply(ctx.deps, ctx.actor, data));
   },

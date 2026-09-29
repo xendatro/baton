@@ -386,6 +386,8 @@ export function insertReply(
       viaKeyId: actor.key?.id ?? null,
       body: input.body,
       closing: input.closing ?? false,
+      // A model suggested to the agents it starts (their jobs pick it up in `queueJobs`).
+      suggestedModel: input.suggestedModel ?? null,
       createdAt: now,
       updatedAt: now,
     })

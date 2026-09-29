@@ -7,12 +7,15 @@ import type { MeResponse } from '@shared/schemas/core';
 import { DEFAULT_STAGE_RULES } from '@shared/schemas/pipelines';
 import type { Status, UpdateStatusInput } from '@shared/schemas/projects';
 import type { BoardResponse } from '@shared/schemas/tasks';
+import { MemoryRouter } from 'react-router';
+import { Dialog, DialogContent } from '@web/components/ui/dialog';
 import { TooltipProvider } from '@web/components/ui/tooltip';
 import { createQueryClient } from '@web/lib/queryClient';
 import { registerShellAction } from '@web/lib/shellActions';
 import { mockApi, testConfig, testMe } from '@web/test/mockApi';
 import { renderWorkPage } from '../my-tasks/testing';
 import { StatusDialog } from '../project-settings/StatusDialog';
+import NewTaskForm from './NewTaskForm';
 import TasksPage from './TasksPage';
 
 /** BAT-34: "New tasks can start here" on the board and in the status dialog. */
@@ -124,6 +127,44 @@ describe('the board', () => {
   });
 });
 
+describe('the New task form', () => {
+  it('has no difficulty picker (difficulty was removed)', async () => {
+    const statuses = [status('s-open', 'Open', 0, true), status('s-done', 'Done', 1, false)];
+    mockApi({
+      '/api/config': testConfig,
+      '/api/me': testMe(),
+      '/api/projects/p1/statuses': { items: statuses },
+      '/api/projects/p1/labels': { items: [] },
+      '/api/projects/p1/pipelines': { items: [pipeline] },
+      '/api/teams/t1/members': { items: [] },
+      '/api/teams/t1/roles': { items: [] },
+    });
+    const me = testMe();
+    const team = me.teams[0]!;
+    render(
+      <QueryClientProvider client={createQueryClient()}>
+        <MemoryRouter>
+          <TooltipProvider>
+            <Dialog open>
+              <DialogContent>
+                <NewTaskForm
+                  choices={[{ team, project: team.projects[0]! }]}
+                  initialProjectId="p1"
+                  initialStatusId={undefined}
+                  onDone={() => undefined}
+                />
+              </DialogContent>
+            </Dialog>
+          </TooltipProvider>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    expect(await screen.findByRole('button', { name: /^Priority/ })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /difficulty/i })).not.toBeInTheDocument();
+    expect(screen.queryByText(/difficulty/i)).not.toBeInTheDocument();
+  });
+});
+
 describe('the status dialog', () => {
   const statuses = [
     status('s0', 'Open', 0, true),
@@ -165,6 +206,34 @@ describe('the status dialog', () => {
       expect(onUpdate).toHaveBeenCalledWith(
         's1',
         expect.objectContaining({ rules: { allowCreate: true } }),
+      ),
+    );
+  });
+
+  it('has no default difficulty, and saves the suggested model with the instructions', async () => {
+    const user = userEvent.setup();
+    const onUpdate = vi.fn((_id: string, _input: UpdateStatusInput) => Promise.resolve());
+    renderDialog(onUpdate);
+    expect(screen.queryByText(/difficulty/i)).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /Instructions/ }));
+    const field = await screen.findByTestId('stage-suggested-model');
+    await user.selectOptions(
+      within(field).getByRole('combobox', { name: 'Suggested model: harness' }),
+      'claude',
+    );
+    await user.type(
+      within(field).getByRole('combobox', { name: 'Suggested model: model' }),
+      'opus',
+    );
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() =>
+      expect(onUpdate).toHaveBeenCalledWith(
+        's1',
+        expect.objectContaining({
+          rules: expect.objectContaining({
+            suggestedModel: { harness: 'claude', model: 'opus', effort: '' },
+          }) as unknown,
+        }),
       ),
     );
   });

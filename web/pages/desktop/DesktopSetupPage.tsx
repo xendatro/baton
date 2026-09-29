@@ -140,8 +140,8 @@ function Setup() {
         </Step>
         <Step number={4} done={null} title="Models and whose jobs run">
           <p className="text-muted-foreground">
-            Pick which model runs each difficulty, and whether other people’s mentions run by
-            themselves or wait for your OK.
+            Pick your agent’s default model (and per project, if you like), and whether other
+            people’s mentions run by themselves or wait for your OK.
           </p>
           <Button asChild size="sm" variant="outline" className="justify-self-start">
             <Link to="/settings/automatic-agents">Open Automatic agents</Link>

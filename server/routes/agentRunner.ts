@@ -47,6 +47,7 @@ import {
   getModelMappings,
   jobBrief,
   jobOutput,
+  listItemAgentRuns,
   listRunners,
   listWaitingJobs,
   modelFailures,
@@ -58,6 +59,7 @@ import {
   setHarnessSession,
   setJobSources,
   setModelMappings,
+  suggestableModels,
 } from '../services/agentRunner';
 
 /**
@@ -230,6 +232,11 @@ agentRunnerRoutes.get('/me/agent/model-options', (c) =>
   c.json(modelOptions(c.var.deps, requireActor(c))),
 );
 
+/** What a requester may suggest to the agents of a project's team (the union, no machines). */
+agentRunnerRoutes.get('/projects/:projectId/suggestable-models', projectParams, (c) =>
+  c.json(suggestableModels(c.var.deps, requireActor(c), c.req.valid('param').projectId)),
+);
+
 agentRunnerRoutes.get('/me/agent/access', (c) =>
   c.json(getAgentAccess(c.var.deps, requireActor(c))),
 );
@@ -309,4 +316,9 @@ agentRunnerRoutes.post(
 /** Requests about one task or issue (the owner's inline cards; "waiting for Ethan's OK"). */
 agentRunnerRoutes.get('/agent-requests', validateQuery(itemAgentRequestsQuerySchema), (c) =>
   c.json(itemAgentRequests(c.var.deps, requireActor(c), c.req.valid('query'))),
+);
+
+/** Agent runs on one task or issue, each with the model it ran with. */
+agentRunnerRoutes.get('/agent-runs', validateQuery(itemAgentRequestsQuerySchema), (c) =>
+  c.json(listItemAgentRuns(c.var.deps, requireActor(c), c.req.valid('query'))),
 );

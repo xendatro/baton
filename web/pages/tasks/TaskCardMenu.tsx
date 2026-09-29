@@ -33,7 +33,6 @@ import { errorMessage } from '@web/lib/api';
 import { useMe } from '@web/lib/auth';
 import { canOpenNewTab, copyLink, copyToClipboard, openInNewTab } from '@web/lib/links';
 import { useProjectAccess } from '@web/lib/permissions';
-import type { DifficultyLevel } from './DifficultySelect';
 import { boardMoves } from './helpers';
 import {
   restoreDeletedTask,
@@ -54,14 +53,12 @@ import { SendBackDialog } from './SendBackDialog';
 export function TaskContextMenu({
   task,
   statuses,
-  difficulties,
   disabled = false,
   children,
 }: {
   task: TaskCard;
   /** The stages shown (the board's columns, the list's statuses), for Move to. */
   statuses: readonly Status[];
-  difficulties?: readonly DifficultyLevel[] | undefined;
   /** While the card is dragged: no menu (a touch hold picks it up). */
   disabled?: boolean;
   children: ReactNode;
@@ -218,21 +215,15 @@ export function TaskContextMenu({
           open
           onOpenChange={(open) => (open ? undefined : setSendingBack(null))}
           from={task.status.name}
-          stages={back.map((status) => ({
-            id: status.id,
-            name: status.name,
-            difficultyId: status.defaultDifficultyId ?? task.difficulty?.id ?? null,
-          }))}
+          stages={back.map((status) => ({ id: status.id, name: status.name }))}
           initialStageId={sendingBack}
-          difficulties={difficulties?.length ? difficulties : undefined}
-          onConfirm={({ statusId, reason, difficultyId }) =>
+          onConfirm={({ statusId, reason }) =>
             move
               .mutateAsync({
                 taskId: task.id,
                 statusId,
                 index: Number.MAX_SAFE_INTEGER,
                 reason,
-                ...(difficultyId !== undefined ? { difficultyId } : {}),
               })
               .then((updated) => {
                 toast.success(`Sent ${task.ref} back to ${updated.status.name}`);

@@ -58,7 +58,8 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
     keywords: [
       'desktop app',
       'models',
-      'difficulty',
+      'default model',
+      'suggested model',
       'harness',
       'claude code',
       'codex',

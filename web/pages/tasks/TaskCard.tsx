@@ -4,7 +4,6 @@ import type { TaskCard as TaskCardData } from '@shared/schemas/tasks';
 import { BlockedBadge } from '@web/components/common/BlockedBadge';
 import { ClaimBadge } from '@web/components/common/ClaimBadge';
 import { DueDate } from '@web/components/common/DueDate';
-import { DifficultyBadge } from '@web/components/common/DifficultyBadge';
 import { LabelChip } from '@web/components/common/LabelChip';
 import { PriorityIcon } from '@web/components/common/PriorityIcon';
 import { RoleChip } from '@web/components/common/RoleChip';
@@ -27,11 +26,7 @@ export function TaskCardBody({
   const done = task.completedAt !== null;
   const { users, roles } = task.assignees;
   const hasFooter =
-    task.dueDate !== null ||
-    Boolean(task.difficulty) ||
-    task.replyCount > 0 ||
-    users.length > 0 ||
-    roles.length > 0;
+    task.dueDate !== null || task.replyCount > 0 || users.length > 0 || roles.length > 0;
   return (
     <div className="flex flex-col gap-2">
       <div className="flex items-center gap-2">
@@ -75,14 +70,6 @@ export function TaskCardBody({
       ) : null}
       {hasFooter ? (
         <div className="flex min-h-5 items-center gap-3">
-          {task.difficulty ? (
-            <span title={`Difficulty: ${task.difficulty.name}`}>
-              <DifficultyBadge
-                difficulty={task.difficulty}
-                className="max-w-24 text-xs text-muted-foreground"
-              />
-            </span>
-          ) : null}
           {task.dueDate ? <DueDate value={task.dueDate} done={done} /> : null}
           {task.replyCount > 0 ? (
             <span

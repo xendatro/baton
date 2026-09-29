@@ -197,6 +197,13 @@
       "when": 1790720322311,
       "tag": "0027_project_pins",
       "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "6",
+      "when": 1790721195512,
+      "tag": "0028_model_choice",
+      "breakpoints": true
     }
   ]
 }

@@ -226,19 +226,16 @@ manual fallback.
   assigned — is cancelled with `cleared_at` / `cleared_reason` when that happens (stage entry,
   resolve, delete, a finished run, and a 5-minute sweep for the rest). It shows muted under
   "Cleared — task finished" with only Open for 24 h, then drops out of the list.
-- **Difficulty and models.** Tasks have a difficulty level (per project, like labels), which
-  belongs to the task in a stage like its assignments (BAT-28): each stage has an optional default
-  difficulty for a task's first visit (none: it keeps the one it came with), returning to a stage
-  restores its last value there, and any move (the ▾ beside "Move to …", the Send back… dialog, or
-  `difficulty` on `move_task` / `approve_task`) can set it for the stage it goes to — e.g. Planning
-  defaults to Hard and Implementation to Normal, and a failed review sends the task back to
-  Implementation at Hard. The task page's picker changes the current stage's; the stage history
-  shows each visit's. A job's chain follows the difficulty of the stage it is for. Each person
-  maps levels to fallback chains of harness + model + effort: per project by level, and an account
-  default (a chain, plus chains by level name). Resolution (`shared/agentChains.ts`): the level's
-  own chain, else the closest mapped level below then above, else the account default for that
-  level name, else the default chain. The app skips harnesses it doesn't have or that are out of
-  usage until their reset, falling back along the chain.
+- **Models (direct choice; difficulty was removed 2026-09-29).** Each person has an account
+  default chain of harness + model + effort and optional per-project defaults (the project's
+  "Your settings"). Whoever starts a run may suggest a model (a reply's "Suggest model", MCP
+  `add_reply` `suggestModel`), and a stage may suggest one ("Planning → Opus",
+  `rules.suggestedModel`); they are only suggestions. Resolution (`shared/agentChains.ts`
+  `resolveJobModel`): the model chosen when approving a request, else the requester's suggestion
+  when one of the owner's computers has it, else the stage's, else the owner's project default,
+  else their account default; a suggestion runs first with the default after it. The app skips
+  harnesses it doesn't have or that are out of usage until their reset, falling back along the
+  chain. Every run shows what it ran with (harness · model · effort).
 - **Briefs and sessions.** For each job the app reads a brief: a compact prompt (task, stage
   instructions, criteria, approvals, what's missing, the trigger and latest replies, the job and
   the rules), the chain, and the harness session to resume for that task on that machine. One

@@ -37,7 +37,6 @@ function stage(id: string, name: string, position: number, rules: Partial<StageR
     isDefault: position === 0,
     taskCount: 0,
     rules: { ...DEFAULT_STAGE_RULES, ...rules },
-    defaultDifficultyId: null,
   } satisfies Status;
 }
 
@@ -139,7 +138,18 @@ function setup() {
     '/api/projects/p1': project,
     '/api/projects/p1/statuses': () => jsonResponse({ items: statuses }),
     '/api/projects/p1/pipelines': { items: [pipeline] },
-    '/api/projects/p1/difficulties': { items: [] },
+    '/api/projects/p1/suggestable-models': {
+      harnesses: [
+        {
+          id: 'claude',
+          online: true,
+          machines: [],
+          reported: true,
+          models: [{ id: 'opus', label: null, efforts: ['high'], online: true }],
+          efforts: ['high'],
+        },
+      ],
+    },
     '/api/projects/p1/roles': { items: [] },
     '/api/teams/t1/roles': { items: [] },
     '/api/teams/t1/members': {
@@ -192,6 +202,9 @@ describe('Visual pipeline editor', { timeout: 30_000 }, () => {
     expect(node(/^Stage 2: Build/)).toHaveFocus();
     await user.keyboard('{End}');
     expect(node(/^Stage 3: Done/)).toHaveFocus();
+
+    // Difficulty is gone (2026-09-29): no Difficulty section in Project settings.
+    expect(screen.queryByRole('link', { name: 'Difficulty' })).not.toBeInTheDocument();
 
     // The list view is still there.
     await user.click(screen.getByRole('button', { name: 'List' }));
@@ -271,6 +284,44 @@ describe('Visual pipeline editor', { timeout: 30_000 }, () => {
     await user.click(within(panel).getByRole('button', { name: 'All settings…' }));
     const dialog = await screen.findByRole('dialog', { name: /Edit Build/ });
     expect(within(dialog).getByRole('heading', { name: 'Basics' })).toBeVisible();
+  });
+
+  it('suggests a model for the stage’s agents, saved as rules.suggestedModel', async () => {
+    const user = userEvent.setup();
+    const { patches } = setup();
+    await screen.findByTestId('pipeline-editor', {}, LAZY);
+    await user.click(node(/^Stage 1: Plan/));
+    const panel = await screen.findByTestId('stage-panel');
+    const field = within(panel).getByTestId('stage-suggested-model');
+    await user.selectOptions(
+      within(field).getByRole('combobox', { name: 'Suggested model: harness' }),
+      'claude',
+    );
+    await waitFor(() => expect(patches).toHaveLength(1));
+    expect(patches[0]).toEqual({
+      id: 's-plan',
+      input: { rules: { suggestedModel: { harness: 'claude', model: '', effort: '' } } },
+    });
+    await user.type(
+      within(field).getByRole('combobox', { name: 'Suggested model: model' }),
+      'opus',
+    );
+    await user.type(
+      within(field).getByRole('combobox', { name: 'Suggested model: effort' }),
+      'high',
+    );
+    await user.click(within(panel).getByRole('textbox', { name: 'Instructions' }));
+    await waitFor(() => expect(patches).toHaveLength(2));
+    expect(patches[1]?.input).toEqual({
+      rules: { suggestedModel: { harness: 'claude', model: 'opus', effort: 'high' } },
+    });
+    // Cleared: no suggestion.
+    await user.selectOptions(
+      within(field).getByRole('combobox', { name: 'Suggested model: harness' }),
+      '',
+    );
+    await waitFor(() => expect(patches).toHaveLength(3));
+    expect(patches[2]?.input).toEqual({ rules: { suggestedModel: null } });
   });
 
   it('hands a stage to a list of people, saved once someone is named', async () => {

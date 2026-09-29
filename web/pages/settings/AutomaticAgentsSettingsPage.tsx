@@ -8,6 +8,7 @@ import {
   type AgentUsageTotals,
   type Chain,
   type HarnessId,
+  type ModelMappings,
 } from '@shared/schemas/agentRunner';
 import { MODEL_PRICES_AS_OF } from '@shared/modelPrices';
 import type { AgentAccessRules, TeamAgentAccess } from '@shared/schemas/agentAccess';
@@ -328,7 +329,7 @@ function ModelsCard() {
   return (
     <SettingsCard
       title="Models"
-      description="Which harness and model run each task, by its difficulty. When a harness is out of usage (or not installed on that machine) the desktop app moves on to the next step of the chain."
+      description="Which harness and model your agent runs. A model someone suggests runs instead when one of your computers has it, and you choose one when approving a request. When a harness is out of usage (or not installed on that machine) the desktop app moves on to the next step of the chain."
       footer={
         <div className="flex justify-end">
           <Button size="sm" onClick={submit} disabled={!dirty || save.isPending}>
@@ -340,10 +341,10 @@ function ModelsCard() {
     >
       <div className="grid gap-5">
         <section className="grid gap-2">
-          <h4 className="text-sm font-medium">Default</h4>
+          <h4 className="text-sm font-medium">Account default</h4>
           <p className="text-xs text-muted-foreground">
-            Every project uses it unless you give a project its own models (from the project’s menu:
-            Your settings).
+            Every project uses it unless you give a project its own default (from the project’s
+            menu: Your settings).
           </p>
           <ChainEditor
             label="Default chain"
@@ -352,29 +353,29 @@ function ModelsCard() {
             emptyText={`Uses ${chainSummary(DEFAULT_CHAIN)}`}
           />
         </section>
-        <ProjectsWithModels projectIds={Object.keys(mappings.data.projects)} />
+        <ProjectsWithModels projects={mappings.data.projects} />
       </div>
     </SettingsCard>
   );
 }
 
-/** "Projects with their own models", each linking to its Your settings page (BAT-29). */
-function ProjectsWithModels({ projectIds }: { projectIds: string[] }) {
+/** "Projects with their own default", each linking to its Your settings page (BAT-29). */
+function ProjectsWithModels({ projects: own }: { projects: ModelMappings['projects'] }) {
   const teams = useMe().data?.teams ?? [];
   const projects = teams.flatMap((team) =>
     team.projects
-      .filter((project) => projectIds.includes(project.id))
-      .map((project) => ({ ...project, team })),
+      .filter((project) => (own[project.id]?.chain.length ?? 0) > 0)
+      .map((project) => ({ ...project, team, chain: own[project.id]?.chain ?? [] })),
   );
   return (
     <section className="grid gap-2">
-      <h4 className="text-sm font-medium">Projects with their own models</h4>
+      <h4 className="text-sm font-medium">Projects with their own default</h4>
       {projects.length === 0 ? (
         <p className="text-xs text-muted-foreground">
-          None yet. To set models for one project, open its menu: Your settings.
+          None yet. To give one project its own default, open its menu: Your settings.
         </p>
       ) : (
-        <ul className="grid gap-1" aria-label="Projects with their own models">
+        <ul className="grid gap-1" aria-label="Projects with their own default">
           {projects.map((project) => (
             <li key={project.id}>
               <Link
@@ -383,6 +384,10 @@ function ProjectsWithModels({ projectIds }: { projectIds: string[] }) {
               >
                 {project.team.name} / {project.name}
               </Link>
+              <span className="text-xs text-muted-foreground">
+                {' '}
+                · {chainSummary(project.chain)}
+              </span>
             </li>
           ))}
         </ul>
@@ -504,10 +509,6 @@ function StatsCard() {
               name: `${HARNESS_LABELS[row.harness as HarnessId] ?? row.harness} ${row.model || '(default)'}`,
               ...row,
             }))}
-          />
-          <StatsTable
-            title="By difficulty"
-            rows={stats.data.byDifficulty.map((row) => ({ name: row.difficulty, ...row }))}
           />
           <StatsTable
             title="By day"

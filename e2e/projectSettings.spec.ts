@@ -3,9 +3,9 @@ import type { Page } from '@playwright/test';
 import { expect, ORIGIN, signedInUser, test } from './support/fixtures.ts';
 
 /**
- * Your settings for this project (BAT-29): opened from the project header, a model override for
- * one difficulty level (the others show where theirs come from), this project's notifications,
- * and Settings → Automatic agents listing the project among those with their own models.
+ * Your settings for this project (BAT-29): opened from the project header, this project's own
+ * default model (over the account default; difficulty is gone), this project's notifications,
+ * and Settings → Automatic agents listing the project among those with their own default.
  */
 
 async function post<T>(page: Page, url: string, data: unknown): Promise<T> {
@@ -16,10 +16,10 @@ async function post<T>(page: Page, url: string, data: unknown): Promise<T> {
 
 interface MySettings {
   notifications: { level: string } | null;
-  models: { levels: Record<string, Array<{ harness: string; model: string; effort: string }>> };
+  models: { chain: Array<{ harness: string; model: string; effort: string }> };
 }
 
-test('your settings for a project: a model override and notifications', async ({ page }) => {
+test('your settings for a project: its own default model and notifications', async ({ page }) => {
   await signedInUser(page);
   const slug = `mine-${randomBytes(4).toString('hex')}`;
   const team = await post<{ id: string }>(page, '/api/teams', { name: `Mine ${slug}`, slug });
@@ -37,22 +37,22 @@ test('your settings for a project: a model override and notifications', async ({
   await expect(page).toHaveURL(new RegExp(`/t/${slug}/p/PER/me$`));
   await expect(page.getByRole('heading', { name: 'Your settings for this project' })).toBeVisible();
 
-  // Models: every level uses my defaults until I override one.
-  const levels = page.getByRole('list', { name: 'Models by difficulty level, hardest first' });
-  const hard = levels.getByRole('listitem').filter({ hasText: 'Hard' });
-  await expect(hard.getByText('From your defaults: Claude Code opus')).toBeVisible();
-  await hard.getByRole('switch', { name: 'Hard: use my defaults' }).click();
-  const chain = page.getByRole('group', { name: 'Hard chain' });
-  await chain.getByRole('combobox', { name: 'Hard chain: harness 1' }).selectOption('codex');
+  // Model: the account default until the project gets its own.
+  const card = page.getByTestId('project-default-model');
+  await expect(card.getByText(/Claude Code opus/)).toBeVisible();
+  await expect(page.getByText(/difficulty/i)).toHaveCount(0);
+  await card.getByRole('switch', { name: 'Use my account default' }).click();
+  const chain = page.getByRole('group', { name: 'Default model for this project' });
+  await chain
+    .getByRole('combobox', { name: 'Default model for this project: harness 1' })
+    .selectOption('codex');
   // No desktop app reports anything here: its default model, and a generic effort.
-  await chain.getByLabel('Hard chain: model 1').selectOption('');
-  await chain.getByLabel('Hard chain: effort 1').selectOption('high');
-  const normal = levels.getByRole('listitem').filter({ hasText: 'Normal' });
-  await expect(normal.getByText('From Hard, the closest level you mapped: Codex')).toBeVisible();
-  await page.getByRole('button', { name: 'Save models' }).click();
-  await expect(page.getByText('Saved your models for this project')).toBeVisible();
-  expect(Object.values((await mySettings()).models.levels)).toEqual([
-    [{ harness: 'codex', model: '', effort: 'high' }],
+  await chain.getByLabel('Default model for this project: model 1').selectOption('');
+  await chain.getByLabel('Default model for this project: effort 1').selectOption('high');
+  await page.getByRole('button', { name: 'Save model' }).click();
+  await expect(page.getByText('Saved your default model for this project')).toBeVisible();
+  expect((await mySettings()).models.chain).toEqual([
+    { harness: 'codex', model: '', effort: 'high' },
   ]);
 
   // Notifications: mentions and assignments only, for this project.
@@ -62,9 +62,10 @@ test('your settings for a project: a model override and notifications', async ({
   await expect(page.getByText('Saved your notifications for this project')).toBeVisible();
   expect((await mySettings()).notifications?.level).toBe('mentions');
 
-  // Automatic agents lists the project among those with their own models.
+  // Automatic agents lists the project among those with their own default.
   await page.goto('/settings/automatic-agents');
-  const own = page.getByRole('list', { name: 'Projects with their own models' });
+  const own = page.getByRole('list', { name: 'Projects with their own default' });
+  await expect(own.getByRole('listitem').filter({ hasText: 'Personal' })).toContainText('Codex');
   await own.getByRole('link', { name: /Personal/ }).click();
   await expect(page.getByRole('heading', { name: 'Your settings for this project' })).toBeVisible();
 });

@@ -14,7 +14,6 @@ import * as s from '../db/schema';
 import { newId } from '../lib/ids';
 import { generateApiKey } from '../lib/security';
 import { ensureAgent, findAgentId } from '../services/agents';
-import { seedDifficulties } from '../services/difficulties';
 import { seedDefaultPipeline } from '../services/projectPipelines';
 
 /**
@@ -311,7 +310,6 @@ export function createProject(db: Database, options: CreateProjectOptions): Crea
       undefined,
       options.stages === 'default' ? DEFAULT_STATUSES : FIXTURE_STATUSES,
     );
-    seedDifficulties(tx, project.id);
     return { project, statuses, pipeline };
   });
 }

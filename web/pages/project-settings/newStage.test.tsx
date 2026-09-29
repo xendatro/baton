@@ -37,7 +37,6 @@ function stage(
     isDefault: position === 0,
     taskCount: 0,
     rules: { ...DEFAULT_STAGE_RULES },
-    defaultDifficultyId: null,
     ...extra,
   };
 }
@@ -149,7 +148,6 @@ function setup() {
     '/api/projects/p1/pipelines': { items: [pipeline('pl1', 'p1', 'Main', true)] },
     '/api/projects/p2/pipelines': { items: [pipeline('pl-game', 'p2', 'Art', true)] },
     '/api/projects/p2/statuses': { items: gameStatuses },
-    '/api/projects/p1/difficulties': { items: [] },
     '/api/projects/p1/roles': { items: [] },
     '/api/teams/t1/roles': { items: [] },
     '/api/teams/t1/members': { items: [] },

@@ -1,7 +1,6 @@
 import {
   ArrowRightIcon,
   CheckIcon,
-  ChevronDownIcon,
   ChevronRightIcon,
   CircleCheckIcon,
   CircleIcon,
@@ -27,14 +26,11 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from '@web/components/ui/collapsible';
-import { Label } from '@web/components/ui/label';
-import { Popover, PopoverContent, PopoverTrigger } from '@web/components/ui/popover';
 import { Textarea } from '@web/components/ui/textarea';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@web/components/ui/tooltip';
 import { errorMessage } from '@web/lib/api';
 import { cn } from '@web/lib/utils';
 import { useClaimAction, useDecideApproval, useSaveEvidence } from './queries';
-import { DifficultySelect, type DifficultyLevel } from './DifficultySelect';
 import { SendBackDialog, type SendBackResult } from './SendBackDialog';
 
 /**
@@ -52,21 +48,9 @@ export interface StagePanelProps {
   moving?: boolean;
   /** Sends the task back to an earlier stage with a reason (BAT-27). */
   onSendBack?: (result: SendBackResult) => Promise<unknown>;
-  /** BAT-28: moves it on with a difficulty for the next stage (the ▾ beside the green button). */
-  onMoveWithDifficulty?: (difficultyId: string | null) => Promise<unknown>;
-  /** BAT-28: the project's difficulty levels, easiest first. */
-  difficulties?: readonly DifficultyLevel[];
 }
 
-export function StagePanel({
-  task,
-  teamId,
-  onMoveOn,
-  moving,
-  onSendBack,
-  onMoveWithDifficulty,
-  difficulties,
-}: StagePanelProps) {
+export function StagePanel({ task, teamId, onMoveOn, moving, onSendBack }: StagePanelProps) {
   const { stage } = task;
   const headingId = useId();
   return (
@@ -101,7 +85,7 @@ export function StagePanel({
 
       {stage.criteria.length > 0 ? <Criteria task={task} /> : null}
 
-      {stage.approvals ? <Approvals task={task} difficulties={difficulties} /> : null}
+      {stage.approvals ? <Approvals task={task} /> : null}
 
       {stage.moveRule ? (
         <p className="mt-3 text-xs text-muted-foreground">Only {stage.moveRule} can move it on.</p>
@@ -129,98 +113,12 @@ export function StagePanel({
         ) : null
       ) : null}
 
-      <StageMoves
-        stage={stage}
-        onMoveOn={onMoveOn}
-        moving={moving}
-        onSendBack={onSendBack}
-        onMoveWithDifficulty={onMoveWithDifficulty}
-        difficulties={difficulties}
-      />
+      <StageMoves stage={stage} onMoveOn={onMoveOn} moving={moving} onSendBack={onSendBack} />
 
       <PreviousReviews stage={stage} />
       {stage.previousEvidence.length > 0 ? <PreviousEvidence stage={stage} /> : null}
       {(stage.visits?.length ?? 0) > 1 ? <StageHistory stage={stage} /> : null}
     </section>
-  );
-}
-
-/**
- * The ▾ beside the green button (BAT-28): moves on with a difficulty for the next stage, prefilled
- * with the one it would get anyway (its last one there, else the stage's default).
- */
-function MoveWithDifficulty({
-  target,
-  difficulties,
-  disabled,
-  onMove,
-}: {
-  target: { name: string; difficultyId?: string | null | undefined };
-  difficulties: readonly DifficultyLevel[];
-  disabled: boolean;
-  onMove: (difficultyId: string | null) => Promise<unknown>;
-}) {
-  const id = useId();
-  const [open, setOpen] = useState(false);
-  const [value, setValue] = useState<string | null>(target.difficultyId ?? null);
-  const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  return (
-    <Popover
-      open={open}
-      onOpenChange={(next) => {
-        setOpen(next);
-        if (next) {
-          setValue(target.difficultyId ?? null);
-          setError(null);
-        }
-      }}
-    >
-      <PopoverTrigger asChild>
-        <Button
-          size="sm"
-          disabled={disabled}
-          aria-label="Move with difficulty…"
-          title="Move with difficulty…"
-          className="rounded-l-none border-l border-emerald-700/60 bg-emerald-600 px-2 text-white hover:bg-emerald-600/90 dark:bg-emerald-600 dark:hover:bg-emerald-600/90"
-        >
-          <ChevronDownIcon aria-hidden="true" />
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent align="start" className="grid w-64 gap-3" data-testid="move-with-difficulty">
-        <p className="text-sm font-medium">Move with difficulty…</p>
-        <div className="grid gap-1.5">
-          <Label htmlFor={id}>Difficulty for {target.name}</Label>
-          <DifficultySelect id={id} levels={difficulties} value={value} onChange={setValue} />
-        </div>
-        {error ? (
-          <p role="alert" className="text-xs text-destructive">
-            {error}
-          </p>
-        ) : null}
-        <Button
-          size="sm"
-          disabled={pending}
-          className="bg-emerald-600 text-white hover:bg-emerald-600/90"
-          onClick={() => {
-            setPending(true);
-            onMove(value).then(
-              () => {
-                setPending(false);
-                setOpen(false);
-              },
-              (cause: unknown) => {
-                setPending(false);
-                setError(errorMessage(cause));
-              },
-            );
-          }}
-        >
-          {pending ? <Spinner /> : <ArrowRightIcon aria-hidden="true" />}
-          Move to {target.name}
-        </Button>
-      </PopoverContent>
-    </Popover>
   );
 }
 
@@ -254,15 +152,11 @@ function StageMoves({
   onMoveOn,
   moving,
   onSendBack,
-  onMoveWithDifficulty,
-  difficulties,
 }: {
   stage: TaskStage;
   onMoveOn?: (() => void) | undefined;
   moving?: boolean | undefined;
   onSendBack?: ((result: SendBackResult) => Promise<unknown>) | undefined;
-  onMoveWithDifficulty?: ((difficultyId: string | null) => Promise<unknown>) | undefined;
-  difficulties?: readonly DifficultyLevel[] | undefined;
 }) {
   const [sending, setSending] = useState(false);
   const forward =
@@ -306,16 +200,6 @@ function StageMoves({
             </ul>
           </TooltipContent>
         </Tooltip>
-      ) : forward && onMoveWithDifficulty && difficulties?.length ? (
-        <span className="inline-flex">
-          {moveButton ? <span className="[&>button]:rounded-r-none">{moveButton}</span> : null}
-          <MoveWithDifficulty
-            target={forward}
-            difficulties={difficulties}
-            disabled={blocked || Boolean(moving)}
-            onMove={onMoveWithDifficulty}
-          />
-        </span>
       ) : (
         moveButton
       )}
@@ -336,7 +220,6 @@ function StageMoves({
             onOpenChange={setSending}
             from={stage.status.name}
             stages={back}
-            difficulties={difficulties?.length ? difficulties : undefined}
             onConfirm={onSendBack}
           />
         </>
@@ -489,13 +372,7 @@ function Criteria({ task }: { task: Task & { stage: TaskStage } }) {
   );
 }
 
-function Approvals({
-  task,
-  difficulties,
-}: {
-  task: Task & { stage: TaskStage };
-  difficulties?: readonly DifficultyLevel[] | undefined;
-}) {
+function Approvals({ task }: { task: Task & { stage: TaskStage } }) {
   const approvals = task.stage.approvals;
   const decide = useDecideApproval(task);
   const [comment, setComment] = useState('');
@@ -609,14 +486,12 @@ function Approvals({
             initialReason={comment}
             title="Request changes"
             confirmLabel="Request changes, send back"
-            difficulties={difficulties?.length ? difficulties : undefined}
-            onConfirm={({ statusId, reason, difficultyId }) =>
+            onConfirm={({ statusId, reason }) =>
               decide
                 .mutateAsync({
                   decision: 'request_changes',
                   comment: reason,
                   sendBackTo: statusId,
-                  ...(difficultyId !== undefined ? { difficultyId } : {}),
                 })
                 .then((updated) => {
                   setComment('');
@@ -744,11 +619,6 @@ function StageHistory({ stage }: { stage: TaskStage }) {
                 <span className="font-medium">{visit.status.name}</span>
                 <RelativeTime value={visit.enteredAt} className="text-xs text-muted-foreground" />
                 {visit.leftAt ? null : <span className="text-xs text-muted-foreground">(now)</span>}
-                {visit.difficulty ? (
-                  <span className="text-xs text-muted-foreground">
-                    · difficulty {visit.difficulty.name}
-                  </span>
-                ) : null}
               </p>
               {visit.returnReason ? (
                 <p className="text-xs break-words whitespace-pre-wrap text-muted-foreground">

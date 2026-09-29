@@ -34,7 +34,6 @@ import { decodeCursor, encodeCursor } from '../lib/cursor';
 import { errors } from '../lib/errors';
 import { likeContains } from '../lib/sql';
 import { appPaths } from '../lib/urls';
-import { difficultySummaries } from './difficulties';
 import type { Membership } from './access';
 import { attachmentsByParent } from './attachments';
 import { isClaimValid } from './claimLease';
@@ -185,10 +184,6 @@ export function toTaskCards(
   );
   const blockers = openBlockerRefs(db, ids);
   const pipelines = pipelineSummaries(db, rows);
-  const difficulties = difficultySummaries(
-    db,
-    rows.flatMap((row) => (row.difficultyId ? [row.projectId] : [])),
-  );
 
   return rows.flatMap((row): TaskCard[] => {
     const project = projects.get(row.projectId);
@@ -218,7 +213,6 @@ export function toTaskCards(
         priority: row.priority,
         dueDate: row.dueDate,
         labels: labels.get(row.id) ?? [],
-        difficulty: row.difficultyId ? (difficulties.get(row.difficultyId) ?? null) : null,
         assignees: { users: users.get(row.id) ?? [], roles: roles.get(row.id) ?? [] },
         claim,
         blocked: openBlockers.length > 0,
@@ -248,7 +242,6 @@ export function toTaskSummary(card: TaskCard): TaskSummary {
     priority: card.priority,
     dueDate: card.dueDate,
     labels: card.labels,
-    difficulty: card.difficulty ?? null,
     assignees: card.assignees,
     claim: card.claim,
     blocked: card.blocked,

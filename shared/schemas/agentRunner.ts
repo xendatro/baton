@@ -5,7 +5,8 @@ import { idSchema, timestampSchema } from './common';
 /**
  * The desktop app's automatic agents (BAT-24, docs/design/agents-and-pipelines.md §8): runners
  * that listen for an agent member's jobs with plain code and run each job in a headless session
- * of the person's own harness; the job brief; model mappings by difficulty with fallback chains;
+ * of the person's own harness; the job brief; default model chains (account, per project) and
+ * suggested models;
  * whose jobs run automatically; harness sessions; usage and stats.
  */
 
@@ -74,28 +75,46 @@ export const chainSchema = z.array(chainEntrySchema).max(AGENT_RUNNER_LIMITS.cha
 export type Chain = z.infer<typeof chainSchema>;
 
 /**
- * The account default: a chain for tasks without a level (and levels nothing else maps), plus
- * chains by level name (case-insensitive), which apply in every project with a level of that name.
+ * The account default chain: what the owner's agent runs with when nothing more specific applies
+ * (no suggestion it can run, no project default). Difficulty is gone (2026-09-29): `levels` (chains
+ * by level name) is legacy data, kept in the database but no longer read or written.
  */
-export const defaultMappingSchema = z.object({
-  chain: chainSchema,
-  levels: z.record(z.string().trim().min(1).max(40), chainSchema).default({}),
-});
+export const defaultMappingSchema = z.object({ chain: chainSchema });
 export type DefaultMapping = z.infer<typeof defaultMappingSchema>;
 
-/** A project's mapping: chains by difficulty level id. */
-export const projectMappingSchema = z.object({
-  levels: z.record(idSchema, chainSchema).default({}),
-});
+/** The stored account default (`agent_settings.default_mapping`), with its legacy part. */
+export type StoredDefaultMapping = DefaultMapping & { levels?: Record<string, Chain> };
+
+/** A project's own default chain (over the account default); empty: use the account default. */
+export const projectMappingSchema = z.object({ chain: chainSchema });
 export type ProjectMapping = z.infer<typeof projectMappingSchema>;
 
 /** `GET/PUT /api/me/agent/models`. */
 export const modelMappingsSchema = z.object({
   default: defaultMappingSchema,
-  /** Project id → mapping. */
+  /** Project id → its own default chain (projects without one use the account default). */
   projects: z.record(idSchema, projectMappingSchema).default({}),
 });
 export type ModelMappings = z.infer<typeof modelMappingsSchema>;
+
+/**
+ * A model someone suggests for a run (a requester in a reply, or a stage's rule): one harness,
+ * model and effort. Only a suggestion: the owner's agent runs it when one of the owner's
+ * computers has it, else the owner's default for the project.
+ */
+export const suggestedModelSchema = chainEntrySchema;
+export type SuggestedModel = z.infer<typeof suggestedModelSchema>;
+
+/** Where the model of a run came from (`JobBrief.modelSource`, shown with the run). */
+export const MODEL_SOURCES = [
+  'approval',
+  'requester',
+  'stage',
+  'project',
+  'account',
+  'working_harness',
+] as const;
+export type ModelSource = (typeof MODEL_SOURCES)[number];
 
 /** A new account's default chain (Claude Code's latest Opus, high effort). */
 export const DEFAULT_CHAIN: Chain = [{ harness: 'claude', model: 'opus', effort: 'high' }];
@@ -227,11 +246,14 @@ export const jobBriefSchema = z.object({
     title: z.string().nullable(),
     url: z.string().nullable(),
   }),
+  /** Deprecated (difficulty was removed): always null, kept for desktop apps before 0.6. */
   difficulty: z.object({ id: z.string(), name: z.string() }).nullable(),
-  /** Chain to run, from the owner's mappings (the app skips harnesses it doesn't have). */
+  /** Chain to run (the app skips harnesses it doesn't have): its first entry is the model. */
   chain: chainSchema,
-  /** Where the chain came from, in words ("Hard in API", "account default"). */
+  /** Where the chain came from, in words ("suggested by @caden", "your default for API"). */
   chainSource: z.string(),
+  /** Where the chain came from (optional: older servers). */
+  modelSource: z.enum(MODEL_SOURCES).optional(),
   /** Harness → session id to resume on this machine (the same task, harness and machine). */
   resume: z.record(z.string(), z.string()),
   /** The prompt: task, stage, what's missing, replies, the job and the rules. */
@@ -374,11 +396,51 @@ export type ClearedReason = (typeof CLEARED_REASONS)[number];
 /** Cleared jobs stay listed this long. */
 export const CLEARED_JOBS_SHOWN_MS = 24 * 60 * 60 * 1000;
 
+/**
+ * The model a run actually used: the harness, the model it reported (else the chain's, '' for
+ * the harness's default) and the effort ('' for the default). From the run's last usage row.
+ */
+export const ranWithSchema = z.object({
+  harness: z.string(),
+  model: z.string(),
+  effort: z.string(),
+});
+export type RanWith = z.infer<typeof ranWithSchema>;
+
+/**
+ * `GET /api/agent-runs?itemType=&itemId=`: the agent jobs about a task or issue that ran or are
+ * running (newest first), each with the model it ran with. Visible to whoever can see the item.
+ */
+export const itemAgentRunSchema = z.object({
+  jobId: z.string(),
+  kind: z.string(),
+  /** claimed (running) | done | released | cancelled. */
+  status: z.string(),
+  agent: z.object({ id: z.string(), username: z.string().nullable(), name: z.string() }),
+  /** Who started it (null: nobody in particular, e.g. a stage hand-off by the system). */
+  triggeredBy: z
+    .object({ id: z.string(), username: z.string().nullable(), name: z.string() })
+    .nullable(),
+  stage: z.string().nullable(),
+  /** The model of its last run (null: nothing reported yet, e.g. an MCP listener's job). */
+  ranWith: ranWithSchema.nullable(),
+  /** How its last run on a desktop app ended (null: still running, or not run by an app). */
+  outcome: z.string().nullable(),
+  startedAt: timestampSchema.nullable(),
+  endedAt: timestampSchema.nullable(),
+});
+export type ItemAgentRun = z.infer<typeof itemAgentRunSchema>;
+
+export const itemAgentRunsSchema = z.object({ runs: z.array(itemAgentRunSchema) });
+export type ItemAgentRuns = z.infer<typeof itemAgentRunsSchema>;
+
 export const jobRunSchema = z.object({
   outcome: z.string(),
   error: z.string().nullable(),
   harness: z.string().nullable(),
   model: z.string().nullable(),
+  /** The effort it ran with ('' / null: the harness's default). */
+  effort: z.string().nullable().default(null),
   endedAt: timestampSchema,
   /** An output tail is stored (`GET /api/me/agent/jobs/:jobId/output`). */
   hasOutput: z.boolean(),
@@ -469,7 +531,6 @@ export const agentStatsSchema = z.object({
   byHarness: z.array(totalsSchema.extend({ harness: z.string() })),
   /** The model the harness reported, else the chain's, as `canonicalModel` ('' = default). */
   byModel: z.array(totalsSchema.extend({ harness: z.string(), model: z.string() })),
-  byDifficulty: z.array(totalsSchema.extend({ difficulty: z.string() })),
   byOutcome: z.array(z.object({ outcome: z.string(), jobs: z.number().int().nonnegative() })),
 });
 export type AgentStats = z.infer<typeof agentStatsSchema>;

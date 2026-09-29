@@ -4,13 +4,13 @@ import userEvent from '@testing-library/user-event';
 import type { ReactNode } from 'react';
 import { createMemoryRouter, RouterProvider } from 'react-router';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { MeResponse } from '@shared/schemas/core';
+import type { MeResponse, MeTeam } from '@shared/schemas/core';
 import type { Pipeline, Status } from '@shared/schemas/projects';
 import type { BoardResponse } from '@shared/schemas/tasks';
 import { SidebarProvider } from '@web/components/ui/sidebar';
 import { TooltipProvider } from '@web/components/ui/tooltip';
 import { createQueryClient } from '@web/lib/queryClient';
-import { mockApi, testMe } from '@web/test/mockApi';
+import { jsonResponse, mockApi, testMe } from '@web/test/mockApi';
 import TasksPage from '@web/pages/tasks/TasksPage';
 import { AppSidebar } from './AppSidebar';
 
@@ -176,5 +176,141 @@ describe('AppSidebar pipelines', () => {
     expect(within(list).getByRole('link', { name: /Modeling/ })).not.toHaveAttribute(
       'aria-current',
     );
+  });
+});
+
+describe('AppSidebar team order and pins (BAT-36)', () => {
+  function team(id: string, name: string, extra: Partial<MeResponse['teams'][number]> = {}) {
+    return { ...testMe().teams[0]!, id, slug: name.toLowerCase(), name, projects: [], ...extra };
+  }
+
+  function renderTeams(teams: MeResponse['teams']) {
+    let current: MeResponse = { ...testMe(), teams };
+    const sent: Array<{ method: string; path: string; body: unknown }> = [];
+    // Like the server: pinned first, each group in the given order.
+    const save = (method: string, url: URL, init: RequestInit | undefined, next: MeTeam[]) => {
+      sent.push({ method, path: url.pathname, body: JSON.parse(init?.body as string) });
+      current = {
+        ...current,
+        teams: [...next.filter((t) => t.pinned), ...next.filter((t) => !t.pinned)],
+      };
+      return jsonResponse(current);
+    };
+    const bodyOf = (init: RequestInit | undefined) => JSON.parse(init?.body as string) as object;
+    mockApi({
+      'GET /api/me': () => jsonResponse(current),
+      'PUT /api/me/teams/order': ({ url, init }: { url: URL; init?: RequestInit }) => {
+        const { teamIds } = bodyOf(init) as { teamIds: string[] };
+        const byId = new Map(current.teams.map((entry) => [entry.id, entry]));
+        return save(
+          'PUT',
+          url,
+          init,
+          teamIds.map((id) => byId.get(id)!),
+        );
+      },
+      ...Object.fromEntries(
+        teams.map((entry) => [
+          `PATCH /api/me/teams/${entry.id}`,
+          ({ url, init }: { url: URL; init?: RequestInit }) =>
+            save(
+              'PATCH',
+              url,
+              init,
+              current.teams.map((t) => (t.id === entry.id ? { ...t, ...bodyOf(init) } : t)),
+            ),
+        ]),
+      ),
+    });
+    const router = createMemoryRouter([{ path: '*', element: <Frame /> }], {
+      initialEntries: ['/'],
+    });
+    render(
+      <QueryClientProvider client={createQueryClient()}>
+        <TooltipProvider>
+          <RouterProvider router={router} />
+        </TooltipProvider>
+      </QueryClientProvider>,
+    );
+    return sent;
+  }
+
+  function names(list: HTMLElement) {
+    return within(list)
+      .getAllByRole('link')
+      .map((link) => link.querySelector('span:last-child')?.textContent);
+  }
+
+  it('shows pinned teams in their own group above the rest', async () => {
+    renderTeams([
+      team('t2', 'Bravo', { pinned: true }),
+      team('t1', 'Alpha'),
+      team('t3', 'Charlie'),
+    ]);
+    const pinned = await screen.findByRole('list', { name: 'Pinned teams' });
+    expect(names(pinned)).toEqual(['Bravo']);
+    expect(names(screen.getByRole('list', { name: 'Teams' }))).toEqual(['Alpha', 'Charlie']);
+  });
+
+  it('has no Pinned group until something is pinned, then pins from the team menu', async () => {
+    const user = userEvent.setup();
+    const sent = renderTeams([team('t1', 'Alpha'), team('t2', 'Bravo')]);
+    await screen.findByRole('link', { name: 'Bravo' });
+    expect(screen.queryByRole('list', { name: 'Pinned teams' })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Bravo options' }));
+    await user.click(await screen.findByRole('menuitem', { name: 'Pin to top' }));
+    const pinned = await screen.findByRole('list', { name: 'Pinned teams' });
+    expect(names(pinned)).toEqual(['Bravo']);
+    expect(sent).toEqual([{ method: 'PATCH', path: '/api/me/teams/t2', body: { pinned: true } }]);
+
+    await user.click(within(pinned).getByRole('button', { name: 'Bravo options' }));
+    await user.click(await screen.findByRole('menuitem', { name: 'Unpin' }));
+    await waitFor(() =>
+      expect(screen.queryByRole('list', { name: 'Pinned teams' })).not.toBeInTheDocument(),
+    );
+  });
+
+  it('moves a team within its group from the menu', async () => {
+    const user = userEvent.setup();
+    const sent = renderTeams([
+      team('t9', 'Zed', { pinned: true }),
+      team('t1', 'Alpha'),
+      team('t2', 'Bravo'),
+      team('t3', 'Charlie'),
+    ]);
+    await user.click(await screen.findByRole('button', { name: 'Charlie options' }));
+    await user.click(await screen.findByRole('menuitem', { name: 'Move up' }));
+    await waitFor(() =>
+      expect(names(screen.getByRole('list', { name: 'Teams' }))).toEqual([
+        'Alpha',
+        'Charlie',
+        'Bravo',
+      ]),
+    );
+    expect(sent).toEqual([
+      { method: 'PUT', path: '/api/me/teams/order', body: { teamIds: ['t9', 't1', 't3', 't2'] } },
+    ]);
+
+    // The top of a group can't go further up (into Pinned): pin it instead.
+    await user.click(screen.getByRole('button', { name: 'Alpha options' }));
+    expect(await screen.findByRole('menuitem', { name: 'Move up' })).toHaveAttribute(
+      'aria-disabled',
+      'true',
+    );
+  });
+
+  it('remembers a folded team', async () => {
+    const user = userEvent.setup();
+    const sent = renderTeams([team('t1', 'Acme', { projects: testMe().teams[0]!.projects })]);
+    expect(await screen.findByRole('link', { name: 'Web app' })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Collapse Acme' }));
+    await waitFor(() =>
+      expect(screen.queryByRole('link', { name: 'Web app' })).not.toBeInTheDocument(),
+    );
+    expect(sent).toEqual([
+      { method: 'PATCH', path: '/api/me/teams/t1', body: { collapsed: true } },
+    ]);
+    expect(screen.getByRole('button', { name: 'Expand Acme' })).toBeInTheDocument();
   });
 });

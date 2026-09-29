@@ -1,15 +1,19 @@
 import { and, asc, eq, inArray, isNull, or } from 'drizzle-orm';
 import { MAX_ANY_USERNAME_LENGTH } from '@shared/constants';
-import type {
-  MeResponse,
-  MentionablesQuery,
-  MentionablesResponse,
-  RoleSummary,
-  UserSummary,
-  ViaKey,
+import {
+  reorderMyTeamsInputSchema,
+  updateMyTeamInputSchema,
+  type MeResponse,
+  type MentionablesQuery,
+  type MentionablesResponse,
+  type ReorderMyTeamsInput,
+  type RoleSummary,
+  type UpdateMyTeamInput,
+  type UserSummary,
+  type ViaKey,
 } from '@shared/schemas/core';
 import type { Actor, AppDeps } from '../context';
-import type { DbExecutor } from '../db';
+import type { DbExecutor, Tx } from '../db';
 import * as s from '../db/schema';
 import { errors } from '../lib/errors';
 import { likeContains } from '../lib/sql';
@@ -20,6 +24,7 @@ import {
   listProjectMemberships,
   requireMember,
 } from './access';
+import { emitAfterCommit } from './events';
 import { unreadNotificationCount } from './notifications';
 
 type UserRow = typeof s.user.$inferSelect;
@@ -122,15 +127,27 @@ export function getMe(deps: AppDeps, actor: Actor): MeResponse {
       .filter(canViewProject)
       .map((project) => [project.projectId, project.permissions]),
   );
-  const teams =
+  const sidebar = new Map(
     teamIds.length === 0
       ? []
       : orm
-          .select()
-          .from(s.team)
-          .where(inArray(s.team.id, teamIds))
-          .orderBy(asc(s.team.name))
-          .all();
+          .select({
+            teamId: s.teamMember.teamId,
+            position: s.teamMember.sidebarPosition,
+            pinned: s.teamMember.pinned,
+            collapsed: s.teamMember.sidebarCollapsed,
+          })
+          .from(s.teamMember)
+          .where(eq(s.teamMember.userId, actor.userId))
+          .all()
+          .map((row) => [row.teamId, row]),
+  );
+  // Your sidebar order (BAT-36): pinned first, then the order you arranged, then by name.
+  const teams = (
+    teamIds.length === 0
+      ? []
+      : orm.select().from(s.team).where(inArray(s.team.id, teamIds)).orderBy(asc(s.team.name)).all()
+  ).sort((a, b) => compareSidebar(sidebar.get(a.id), sidebar.get(b.id)));
   const projects =
     teamIds.length === 0
       ? []
@@ -169,6 +186,8 @@ export function getMe(deps: AppDeps, actor: Actor): MeResponse {
         color: team.color,
         isOwner: membership?.isOwner ?? false,
         permissions: membership?.permissions ?? [],
+        pinned: sidebar.get(team.id)?.pinned ?? false,
+        collapsed: sidebar.get(team.id)?.collapsed ?? false,
         projects: projects
           .filter((project) => project.teamId === team.id && access.has(project.id))
           .map(({ teamId: _teamId, ...project }) => ({
@@ -179,6 +198,87 @@ export function getMe(deps: AppDeps, actor: Actor): MeResponse {
     }),
     unreadNotifications: unreadNotificationCount(deps, actor),
   };
+}
+
+interface SidebarPlace {
+  position: number | null;
+  pinned: boolean;
+}
+
+/** Pinned before unpinned, arranged before never arranged (stable: those keep the name order). */
+function compareSidebar(a: SidebarPlace | undefined, b: SidebarPlace | undefined): number {
+  const pinned = Number(b?.pinned ?? false) - Number(a?.pinned ?? false);
+  if (pinned !== 0) return pinned;
+  const left = a?.position ?? Number.POSITIVE_INFINITY;
+  const right = b?.position ?? Number.POSITIVE_INFINITY;
+  return left === right ? 0 : left < right ? -1 : 1;
+}
+
+/** Your other tabs and the desktop app refresh `me` (a personal event). */
+function emitSidebarChanged(tx: Tx, userId: string): void {
+  emitAfterCommit(tx, {
+    type: 'me.updated',
+    teamId: null,
+    entityType: 'user',
+    entityId: userId,
+    actorId: userId,
+    userId,
+  });
+}
+
+/**
+ * `PUT /api/me/teams/order`: arranges your sidebar (BAT-36). `teamIds` lists every team you are in
+ * exactly once, top first; pinned teams stay above the others whatever their place here. Personal,
+ * so no team activity is recorded.
+ */
+export function reorderMyTeams(
+  deps: AppDeps,
+  actor: Actor,
+  rawInput: ReorderMyTeamsInput,
+): MeResponse {
+  const input = reorderMyTeamsInputSchema.parse(rawInput);
+  const { orm } = deps.db;
+  const ids = input.teamIds;
+  const known = new Set(listMemberships(orm, actor.userId).map((m) => m.teamId));
+  if (
+    ids.length !== known.size ||
+    new Set(ids).size !== ids.length ||
+    ids.some((id) => !known.has(id))
+  ) {
+    throw errors.validation('List every one of your teams exactly once, top first');
+  }
+  deps.db.write((tx) => {
+    ids.forEach((teamId, index) => {
+      tx.update(s.teamMember)
+        .set({ sidebarPosition: index })
+        .where(and(eq(s.teamMember.teamId, teamId), eq(s.teamMember.userId, actor.userId)))
+        .run();
+    });
+    emitSidebarChanged(tx, actor.userId);
+  });
+  return getMe(deps, actor);
+}
+
+/** `PATCH /api/me/teams/:teamId`: pins a team to the top of your sidebar, or folds its projects. */
+export function updateMyTeam(
+  deps: AppDeps,
+  actor: Actor,
+  teamId: string,
+  rawInput: UpdateMyTeamInput,
+): MeResponse {
+  const input = updateMyTeamInputSchema.parse(rawInput);
+  requireMember(deps.db.orm, actor, teamId);
+  deps.db.write((tx) => {
+    tx.update(s.teamMember)
+      .set({
+        ...(input.pinned !== undefined ? { pinned: input.pinned } : {}),
+        ...(input.collapsed !== undefined ? { sidebarCollapsed: input.collapsed } : {}),
+      })
+      .where(and(eq(s.teamMember.teamId, teamId), eq(s.teamMember.userId, actor.userId)))
+      .run();
+    emitSidebarChanged(tx, actor.userId);
+  });
+  return getMe(deps, actor);
 }
 
 const MENTIONABLE_LIMIT = 20;

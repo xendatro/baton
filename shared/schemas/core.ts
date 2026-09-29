@@ -252,8 +252,27 @@ export const meTeamSchema = z.object({
   /** Effective permissions (full list for owners and administrators). */
   permissions: z.array(z.enum(PERMISSIONS)),
   projects: z.array(meProjectSchema),
+  /** Pinned to the top of your sidebar (BAT-36; the server always sends it, missing: false). */
+  pinned: z.boolean().optional(),
+  /** Its project list is folded in your sidebar (missing: false). */
+  collapsed: z.boolean().optional(),
 });
 export type MeTeam = z.infer<typeof meTeamSchema>;
+
+/** `PUT /api/me/teams/order`: every one of your teams exactly once, top first. */
+export const reorderMyTeamsInputSchema = z.object({
+  teamIds: z.array(idSchema).max(500),
+});
+export type ReorderMyTeamsInput = z.infer<typeof reorderMyTeamsInputSchema>;
+
+/** `PATCH /api/me/teams/:teamId`: pin a team to the top of your sidebar, or fold it. */
+export const updateMyTeamInputSchema = z
+  .object({ pinned: z.boolean(), collapsed: z.boolean() })
+  .partial()
+  .refine((input) => input.pinned !== undefined || input.collapsed !== undefined, {
+    message: 'Nothing to change',
+  });
+export type UpdateMyTeamInput = z.infer<typeof updateMyTeamInputSchema>;
 
 export const meResponseSchema = z.object({
   user: meUserSchema,

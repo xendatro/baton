@@ -1,5 +1,20 @@
 import {
+  closestCenter,
+  DndContext,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from '@dnd-kit/core';
+import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
+import {
+  ArrowDownIcon,
+  ArrowUpIcon,
   ChevronRightIcon,
+  MoreHorizontalIcon,
+  PinIcon,
+  PinOffIcon,
   HomeIcon,
   InboxIcon,
   ListChecksIcon,
@@ -13,7 +28,6 @@ import {
   WorkflowIcon,
   type LucideIcon,
 } from 'lucide-react';
-import { useState } from 'react';
 import { Link, useLocation } from 'react-router';
 import type { MeProject, MeTeam } from '@shared/schemas/core';
 import { EntityIcon } from '@web/components/common/EntityIcon';
@@ -24,6 +38,13 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from '@web/components/ui/collapsible';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@web/components/ui/dropdown-menu';
 import {
   Sidebar,
   SidebarContent,
@@ -48,11 +69,13 @@ import { useMe } from '@web/lib/auth';
 import { isDesktopApp, useDesktopState } from '@web/lib/desktop';
 import { pluralize } from '@web/lib/format';
 import { runShellAction, useShellActionAvailable } from '@web/lib/shellActions';
+import { cn } from '@web/lib/utils';
 import { usePipelines } from '@web/pages/projects/queries';
 import { pipelineBoardPath, resolvePipelineTab } from '@web/pages/tasks/pipelineTab';
 import { DesktopUpdateNotice } from './DesktopUpdateNotice';
 import { DesktopVersionLine } from './DesktopVersionLine';
 import { LogoMark } from './Logo';
+import { moveTeam, useReorderMyTeams, useUpdateMyTeam } from './sidebarTeams';
 import { useUnreadCount } from './useUnreadCount';
 import { UserMenu } from './UserMenu';
 
@@ -203,16 +226,46 @@ function ProjectPipelines({
   );
 }
 
-function TeamItem({ team, pathname, search }: { team: MeTeam; pathname: string; search: string }) {
+interface TeamItemProps {
+  team: MeTeam;
+  /** Its neighbours in the same group (Pinned, or the rest), for Move up / Move down. */
+  above: MeTeam | undefined;
+  below: MeTeam | undefined;
+  draggable: boolean;
+  onMove: (overId: string) => void;
+  pathname: string;
+  search: string;
+}
+
+function TeamItem({ team, above, below, draggable, onMove, pathname, search }: TeamItemProps) {
   const { setOpenMobile } = useSidebar();
+  const update = useUpdateMyTeam();
+  const { setNodeRef, setActivatorNodeRef, listeners, transform, transition, isDragging } =
+    useSortable({ id: team.id, disabled: !draggable });
   const to = `/t/${team.slug}`;
   const inTeam = pathname === to || pathname.startsWith(`${to}/`);
-  const [open, setOpen] = useState(true);
+  const open = !team.collapsed;
+  const hasProjects = team.projects.length > 0;
   return (
-    <Collapsible asChild open={open} onOpenChange={setOpen}>
-      <SidebarMenuItem>
-        <SidebarMenuButton asChild isActive={pathname === to} tooltip={team.name}>
+    <Collapsible
+      asChild
+      open={open}
+      onOpenChange={(next) => update.mutate({ teamId: team.id, collapsed: !next })}
+    >
+      <SidebarMenuItem
+        ref={setNodeRef}
+        style={{ transform: CSS.Translate.toString(transform), transition }}
+        className={cn(isDragging && 'z-10 rounded-md bg-sidebar shadow-md ring-1 ring-border')}
+      >
+        <SidebarMenuButton
+          asChild
+          isActive={pathname === to}
+          tooltip={team.name}
+          className={cn(hasProjects && 'group-has-data-[sidebar=menu-action]/menu-item:pr-14')}
+        >
           <Link
+            ref={setActivatorNodeRef}
+            {...listeners}
             to={to}
             onClick={() => setOpenMobile(false)}
             aria-current={pathname === to ? 'page' : undefined}
@@ -221,7 +274,35 @@ function TeamItem({ team, pathname, search }: { team: MeTeam; pathname: string; 
             <span className={inTeam ? 'font-medium' : undefined}>{team.name}</span>
           </Link>
         </SidebarMenuButton>
-        {team.projects.length ? (
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <SidebarMenuAction
+              showOnHover
+              className={hasProjects ? 'right-7' : undefined}
+              aria-label={`${team.name} options`}
+            >
+              <MoreHorizontalIcon aria-hidden="true" />
+            </SidebarMenuAction>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent side="right" align="start" className="w-44">
+            <DropdownMenuItem
+              onSelect={() => update.mutate({ teamId: team.id, pinned: !team.pinned })}
+            >
+              {team.pinned ? <PinOffIcon aria-hidden="true" /> : <PinIcon aria-hidden="true" />}
+              {team.pinned ? 'Unpin' : 'Pin to top'}
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem disabled={!above} onSelect={() => above && onMove(above.id)}>
+              <ArrowUpIcon aria-hidden="true" />
+              Move up
+            </DropdownMenuItem>
+            <DropdownMenuItem disabled={!below} onSelect={() => below && onMove(below.id)}>
+              <ArrowDownIcon aria-hidden="true" />
+              Move down
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+        {hasProjects ? (
           <>
             <CollapsibleTrigger asChild>
               <SidebarMenuAction
@@ -251,6 +332,63 @@ function TeamItem({ team, pathname, search }: { team: MeTeam; pathname: string; 
   );
 }
 
+/**
+ * One group of teams (Pinned, or the rest) in your order (BAT-36): drag a team to move it within
+ * its group, or use its menu (Pin to top, Move up, Move down), which the keyboard reaches too.
+ */
+function TeamList({
+  teams,
+  allTeams,
+  pathname,
+  search,
+}: {
+  teams: MeTeam[];
+  allTeams: MeTeam[];
+  pathname: string;
+  search: string;
+}) {
+  const reorder = useReorderMyTeams();
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }));
+  const move = (activeId: string, overId: string) => {
+    const next = moveTeam(allTeams, activeId, overId);
+    if (next) reorder.mutate(next);
+  };
+  // dnd-kit stops the click that ends a drag before React sees it, but not its default action: the
+  // dropped team's link would open as a full page load. Cancel that click (if one comes).
+  const swallowClick = () => {
+    const prevent = (event: MouseEvent) => event.preventDefault();
+    window.addEventListener('click', prevent, { capture: true, once: true });
+    setTimeout(() => window.removeEventListener('click', prevent, { capture: true }), 300);
+  };
+  const onDragEnd = ({ active, over }: DragEndEvent) => {
+    swallowClick();
+    if (over) move(String(active.id), String(over.id));
+  };
+  return (
+    <DndContext
+      sensors={sensors}
+      collisionDetection={closestCenter}
+      onDragEnd={onDragEnd}
+      onDragCancel={swallowClick}
+    >
+      <SortableContext items={teams.map((team) => team.id)} strategy={verticalListSortingStrategy}>
+        {teams.map((team, index) => (
+          <TeamItem
+            key={team.id}
+            team={team}
+            above={teams[index - 1]}
+            below={teams[index + 1]}
+            draggable={teams.length > 1}
+            onMove={(overId) => move(team.id, overId)}
+            pathname={pathname}
+            search={search}
+          />
+        ))}
+      </SortableContext>
+    </DndContext>
+  );
+}
+
 /** Left sidebar (SPEC §1.9): logo, search, Inbox, My tasks, Dashboard, teams tree, user menu. */
 export function AppSidebar() {
   const { pathname, search } = useLocation();
@@ -259,7 +397,10 @@ export function AppSidebar() {
   const desktop = isDesktopApp();
   const canCreateTeam = useShellActionAvailable('team.create');
   const { setOpenMobile } = useSidebar();
+  // In your order (BAT-36): the server sends pinned teams first.
   const teams = me.data?.teams ?? [];
+  const pinned = teams.filter((team) => team.pinned);
+  const unpinned = teams.filter((team) => !team.pinned);
 
   return (
     <Sidebar collapsible="icon">
@@ -336,10 +477,20 @@ export function AppSidebar() {
             </SidebarGroupContent>
           </SidebarGroup>
           {desktop ? <ThisComputer pathname={pathname} /> : null}
+          {pinned.length ? (
+            <SidebarGroup>
+              <SidebarGroupLabel>Pinned</SidebarGroupLabel>
+              <SidebarGroupContent>
+                <SidebarMenu aria-label="Pinned teams">
+                  <TeamList teams={pinned} allTeams={teams} pathname={pathname} search={search} />
+                </SidebarMenu>
+              </SidebarGroupContent>
+            </SidebarGroup>
+          ) : null}
           <SidebarGroup>
             <SidebarGroupLabel>Teams</SidebarGroupLabel>
             <SidebarGroupContent>
-              <SidebarMenu>
+              <SidebarMenu aria-label="Teams">
                 {me.isPending ? (
                   [0, 1, 2].map((index) => (
                     <SidebarMenuItem key={index}>
@@ -347,9 +498,7 @@ export function AppSidebar() {
                     </SidebarMenuItem>
                   ))
                 ) : teams.length ? (
-                  teams.map((team) => (
-                    <TeamItem key={team.id} team={team} pathname={pathname} search={search} />
-                  ))
+                  <TeamList teams={unpinned} allTeams={teams} pathname={pathname} search={search} />
                 ) : (
                   <li className="px-2 py-1.5 text-xs text-muted-foreground group-data-[collapsible=icon]:hidden">
                     No teams yet. Create one, or ask a teammate for an invite link.

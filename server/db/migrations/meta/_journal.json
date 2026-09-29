@@ -155,6 +155,13 @@
       "when": 1790509918252,
       "tag": "0021_stage_allow_create",
       "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "6",
+      "when": 1790706776979,
+      "tag": "0022_team_sidebar",
+      "breakpoints": true
     }
   ]
 }

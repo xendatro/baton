@@ -3,6 +3,7 @@ import { useId, useState, type FormEvent } from 'react';
 import { toast } from 'sonner';
 import type { PrincipalRule } from '@shared/principals';
 import { pipelineNameSchema, type Pipeline, type Status } from '@shared/schemas/projects';
+import { SoftWarning } from '@web/components/common/SoftWarning';
 import { Spinner } from '@web/components/common/Spinner';
 import { PrincipalRulePicker } from '@web/components/pickers/PrincipalRulePicker';
 import type { PrincipalOptions } from '@web/components/pickers/principals';
@@ -397,6 +398,17 @@ function PipelineSettingsForm({
             />
           ))
         : null}
+      {rules.viewRule && rules.viewRule.allow.length === 0 ? (
+        <SoftWarning size="sm" data-testid="nobody-sees-pipeline">
+          Only people who can manage statuses will see this pipeline and its tasks: nobody is chosen
+          under “Who can see it”.
+        </SoftWarning>
+      ) : rules.createRule && rules.createRule.allow.length === 0 ? (
+        <SoftWarning size="sm">
+          Only people who can manage statuses can create tasks in this pipeline: nobody is chosen
+          under “Who can create tasks in it”.
+        </SoftWarning>
+      ) : null}
       {error ? (
         <p role="alert" className="text-sm text-destructive">
           {error}

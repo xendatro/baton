@@ -480,8 +480,11 @@ export const reorderStatusesInputSchema = z.object({
 export type ReorderStatusesInput = z.infer<typeof reorderStatusesInputSchema>;
 
 export const deleteStatusQuerySchema = z.object({
-  /** Status that receives the deleted status's tasks (and its default flag). */
-  moveTo: idSchema,
+  /**
+   * Status that receives the deleted status's tasks (and its default flag). Needed only when the
+   * status has tasks (Trash included): a task always has a stage. May be another pipeline's.
+   */
+  moveTo: idSchema.optional(),
 });
 export type DeleteStatusQuery = z.infer<typeof deleteStatusQuerySchema>;
 

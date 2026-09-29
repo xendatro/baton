@@ -1,7 +1,9 @@
+import { QueryClientProvider } from '@tanstack/react-query';
 import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { describe, expect, it } from 'vitest';
 import type { IssueSummary } from '@shared/schemas/issues';
+import { createQueryClient } from '@web/lib/queryClient';
 import { IssueRow } from '@web/pages/issues/IssueRow';
 import { UnreadBadge } from './UnreadBadge';
 
@@ -39,11 +41,13 @@ describe('UnreadBadge (BAT-16)', () => {
       unreadCount: 2,
     };
     render(
-      <MemoryRouter>
-        <ul>
-          <IssueRow issue={issue} selected={false} onFocus={() => undefined} />
-        </ul>
-      </MemoryRouter>,
+      <QueryClientProvider client={createQueryClient()}>
+        <MemoryRouter>
+          <ul>
+            <IssueRow issue={issue} selected={false} onFocus={() => undefined} />
+          </ul>
+        </MemoryRouter>
+      </QueryClientProvider>,
     );
     expect(screen.getByRole('img', { name: '2 unread notifications' })).toBeInTheDocument();
   });

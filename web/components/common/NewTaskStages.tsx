@@ -1,5 +1,5 @@
-import { TriangleAlertIcon } from 'lucide-react';
 import { useId, type ReactNode } from 'react';
+import { SoftWarning } from '@web/components/common/SoftWarning';
 import { Switch } from '@web/components/ui/switch';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@web/components/ui/tooltip';
 import { acceptsNewTasks } from '@web/lib/newTaskStages';
@@ -69,21 +69,29 @@ export function NoStartStageNotice({
   className?: string;
 }) {
   return (
-    <div
-      role="note"
-      data-testid="no-start-stage"
-      className={cn(
-        'flex flex-wrap items-start gap-x-2.5 gap-y-1 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-900 dark:text-amber-200',
-        className,
-      )}
-    >
-      <TriangleAlertIcon className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
-      <p className="min-w-0 flex-1">
-        No stage{pipelineName ? ` of ${pipelineName}` : ''} accepts new tasks, so none can be
-        created. Turn on <strong>Start here</strong> (New tasks can start here) on one of its
-        stages.
-      </p>
-      {action}
-    </div>
+    <SoftWarning data-testid="no-start-stage" action={action} className={className}>
+      No stage{pipelineName ? ` of ${pipelineName}` : ''} accepts new tasks, so none can be created.
+      Turn on <strong>Start here</strong> (New tasks can start here) on one of its stages.
+    </SoftWarning>
+  );
+}
+
+/** The warning shown when a pipeline has no stages at all (they were all deleted). */
+export function NoStagesNotice({
+  pipelineName,
+  action,
+  className,
+}: {
+  /** Shown when the project has several pipelines. */
+  pipelineName?: string | undefined;
+  /** E.g. an "Add stage" button. */
+  action?: ReactNode;
+  className?: string;
+}) {
+  return (
+    <SoftWarning data-testid="no-stages" action={action} className={className}>
+      {pipelineName ? `${pipelineName} has` : 'This pipeline has'} no stages — add one to put tasks
+      in it.
+    </SoftWarning>
   );
 }

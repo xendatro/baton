@@ -37,7 +37,12 @@ import { EmptyState } from '@web/components/common/EmptyState';
 import { ErrorState } from '@web/components/common/ErrorState';
 import { Spinner } from '@web/components/common/Spinner';
 import { FinishedMark } from '@web/components/common/FinishedMark';
-import { NoStartStageNotice, StartHereSwitch } from '@web/components/common/NewTaskStages';
+import { SoftWarning } from '@web/components/common/SoftWarning';
+import {
+  NoStagesNotice,
+  NoStartStageNotice,
+  StartHereSwitch,
+} from '@web/components/common/NewTaskStages';
 import { StatusIcon } from '@web/components/common/StatusBadge';
 import { STATUS_ICON_SHAPES } from '@web/components/common/statusIcons';
 import { StatusIconPicker } from '@web/components/pickers/StatusIconPicker';
@@ -330,6 +335,12 @@ function Statuses({ teamId, projectId }: { teamId: string; projectId: string }) 
       ) : null}
       {canManage ? null : <ReadOnlyNotice permission="Manage statuses" />}
       {/* BAT-34: without a stage that accepts new tasks, none can be created. */}
+      {statuses.isSuccess && selected && items.length === 0 ? (
+        <NoStagesNotice
+          pipelineName={pipelineList.length > 1 ? selected.name : undefined}
+          className="mb-5"
+        />
+      ) : null}
       {statuses.isSuccess && items.length > 0 && !items.some(acceptsNewTasks) ? (
         <NoStartStageNotice
           pipelineName={pipelineList.length > 1 ? selected?.name : undefined}
@@ -620,7 +631,7 @@ function StatusRow({
                 variant="ghost"
                 size="icon-sm"
                 onClick={onDelete}
-                disabled={!canManage || isOnly}
+                disabled={!canManage}
                 aria-label={`Delete ${status.name}`}
                 className="text-muted-foreground hover:text-destructive"
               >
@@ -629,7 +640,9 @@ function StatusRow({
             </span>
           </TooltipTrigger>
           {isOnly && canManage ? (
-            <TooltipContent>A pipeline needs at least one status</TooltipContent>
+            <TooltipContent>
+              The last stage: deleting it leaves the pipeline with none
+            </TooltipContent>
           ) : null}
         </Tooltip>
       </div>
@@ -696,6 +709,9 @@ function DeleteStatusDialog({
   );
 }
 
+/** The Move tasks to choice for a stage without tasks: delete it without moving anything. */
+const NO_MOVE = '__none__';
+
 function DeleteStatusForm({
   projectId,
   status,
@@ -711,9 +727,14 @@ function DeleteStatusForm({
 }) {
   const remove = useDeleteStatus(projectId);
   const selectId = useId();
-  // The column before it in its pipeline (tasks step back one stage), else the one after.
+  const same = others.filter((other) => other.pipelineId === status.pipelineId);
+  // Its pipeline's last stage: allowed once no task is left in it (a task always has a stage).
+  const isLast = same.length === 0;
+  const empty = status.taskCount === 0;
+  // The column before it in its pipeline (tasks step back one stage), else the one after; with no
+  // tasks and no other stage in its pipeline, nothing needs to move.
   const [moveTo, setMoveTo] = useState(() => {
-    const same = others.filter((other) => other.pipelineId === status.pipelineId);
+    if (isLast && empty) return NO_MOVE;
     return (
       (
         [...same].reverse().find((other) => other.position < status.position) ??
@@ -728,17 +749,18 @@ function DeleteStatusForm({
   };
   const [error, setError] = useState<string | null>(null);
   const target = others.find((other) => other.id === moveTo);
+  const ready = target !== undefined || (empty && moveTo === NO_MOVE);
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
-    if (!target) return;
+    if (!ready) return;
     setError(null);
     remove.mutate(
-      { id: status.id, moveTo: target.id },
+      { id: status.id, moveTo: target?.id },
       {
         onSuccess: (result) => {
           toast.success(
-            result.movedTasks > 0
+            result.movedTasks > 0 && target
               ? `Deleted ${status.name} and moved ${pluralize(result.movedTasks, 'task')} to ${target.name}`
               : `Deleted ${status.name}`,
           );
@@ -756,7 +778,9 @@ function DeleteStatusForm({
         <DialogDescription>
           {status.taskCount > 0
             ? `Its ${pluralize(status.taskCount, 'task')} will move to the status you choose.`
-            : 'No tasks are in this status. Choose where tasks would go anyway.'}
+            : isLast
+              ? 'No tasks are in this status.'
+              : 'No tasks are in this status. Choose where tasks would go anyway.'}
         </DialogDescription>
       </DialogHeader>
       <div className="grid gap-1.5">
@@ -766,6 +790,7 @@ function DeleteStatusForm({
             <SelectValue placeholder="Choose a status" />
           </SelectTrigger>
           <SelectContent>
+            {empty ? <SelectItem value={NO_MOVE}>Nowhere (no tasks to move)</SelectItem> : null}
             {others.map((other) => (
               <SelectItem key={other.id} value={other.id}>
                 <StatusIcon status={other} />
@@ -785,6 +810,12 @@ function DeleteStatusForm({
           </p>
         ) : null}
       </div>
+      {isLast ? (
+        <SoftWarning title="Last stage.">
+          {pipelineName(status.pipelineId) ?? 'This pipeline'} will have no stages: its board stays
+          empty and no task can be created in it until you add one.
+        </SoftWarning>
+      ) : null}
       {error ? (
         <p role="alert" className="text-sm text-destructive">
           {error}
@@ -794,7 +825,7 @@ function DeleteStatusForm({
         <Button type="button" variant="outline" onClick={onClose} disabled={remove.isPending}>
           Cancel
         </Button>
-        <Button type="submit" variant="destructive" disabled={!target || remove.isPending}>
+        <Button type="submit" variant="destructive" disabled={!ready || remove.isPending}>
           {remove.isPending ? <Spinner /> : null}
           Delete status
         </Button>

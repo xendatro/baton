@@ -374,6 +374,14 @@ function startStatus(
     .orderBy(asc(s.status.position), asc(s.status.createdAt))
     .all();
   const status = stages.find((row) => row.isDefault) ?? stages[0];
+  if (
+    !status &&
+    !db.select({ id: s.status.id }).from(s.status).where(eq(s.status.pipelineId, pipeline.id)).get()
+  ) {
+    throw errors.validation(
+      `${pipeline.name} has no stages yet; add one in Project settings → Pipelines to put tasks in it`,
+    );
+  }
   if (!status) {
     throw errors.validation(
       `No stage of ${pipeline.name} accepts new tasks; turn on "New tasks can start here" on one in its settings`,

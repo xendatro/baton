@@ -75,11 +75,14 @@ import { pipelineBoardPath, resolvePipelineTab } from '@web/pages/tasks/pipeline
 import { DesktopUpdateNotice } from './DesktopUpdateNotice';
 import { DesktopVersionLine } from './DesktopVersionLine';
 import { LogoMark } from './Logo';
+import { PinnedProjects } from './PinnedProjects';
+import { PipelineContextMenu, ProjectContextMenu, TeamContextMenu } from './SidebarMenus';
 import {
   moveProject,
   moveTeam,
   useReorderMyProjects,
   useReorderMyTeams,
+  useTogglePin,
   useUpdateMyTeam,
 } from './sidebarTeams';
 import { useUnreadCount } from './useUnreadCount';
@@ -170,6 +173,8 @@ function ProjectLink({
   const { setOpenMobile } = useSidebar();
   const { setNodeRef, setActivatorNodeRef, listeners, transform, transition, isDragging } =
     useSortable({ id: project.id, disabled: !draggable });
+  const { isPinned, toggle } = useTogglePin();
+  const pinned = isPinned(project.id);
   const to = `/t/${team.slug}/p/${project.key}`;
   const active = pathname === to || pathname.startsWith(`${to}/`);
   // On its board the pipeline below is the highlighted item instead.
@@ -182,19 +187,34 @@ function ProjectLink({
     >
       {/* Its own hover group: the pipelines below don't reveal the project's menu. */}
       <div className="group/project-row relative">
-        <SidebarMenuSubButton asChild isActive={current} className={cn(draggable && 'pr-7')}>
-          <Link
-            ref={setActivatorNodeRef}
-            {...listeners}
-            to={to}
-            onClick={() => setOpenMobile(false)}
-            aria-current={current ? 'page' : undefined}
-            className={active ? 'font-medium' : undefined}
-          >
-            <EntityIcon icon={project.icon} name={project.name} color={project.color} />
-            <span>{project.name}</span>
-          </Link>
-        </SidebarMenuSubButton>
+        <ProjectContextMenu
+          team={team}
+          project={project}
+          onMoveUp={above ? () => onMove(above.id) : undefined}
+          onMoveDown={below ? () => onMove(below.id) : undefined}
+        >
+          <SidebarMenuSubButton asChild isActive={current} className={cn(draggable && 'pr-7')}>
+            <Link
+              ref={setActivatorNodeRef}
+              {...listeners}
+              to={to}
+              onClick={() => setOpenMobile(false)}
+              aria-current={current ? 'page' : undefined}
+              className={active ? 'font-medium' : undefined}
+            >
+              <EntityIcon icon={project.icon} name={project.name} color={project.color} />
+              <span>{project.name}</span>
+              {pinned ? (
+                <PinIcon
+                  className="size-3! shrink-0 text-muted-foreground"
+                  aria-label="Pinned"
+                  role="img"
+                />
+              ) : null}
+            </Link>
+          </SidebarMenuSubButton>
+        </ProjectContextMenu>
+        {/* Move up / Move down for the keyboard; Pin is here too (and in the right-click menu). */}
         {draggable ? (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -207,6 +227,11 @@ function ProjectLink({
               </button>
             </DropdownMenuTrigger>
             <DropdownMenuContent side="right" align="start" className="w-44">
+              <DropdownMenuItem onSelect={() => toggle(project, !pinned)}>
+                {pinned ? <PinOffIcon aria-hidden="true" /> : <PinIcon aria-hidden="true" />}
+                {pinned ? 'Unpin' : 'Pin to top'}
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
               <DropdownMenuItem disabled={!above} onSelect={() => above && onMove(above.id)}>
                 <ArrowUpIcon aria-hidden="true" />
                 Move up
@@ -266,20 +291,26 @@ function ProjectPipelines({
         const open = pipeline.openTaskCount ?? pipeline.taskCount;
         return (
           <li key={pipeline.id}>
-            <SidebarMenuSubButton asChild size="sm" isActive={current}>
-              <Link
-                to={pipelineBoardPath(projectBase, pipeline.id)}
-                onClick={() => setOpenMobile(false)}
-                aria-current={current ? 'page' : undefined}
-              >
-                <WorkflowIcon aria-hidden="true" />
-                <span>{pipeline.name}</span>
-                <span className="ml-auto text-xs text-muted-foreground tabular-nums">
-                  <span aria-hidden="true">{open}</span>
-                  <span className="sr-only">({pluralize(open, 'open task')})</span>
-                </span>
-              </Link>
-            </SidebarMenuSubButton>
+            <PipelineContextMenu
+              projectBase={projectBase}
+              projectId={project.id}
+              pipeline={pipeline}
+            >
+              <SidebarMenuSubButton asChild size="sm" isActive={current}>
+                <Link
+                  to={pipelineBoardPath(projectBase, pipeline.id)}
+                  onClick={() => setOpenMobile(false)}
+                  aria-current={current ? 'page' : undefined}
+                >
+                  <WorkflowIcon aria-hidden="true" />
+                  <span>{pipeline.name}</span>
+                  <span className="ml-auto text-xs text-muted-foreground tabular-nums">
+                    <span aria-hidden="true">{open}</span>
+                    <span className="sr-only">({pluralize(open, 'open task')})</span>
+                  </span>
+                </Link>
+              </SidebarMenuSubButton>
+            </PipelineContextMenu>
           </li>
         );
       })}
@@ -344,7 +375,7 @@ function ProjectList({
 
 interface TeamItemProps {
   team: MeTeam;
-  /** Its neighbours in the same group (Pinned, or the rest), for Move up / Move down. */
+  /** Its neighbours, for Move up / Move down. */
   above: MeTeam | undefined;
   below: MeTeam | undefined;
   draggable: boolean;
@@ -373,23 +404,30 @@ function TeamItem({ team, above, below, draggable, onMove, pathname, search }: T
         style={{ transform: CSS.Translate.toString(transform), transition }}
         className={cn(isDragging && 'z-10 rounded-md bg-sidebar shadow-md ring-1 ring-border')}
       >
-        <SidebarMenuButton
-          asChild
-          isActive={pathname === to}
-          tooltip={team.name}
-          className={cn(hasProjects && 'group-has-data-[sidebar=menu-action]/menu-item:pr-14')}
+        <TeamContextMenu
+          team={team}
+          onToggleFold={
+            hasProjects ? () => update.mutate({ teamId: team.id, collapsed: open }) : undefined
+          }
         >
-          <Link
-            ref={setActivatorNodeRef}
-            {...listeners}
-            to={to}
-            onClick={() => setOpenMobile(false)}
-            aria-current={pathname === to ? 'page' : undefined}
+          <SidebarMenuButton
+            asChild
+            isActive={pathname === to}
+            tooltip={team.name}
+            className={cn(hasProjects && 'group-has-data-[sidebar=menu-action]/menu-item:pr-14')}
           >
-            <EntityIcon icon={team.icon} name={team.name} color={team.color} />
-            <span className={inTeam ? 'font-medium' : undefined}>{team.name}</span>
-          </Link>
-        </SidebarMenuButton>
+            <Link
+              ref={setActivatorNodeRef}
+              {...listeners}
+              to={to}
+              onClick={() => setOpenMobile(false)}
+              aria-current={pathname === to ? 'page' : undefined}
+            >
+              <EntityIcon icon={team.icon} name={team.name} color={team.color} />
+              <span className={inTeam ? 'font-medium' : undefined}>{team.name}</span>
+            </Link>
+          </SidebarMenuButton>
+        </TeamContextMenu>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <SidebarMenuAction
@@ -401,13 +439,6 @@ function TeamItem({ team, above, below, draggable, onMove, pathname, search }: T
             </SidebarMenuAction>
           </DropdownMenuTrigger>
           <DropdownMenuContent side="right" align="start" className="w-44">
-            <DropdownMenuItem
-              onSelect={() => update.mutate({ teamId: team.id, pinned: !team.pinned })}
-            >
-              {team.pinned ? <PinOffIcon aria-hidden="true" /> : <PinIcon aria-hidden="true" />}
-              {team.pinned ? 'Unpin' : 'Pin to top'}
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
             <DropdownMenuItem disabled={!above} onSelect={() => above && onMove(above.id)}>
               <ArrowUpIcon aria-hidden="true" />
               Move up
@@ -441,24 +472,22 @@ function TeamItem({ team, above, below, draggable, onMove, pathname, search }: T
 }
 
 /**
- * One group of teams (Pinned, or the rest) in your order (BAT-36): drag a team to move it within
- * its group, or use its menu (Pin to top, Move up, Move down), which the keyboard reaches too.
+ * Your teams in your order (BAT-36): drag a team to move it, or use its menu (Move up, Move down),
+ * which the keyboard reaches too. Right-click a team for everything else (TeamContextMenu).
  */
 function TeamList({
   teams,
-  allTeams,
   pathname,
   search,
 }: {
   teams: MeTeam[];
-  allTeams: MeTeam[];
   pathname: string;
   search: string;
 }) {
   const reorder = useReorderMyTeams();
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }));
   const move = (activeId: string, overId: string) => {
-    const next = moveTeam(allTeams, activeId, overId);
+    const next = moveTeam(teams, activeId, overId);
     if (next) reorder.mutate(next);
   };
   const onDragEnd = ({ active, over }: DragEndEvent) => {
@@ -500,10 +529,8 @@ export function AppSidebar() {
   const desktop = isDesktopApp();
   const canCreateTeam = useShellActionAvailable('team.create');
   const { setOpenMobile } = useSidebar();
-  // In your order (BAT-36): the server sends pinned teams first.
+  // In your order (BAT-36).
   const teams = me.data?.teams ?? [];
-  const pinned = teams.filter((team) => team.pinned);
-  const unpinned = teams.filter((team) => !team.pinned);
 
   return (
     <Sidebar collapsible="icon">
@@ -580,16 +607,7 @@ export function AppSidebar() {
             </SidebarGroupContent>
           </SidebarGroup>
           {desktop ? <ThisComputer pathname={pathname} /> : null}
-          {pinned.length ? (
-            <SidebarGroup>
-              <SidebarGroupLabel>Pinned</SidebarGroupLabel>
-              <SidebarGroupContent>
-                <SidebarMenu aria-label="Pinned teams">
-                  <TeamList teams={pinned} allTeams={teams} pathname={pathname} search={search} />
-                </SidebarMenu>
-              </SidebarGroupContent>
-            </SidebarGroup>
-          ) : null}
+          <PinnedProjects pathname={pathname} />
           <SidebarGroup>
             <SidebarGroupLabel>Teams</SidebarGroupLabel>
             <SidebarGroupContent>
@@ -601,7 +619,7 @@ export function AppSidebar() {
                     </SidebarMenuItem>
                   ))
                 ) : teams.length ? (
-                  <TeamList teams={unpinned} allTeams={teams} pathname={pathname} search={search} />
+                  <TeamList teams={teams} pathname={pathname} search={search} />
                 ) : (
                   <li className="px-2 py-1.5 text-xs text-muted-foreground group-data-[collapsible=icon]:hidden">
                     No teams yet. Create one, or ask a teammate for an invite link.

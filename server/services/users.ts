@@ -1,14 +1,16 @@
-import { and, asc, eq, inArray, isNull, or } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNull, max, or } from 'drizzle-orm';
 import { MAX_ANY_USERNAME_LENGTH } from '@shared/constants';
 import {
   reorderMyProjectsInputSchema,
   reorderMyTeamsInputSchema,
+  reorderPinnedProjectsInputSchema,
   updateMyTeamInputSchema,
   type MeResponse,
   type MentionablesQuery,
   type MentionablesResponse,
   type ReorderMyProjectsInput,
   type ReorderMyTeamsInput,
+  type ReorderPinnedProjectsInput,
   type RoleSummary,
   type UpdateMyTeamInput,
   type UserSummary,
@@ -25,6 +27,7 @@ import {
   listMemberships,
   listProjectMemberships,
   requireMember,
+  requireProjectAccess,
 } from './access';
 import { emitAfterCommit } from './events';
 import { unreadNotificationCount } from './notifications';
@@ -136,7 +139,6 @@ export function getMe(deps: AppDeps, actor: Actor): MeResponse {
           .select({
             teamId: s.teamMember.teamId,
             position: s.teamMember.sidebarPosition,
-            pinned: s.teamMember.pinned,
             collapsed: s.teamMember.sidebarCollapsed,
           })
           .from(s.teamMember)
@@ -144,7 +146,7 @@ export function getMe(deps: AppDeps, actor: Actor): MeResponse {
           .all()
           .map((row) => [row.teamId, row]),
   );
-  // Your sidebar order (BAT-36): pinned first, then the order you arranged, then by name.
+  // Your sidebar order (BAT-36): the order you arranged, then by name.
   const teams = (
     teamIds.length === 0
       ? []
@@ -181,6 +183,11 @@ export function getMe(deps: AppDeps, actor: Actor): MeResponse {
     const right = projectPlace(b.id);
     return left === right ? 0 : left < right ? -1 : 1;
   });
+  // Your pinned projects, top first: only live ones you can see.
+  const live = new Set(projects.map((project) => project.id));
+  const pinnedProjectIds = listPinnedProjectIds(orm, actor.userId).filter(
+    (id) => live.has(id) && access.has(id),
+  );
 
   return {
     user: {
@@ -203,7 +210,6 @@ export function getMe(deps: AppDeps, actor: Actor): MeResponse {
         color: team.color,
         isOwner: membership?.isOwner ?? false,
         permissions: membership?.permissions ?? [],
-        pinned: sidebar.get(team.id)?.pinned ?? false,
         collapsed: sidebar.get(team.id)?.collapsed ?? false,
         projects: orderedProjects
           .filter((project) => project.teamId === team.id && access.has(project.id))
@@ -213,19 +219,17 @@ export function getMe(deps: AppDeps, actor: Actor): MeResponse {
           })),
       };
     }),
+    pinnedProjectIds,
     unreadNotifications: unreadNotificationCount(deps, actor),
   };
 }
 
 interface SidebarPlace {
   position: number | null;
-  pinned: boolean;
 }
 
-/** Pinned before unpinned, arranged before never arranged (stable: those keep the name order). */
+/** Arranged before never arranged (stable: those keep the name order). */
 function compareSidebar(a: SidebarPlace | undefined, b: SidebarPlace | undefined): number {
-  const pinned = Number(b?.pinned ?? false) - Number(a?.pinned ?? false);
-  if (pinned !== 0) return pinned;
   const left = a?.position ?? Number.POSITIVE_INFINITY;
   const right = b?.position ?? Number.POSITIVE_INFINITY;
   return left === right ? 0 : left < right ? -1 : 1;
@@ -245,8 +249,7 @@ function emitSidebarChanged(tx: Tx, userId: string): void {
 
 /**
  * `PUT /api/me/teams/order`: arranges your sidebar (BAT-36). `teamIds` lists every team you are in
- * exactly once, top first; pinned teams stay above the others whatever their place here. Personal,
- * so no team activity is recorded.
+ * exactly once, top first. Personal, so no team activity is recorded.
  */
 export function reorderMyTeams(
   deps: AppDeps,
@@ -276,7 +279,7 @@ export function reorderMyTeams(
   return getMe(deps, actor);
 }
 
-/** `PATCH /api/me/teams/:teamId`: pins a team to the top of your sidebar, or folds its projects. */
+/** `PATCH /api/me/teams/:teamId`: folds or unfolds a team's projects in your sidebar. */
 export function updateMyTeam(
   deps: AppDeps,
   actor: Actor,
@@ -287,10 +290,7 @@ export function updateMyTeam(
   requireMember(deps.db.orm, actor, teamId);
   deps.db.write((tx) => {
     tx.update(s.teamMember)
-      .set({
-        ...(input.pinned !== undefined ? { pinned: input.pinned } : {}),
-        ...(input.collapsed !== undefined ? { sidebarCollapsed: input.collapsed } : {}),
-      })
+      .set({ sidebarCollapsed: input.collapsed })
       .where(and(eq(s.teamMember.teamId, teamId), eq(s.teamMember.userId, actor.userId)))
       .run();
     emitSidebarChanged(tx, actor.userId);
@@ -348,6 +348,90 @@ export function reorderMyProjects(
         })),
       )
       .run();
+    emitSidebarChanged(tx, actor.userId);
+  });
+  return getMe(deps, actor);
+}
+
+/** Your pin rows, top first (including projects you can no longer see; callers filter). */
+function listPinnedProjectIds(db: DbExecutor, userId: string): string[] {
+  return db
+    .select({ id: s.projectPin.projectId })
+    .from(s.projectPin)
+    .where(eq(s.projectPin.userId, userId))
+    .orderBy(asc(s.projectPin.position), asc(s.projectPin.createdAt))
+    .all()
+    .map((row) => row.id);
+}
+
+/**
+ * `PUT /api/me/projects/:projectId/pin`: pins a project you can see to the Pinned section at the
+ * top of your sidebar (last in it). Pinning a pinned project changes nothing. Personal: no
+ * activity, `me.updated` for your other tabs and the desktop app.
+ */
+export function pinProject(deps: AppDeps, actor: Actor, projectId: string): MeResponse {
+  const { orm } = deps.db;
+  requireProjectAccess(orm, actor, projectId);
+  const live = orm
+    .select({ id: s.project.id })
+    .from(s.project)
+    .where(and(eq(s.project.id, projectId), isNull(s.project.deletedAt)))
+    .get();
+  if (!live) throw errors.notFound('Project');
+  deps.db.write((tx) => {
+    const last = tx
+      .select({ position: max(s.projectPin.position) })
+      .from(s.projectPin)
+      .where(eq(s.projectPin.userId, actor.userId))
+      .get();
+    const inserted = tx
+      .insert(s.projectPin)
+      .values({ userId: actor.userId, projectId, position: (last?.position ?? -1) + 1 })
+      .onConflictDoNothing()
+      .run();
+    if (inserted.changes === 0) return;
+    emitSidebarChanged(tx, actor.userId);
+  });
+  return getMe(deps, actor);
+}
+
+/** `DELETE /api/me/projects/:projectId/pin`: unpins it (even one you can no longer see). */
+export function unpinProject(deps: AppDeps, actor: Actor, projectId: string): MeResponse {
+  deps.db.write((tx) => {
+    const removed = tx
+      .delete(s.projectPin)
+      .where(and(eq(s.projectPin.userId, actor.userId), eq(s.projectPin.projectId, projectId)))
+      .run();
+    if (removed.changes > 0) emitSidebarChanged(tx, actor.userId);
+  });
+  return getMe(deps, actor);
+}
+
+/**
+ * `PUT /api/me/pinned-projects/order`: arranges your Pinned section. `projectIds` are pinned
+ * projects, top first; pins left out (say, pinned meanwhile in another tab) follow in their order.
+ */
+export function reorderPinnedProjects(
+  deps: AppDeps,
+  actor: Actor,
+  rawInput: ReorderPinnedProjectsInput,
+): MeResponse {
+  const input = reorderPinnedProjectsInputSchema.parse(rawInput);
+  deps.db.write((tx) => {
+    const pinned = listPinnedProjectIds(tx, actor.userId);
+    const known = new Set(pinned);
+    const unknown = input.projectIds.filter((id) => !known.has(id));
+    if (unknown.length > 0) {
+      throw errors.validation('Only pinned projects can be reordered', { projectIds: unknown });
+    }
+    const listed = new Set(input.projectIds);
+    const order = [...input.projectIds, ...pinned.filter((id) => !listed.has(id))];
+    order.forEach((projectId, position) => {
+      tx.update(s.projectPin)
+        .set({ position })
+        .where(and(eq(s.projectPin.userId, actor.userId), eq(s.projectPin.projectId, projectId)))
+        .run();
+    });
     emitSidebarChanged(tx, actor.userId);
   });
   return getMe(deps, actor);

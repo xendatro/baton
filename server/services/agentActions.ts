@@ -68,7 +68,7 @@ const EXECUTORS: Readonly<Record<AgentAction, Executor>> = {
   delete_project: executor(z.object({ projectId: id }), (deps, actor, input) =>
     deleteProject(deps, actor, input.projectId),
   ),
-  delete_status: executor(z.object({ statusId: id, moveTo: id }), (deps, actor, input) =>
+  delete_status: executor(z.object({ statusId: id, moveTo: id.optional() }), (deps, actor, input) =>
     deleteStatus(deps, actor, input.statusId, { moveTo: input.moveTo }),
   ),
   delete_label: executor(z.object({ labelId: id }), (deps, actor, input) =>

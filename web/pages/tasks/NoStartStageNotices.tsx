@@ -1,25 +1,47 @@
+import { PlusIcon } from 'lucide-react';
 import { Link } from 'react-router';
 import type { Pipeline } from '@shared/schemas/projects';
-import { NoStartStageNotice } from '@web/components/common/NewTaskStages';
+import { NoStagesNotice, NoStartStageNotice } from '@web/components/common/NewTaskStages';
 import { Button } from '@web/components/ui/button';
 import { projectSettingsPath } from './settingsPaths';
 
-/** BAT-34: the board's warnings: one per pipeline where no task can be created. */
+/**
+ * BAT-34: the board's warnings: one per pipeline where no task can be created, because no stage
+ * accepts new tasks or because it has no stages at all (`stageless`, allowed but odd).
+ */
 export function NoStartStageNotices({
   blocked,
+  stageless = [],
   named,
   projectBase,
   canManageStatuses,
 }: {
   blocked: readonly Pipeline[];
+  stageless?: readonly Pipeline[];
   /** Name the pipeline (the project has several). */
   named: boolean;
   projectBase: string;
   canManageStatuses: boolean;
 }) {
-  if (blocked.length === 0) return null;
+  if (blocked.length === 0 && stageless.length === 0) return null;
   return (
     <div className="mt-3 grid gap-2">
+      {stageless.map((pipeline) => (
+        <NoStagesNotice
+          key={pipeline.id}
+          pipelineName={named ? pipeline.name : undefined}
+          action={
+            canManageStatuses ? (
+              <Button asChild variant="outline" size="sm" className="h-7 bg-transparent">
+                <Link to={projectSettingsPath(projectBase, 'pipelines', undefined, pipeline.id)}>
+                  <PlusIcon aria-hidden="true" />
+                  Add stage
+                </Link>
+              </Button>
+            ) : null
+          }
+        />
+      ))}
       {blocked.map((pipeline) => (
         <NoStartStageNotice
           key={pipeline.id}

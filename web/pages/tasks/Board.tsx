@@ -25,7 +25,7 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { PlusIcon } from 'lucide-react';
+import { KanbanSquareIcon, PlusIcon } from 'lucide-react';
 import { acceptsNewTasks } from '@web/lib/newTaskStages';
 import {
   useEffect,
@@ -36,7 +36,8 @@ import {
   type ReactNode,
   type RefObject,
 } from 'react';
-import { Link } from 'react-router';
+import { Link, useNavigate } from 'react-router';
+import type { Status } from '@shared/schemas/projects';
 import {
   taskSchema,
   type BoardColumn,
@@ -45,7 +46,13 @@ import {
 } from '@shared/schemas/tasks';
 import { FinishedMark } from '@web/components/common/FinishedMark';
 import { StatusIcon } from '@web/components/common/StatusBadge';
+import { MenuRow } from '@web/components/layout/SidebarMenus';
 import { Button } from '@web/components/ui/button';
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuTrigger,
+} from '@web/components/ui/context-menu';
 import { Skeleton } from '@web/components/ui/skeleton';
 import { api } from '@web/lib/api';
 import { cn } from '@web/lib/utils';
@@ -62,6 +69,7 @@ import type { MoveVariables } from './queries';
 import type { DifficultyLevel } from './DifficultySelect';
 import { SendBackDialog, type SendBackStage } from './SendBackDialog';
 import { TaskCardBody } from './TaskCard';
+import { TaskContextMenu } from './TaskCardMenu';
 
 /**
  * The board (SPEC §1.9): a column per status, cards in board order. Cards are dragged within and
@@ -389,6 +397,8 @@ export function Board({
             editStatusHref={editStatusHref}
             pipelineName={pipelineNameOf?.(column.status.pipelineId)}
             forbidden={forbidden(column.status.id)}
+            statuses={statuses}
+            difficulties={difficulties}
           />
         ))}
       </div>
@@ -471,6 +481,9 @@ interface ColumnProps {
   pipelineName?: string | undefined;
   /** While a card is dragged: it can't go here (greyed out, takes no drop). */
   forbidden?: boolean;
+  /** Every column's stage, for the cards' Move to menu. */
+  statuses: readonly Status[];
+  difficulties?: readonly DifficultyLevel[] | undefined;
 }
 
 function Column({
@@ -485,7 +498,10 @@ function Column({
   editStatusHref,
   pipelineName,
   forbidden = false,
+  statuses,
+  difficulties,
 }: ColumnProps) {
+  const navigate = useNavigate();
   const { status } = column;
   // BAT-34: the + only on stages new tasks can start in.
   const canAdd = canCreate && acceptsNewTasks(status);
@@ -505,41 +521,47 @@ function Column({
         forbidden && 'cursor-not-allowed opacity-40 grayscale',
       )}
     >
-      <header className="flex items-center gap-2 px-3 pt-3 pb-2">
-        <StatusIcon status={status} />
-        <h2 id={headingId} className="min-w-0 truncate text-sm font-semibold">
-          {pipelineName ? (
-            <span className="font-normal text-muted-foreground">{pipelineName} / </span>
-          ) : null}
-          {status.name}
-        </h2>
-        <FinishedMark status={status} />
-        <span
-          className="text-xs text-muted-foreground tabular-nums"
-          aria-label={`${column.count} tasks`}
-        >
-          {column.count}
-        </span>
-        {canAdd ? (
-          <Button
-            variant="ghost"
-            size="icon"
-            className="ml-auto size-7 text-muted-foreground"
-            onClick={() => onQuickAdd(status.id)}
-            aria-label={`New task in ${status.name}`}
+      <ColumnHeaderMenu
+        name={status.name}
+        onNewTask={canAdd ? () => onQuickAdd(status.id) : undefined}
+        onEdit={editStatusHref ? () => void navigate(editStatusHref(status.id)) : undefined}
+      >
+        <header className="flex items-center gap-2 px-3 pt-3 pb-2">
+          <StatusIcon status={status} />
+          <h2 id={headingId} className="min-w-0 truncate text-sm font-semibold">
+            {pipelineName ? (
+              <span className="font-normal text-muted-foreground">{pipelineName} / </span>
+            ) : null}
+            {status.name}
+          </h2>
+          <FinishedMark status={status} />
+          <span
+            className="text-xs text-muted-foreground tabular-nums"
+            aria-label={`${column.count} tasks`}
           >
-            <PlusIcon aria-hidden="true" />
-          </Button>
-        ) : null}
-        {forbidden ? <span className="sr-only">(can’t move here)</span> : null}
-        {editStatusHref ? (
-          <ColumnMenu
-            statusName={status.name}
-            editHref={editStatusHref(status.id)}
-            className={canAdd ? '-ml-1' : 'ml-auto'}
-          />
-        ) : null}
-      </header>
+            {column.count}
+          </span>
+          {canAdd ? (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="ml-auto size-7 text-muted-foreground"
+              onClick={() => onQuickAdd(status.id)}
+              aria-label={`New task in ${status.name}`}
+            >
+              <PlusIcon aria-hidden="true" />
+            </Button>
+          ) : null}
+          {forbidden ? <span className="sr-only">(can’t move here)</span> : null}
+          {editStatusHref ? (
+            <ColumnMenu
+              statusName={status.name}
+              editHref={editStatusHref(status.id)}
+              className={canAdd ? '-ml-1' : 'ml-auto'}
+            />
+          ) : null}
+        </header>
+      </ColumnHeaderMenu>
       <SortableContext id={status.id} items={ids} strategy={verticalListSortingStrategy}>
         <ol
           ref={setNodeRef}
@@ -556,6 +578,8 @@ function Column({
                 task={card}
                 disabled={!canMove}
                 showPipeline={pipelineName !== undefined}
+                statuses={statuses}
+                difficulties={difficulties}
               />
             ) : null;
           })}
@@ -576,14 +600,45 @@ function Column({
   );
 }
 
+/**
+ * A column header's right-click menu: New task here (when the stage accepts new tasks) and Edit
+ * stage (for those who manage the stages). Without either, the header keeps the browser's menu.
+ */
+function ColumnHeaderMenu({
+  name,
+  onNewTask,
+  onEdit,
+  children,
+}: {
+  name: string;
+  onNewTask: (() => void) | undefined;
+  onEdit: (() => void) | undefined;
+  children: ReactNode;
+}) {
+  if (!onNewTask && !onEdit) return children;
+  return (
+    <ContextMenu>
+      <ContextMenuTrigger asChild>{children}</ContextMenuTrigger>
+      <ContextMenuContent className="w-48" aria-label={`${name} column actions`}>
+        {onNewTask ? <MenuRow icon={PlusIcon} label="New task here…" onSelect={onNewTask} /> : null}
+        {onEdit ? <MenuRow icon={KanbanSquareIcon} label="Edit stage" onSelect={onEdit} /> : null}
+      </ContextMenuContent>
+    </ContextMenu>
+  );
+}
+
 function SortableCard({
   task,
   disabled,
   showPipeline,
+  statuses,
+  difficulties,
 }: {
   task: TaskCard;
   disabled: boolean;
   showPipeline: boolean;
+  statuses: readonly Status[];
+  difficulties?: readonly DifficultyLevel[] | undefined;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: task.id,
@@ -596,22 +651,29 @@ function SortableCard({
       style={{ transform: CSS.Translate.toString(transform), transition }}
       className={cn(isDragging && 'opacity-40')}
     >
-      <Link
-        ref={setNodeRef}
-        to={task.path}
-        data-task-id={task.id}
-        {...dragAttributes}
-        {...listeners}
-        // Holding a card on a touch screen picks it up: no link menu over the drag.
-        onContextMenu={isDragging ? (event) => event.preventDefault() : undefined}
-        className={cn(
-          'block rounded-lg border bg-card p-3 shadow-xs transition-colors outline-none hover:border-foreground/20 focus-visible:ring-2 focus-visible:ring-ring',
-          !disabled &&
-            'cursor-grab touch-manipulation select-none [-webkit-touch-callout:none] active:cursor-grabbing',
-        )}
+      <TaskContextMenu
+        task={task}
+        statuses={statuses}
+        difficulties={difficulties}
+        disabled={isDragging}
       >
-        <TaskCardBody task={task} showPipeline={showPipeline} />
-      </Link>
+        <Link
+          ref={setNodeRef}
+          to={task.path}
+          data-task-id={task.id}
+          {...dragAttributes}
+          {...listeners}
+          // Holding a card on a touch screen picks it up: no link menu over the drag.
+          onContextMenu={isDragging ? (event) => event.preventDefault() : undefined}
+          className={cn(
+            'block rounded-lg border bg-card p-3 shadow-xs transition-colors outline-none hover:border-foreground/20 focus-visible:ring-2 focus-visible:ring-ring',
+            !disabled &&
+              'cursor-grab touch-manipulation select-none [-webkit-touch-callout:none] active:cursor-grabbing',
+          )}
+        >
+          <TaskCardBody task={task} showPipeline={showPipeline} />
+        </Link>
+      </TaskContextMenu>
     </li>
   );
 }

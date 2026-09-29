@@ -28,7 +28,9 @@ import {
   type TestContext,
   type UserRow,
 } from '../test/helpers';
+import { createPipeline } from './projectPipelines';
 import { createStatus, deleteStatus, reorderStatuses, updateStatus } from './statuses';
+import { createTask as createTaskService } from './tasks';
 
 let ctx: TestContext;
 let owner: UserRow;
@@ -170,13 +172,19 @@ describe('statuses over REST', () => {
     expect(allowed.status).toBe(200);
   });
 
-  it('requires moveTo when deleting', async () => {
+  it('requires moveTo when deleting a status that has tasks', async () => {
+    createTask(ctx.db, { project: project.project, statusId: open.id });
     const res = await ctx.app.request(`/api/statuses/${open.id}`, {
       method: 'DELETE',
       headers: bearer(ownerKey),
     });
     expect(res.status).toBe(400);
     expect(apiErrorSchema.parse(await res.json()).error.code).toBe('validation_failed');
+    const empty = await ctx.app.request(`/api/statuses/${done.id}`, {
+      method: 'DELETE',
+      headers: bearer(ownerKey),
+    });
+    expect(empty.status).toBe(200);
   });
 });
 
@@ -385,15 +393,54 @@ describe('deleting', () => {
     expect(taskRow(task.id)).toMatchObject({ statusId: open.id, completedAt: null });
   });
 
-  it('refuses to delete the last status or to move tasks into the deleted one', () => {
+  it('refuses to move tasks into the deleted one, and needs a target only when it has tasks', () => {
     expect(() => deleteStatus(ctx.deps, actorOf(owner), open.id, { moveTo: open.id })).toThrow(
       /another status/,
     );
+    const task = createTask(ctx.db, { project: project.project, statusId: done.id });
+    ctx.db.orm.update(s.task).set({ deletedAt: new Date() }).where(eq(s.task.id, task.id)).run();
+    // Trash counts: a task always has a stage.
+    expect(() => deleteStatus(ctx.deps, actorOf(owner), done.id, {})).toThrow(/Choose a stage/);
+    expect(deleteStatus(ctx.deps, actorOf(owner), open.id, {})).toEqual({
+      ok: true,
+      movedTasks: 0,
+    });
+    // The remaining stage became the default.
+    expect(statusRows().map((row) => [row.name, row.isDefault])).toEqual([[done.name, true]]);
+  });
+
+  it('deletes a pipeline’s last stage when no task is left in it (warned, not refused)', () => {
+    const pipelineId = project.pipeline.id;
+    const task = createTask(ctx.db, { project: project.project, statusId: open.id });
     deleteStatus(ctx.deps, actorOf(owner), done.id, { moveTo: open.id });
-    const other = createProject(ctx.db, { teamId: team.team.id, key: 'WEB' });
+    // Its tasks can go to another pipeline's stage.
+    const second = createPipeline(ctx.deps, actorOf(owner), project.project.id, { name: 'Ops' });
+    const target = statusRows().find((row) => row.pipelineId === second.id);
+    if (!target) throw new Error('no stage in Ops');
+    deleteStatus(ctx.deps, actorOf(owner), open.id, { moveTo: target.id });
+    expect(taskRow(task.id).statusId).toBe(target.id);
+    expect(statusRows().filter((row) => row.pipelineId === pipelineId)).toEqual([]);
+
+    // No task can start in a pipeline without stages; the error says why.
     expect(() =>
-      deleteStatus(ctx.deps, actorOf(owner), open.id, { moveTo: other.statuses[0]?.id ?? '' }),
-    ).toThrow(/last status/);
+      createTaskService(ctx.deps, actorOf(owner), project.project.id, {
+        title: 'Nowhere',
+        pipelineId,
+      }),
+    ).toThrow(/has no stages yet/);
+
+    // Its first new stage becomes the default, open to new tasks.
+    const first = createStatus(ctx.deps, actorOf(owner), project.project.id, {
+      name: 'Inbox',
+      pipelineId,
+    });
+    expect(first).toMatchObject({ isDefault: true });
+    expect(first.rules?.allowCreate ?? true).toBe(true);
+    const created = createTaskService(ctx.deps, actorOf(owner), project.project.id, {
+      title: 'Somewhere',
+      pipelineId,
+    });
+    expect(created.status.id).toBe(first.id);
   });
 
   it('refuses a target from another project', () => {

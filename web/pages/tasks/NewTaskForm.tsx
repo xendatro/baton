@@ -17,7 +17,7 @@ import { LabelPicker } from '@web/components/pickers/LabelPicker';
 import { DifficultyPicker } from '@web/components/pickers/DifficultyPicker';
 import { PriorityPicker } from '@web/components/pickers/PriorityPicker';
 import { StatusPicker } from '@web/components/pickers/StatusPicker';
-import { NoStartStageNotice } from '@web/components/common/NewTaskStages';
+import { NoStagesNotice, NoStartStageNotice } from '@web/components/common/NewTaskStages';
 import { Button } from '@web/components/ui/button';
 import {
   DialogDescription,
@@ -201,6 +201,10 @@ function TaskFields({
       acceptsNewTasks(status),
   );
   const noStartStage = statuses.isSuccess && statusList.length === 0;
+  // Every stage of it was deleted: say so (not just "no stage accepts new tasks").
+  const hasStages = (id: string) => allStatuses.some((status) => status.pipelineId === id);
+  const noStages =
+    statuses.isSuccess && chosenPipeline !== undefined && !hasStages(chosenPipeline.id);
   const effectiveStatus =
     (statusList.some((status) => status.id === statusId) ? statusId : null) ??
     statusList.find((status) => status.isDefault)?.id ??
@@ -337,6 +341,9 @@ function TaskFields({
               {creatable.map((pipeline) => (
                 <SelectItem key={pipeline.id} value={pipeline.id}>
                   {pipeline.name}
+                  {statuses.isSuccess && !hasStages(pipeline.id) ? (
+                    <span className="text-muted-foreground">(no stages)</span>
+                  ) : null}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -368,7 +375,9 @@ function TaskFields({
           onUploaded={(attachment) => setAttachments((current) => [...current, attachment])}
         />
       </div>
-      {noStartStage ? (
+      {noStages ? (
+        <NoStagesNotice pipelineName={creatable.length > 1 ? chosenPipeline.name : undefined} />
+      ) : noStartStage ? (
         <NoStartStageNotice
           pipelineName={creatable.length > 1 ? chosenPipeline?.name : undefined}
         />

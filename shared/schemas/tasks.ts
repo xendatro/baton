@@ -12,6 +12,7 @@ import {
 } from '../constants';
 import { dueDateSchema, idSchema, markdownSchema, timestampSchema, titleSchema } from './common';
 import {
+  agentWorkingSchema,
   attachmentSchema,
   reactionSummarySchema,
   roleSummarySchema,
@@ -163,6 +164,8 @@ export const taskCardSchema = taskSummarySchema.extend({
   unreadCount: z.number().int().nonnegative().optional(),
   /** What blocks it in its stage (design §5); null when the stage has no such rules. */
   pipeline: taskPipelineSummarySchema.nullable().optional(),
+  /** BAT#42: agents working on it right now (the pulsing dot); null when none. */
+  agentWorking: agentWorkingSchema.nullable().optional(),
 });
 export type TaskCard = z.infer<typeof taskCardSchema>;
 

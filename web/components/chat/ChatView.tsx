@@ -1,6 +1,5 @@
 import {
   ArrowDownIcon,
-  BotIcon,
   ListChecksIcon,
   ListPlusIcon,
   MessageCircleIcon,
@@ -365,7 +364,11 @@ export function ChatView({ parentType, parentId, teamId, projectId, item }: Chat
         ) : null}
         {working.map((agent) => (
           <span key={agent.id} className="flex items-center gap-1.5">
-            <BotIcon className="size-3.5" aria-hidden="true" />
+            {/* BAT#42: the same breathing dot as cards and rows (the text says who). */}
+            <span
+              aria-hidden="true"
+              className="size-2 animate-working-pulse rounded-full bg-indigo-500 motion-reduce:animate-none dark:bg-indigo-400"
+            />
             {agent.name} is working…
           </span>
         ))}

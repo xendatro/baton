@@ -35,6 +35,7 @@ import { errors } from '../lib/errors';
 import { likeContains } from '../lib/sql';
 import { appPaths } from '../lib/urls';
 import type { Membership } from './access';
+import { agentWorkingByItem } from './agentWorking';
 import { attachmentsByParent } from './attachments';
 import { isClaimValid } from './claimLease';
 import { unreadCountsByItem } from './notifications';
@@ -184,6 +185,7 @@ export function toTaskCards(
   );
   const blockers = openBlockerRefs(db, ids);
   const pipelines = pipelineSummaries(db, rows);
+  const working = agentWorkingByItem(db, 'task', ids);
 
   return rows.flatMap((row): TaskCard[] => {
     const project = projects.get(row.projectId);
@@ -224,6 +226,7 @@ export function toTaskCards(
         completedAt: row.completedAt?.toISOString() ?? null,
         path: appPaths.task(project.slug, project.key, row.number),
         ...(pipelines.has(row.id) ? { pipeline: pipelines.get(row.id) } : {}),
+        agentWorking: working.get(row.id) ?? null,
       },
     ];
   });

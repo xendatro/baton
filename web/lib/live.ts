@@ -193,6 +193,14 @@ export const LIVE_INVALIDATIONS: Readonly<Record<LiveEventType, Invalidation>> =
   'agent_action.changed': () => [queryKeys.account.agentActions(), queryKeys.notifications.all()],
   // Ephemeral: the chat's typing indicator listens for it (useLiveEventListener); nothing to fetch.
   typing: () => [],
+  // BAT#42: an agent started or stopped working on the item: its chat ("… is working"), its page
+  // and the lists and boards showing the dot.
+  'item.working_changed': (e) => [
+    queryKeys.replies.chat(e.entityType, e.entityId),
+    ...(e.entityType === 'task'
+      ? [...projectKeys(e, queryKeys.tasks.all), queryKeys.work.all()]
+      : projectKeys(e, queryKeys.issues.all)),
+  ],
 };
 
 /**

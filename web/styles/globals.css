@@ -318,3 +318,17 @@
     @apply text-red-600 dark:text-red-400;
   }
 }
+
+/* BAT#42: the "agent is working" dot (WorkingDot): a slow, smooth breathing pulse. */
+@theme {
+  --animate-working-pulse: working-pulse 2s ease-in-out infinite;
+  @keyframes working-pulse {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.3;
+    }
+  }
+}

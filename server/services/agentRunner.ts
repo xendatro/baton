@@ -64,6 +64,7 @@ import {
 } from './agentJobs';
 import { approveAgentRequest, declineAgentRequest, isOpenRequest } from './agentRequests';
 import { agentPauseReason, findAgentId, updateAgentSettings } from './agents';
+import { refreshJobIdsWorking } from './agentWorking';
 import { emitEvent } from './events';
 import { stageOf } from './pipelines';
 import { pipelineIdOfStatus, pipelineRow } from './projectPipelines';
@@ -278,11 +279,16 @@ export function runnerHeartbeat(
   const agent = requireKeyAgent(actor);
   const current = requireRunner(deps, agent.id, runnerId);
   const { orm } = deps.db;
+  const now = new Date();
+  // BAT#42: the jobs whose harness runs now ("… is working"); older apps only send `jobIds`.
+  const runningJobIds = [...new Set(input.activeJobIds ?? input.jobIds ?? [])];
   const row = orm
     .update(s.agentSession)
     .set({
-      lastSeenAt: new Date(),
+      lastSeenAt: now,
       running: input.running ?? 0,
+      runningJobIds,
+      runningReportedAt: now,
       ...(input.harnesses ? { harnesses: input.harnesses.map(harnessRecord) } : {}),
       ...(input.projectIds ? { projectIds: visibleProjects(orm, agent.id, input.projectIds) } : {}),
     })
@@ -290,6 +296,7 @@ export function runnerHeartbeat(
     .returning()
     .get();
   if (!isOnline(deps, current) || current.running !== row.running) announce(deps, agent, row);
+  refreshJobIdsWorking(deps, [...current.runningJobIds, ...runningJobIds]);
   return {
     ...runnerState(deps, agent, row),
     cancelledJobIds: cancelledJobIds(orm, agent.id, input.jobIds ?? []),

@@ -32,6 +32,8 @@ import { DEFAULT_BACKOFF_MS } from './harness/usageLimits';
  */
 
 const HEARTBEAT_MS = 30_000;
+/** BAT#42: an early heartbeat (a harness started or stopped) comes at most this often. */
+const EARLY_HEARTBEAT_GAP_MS = 2_000;
 const POLL_WAIT_S = 50;
 const OUTPUT_LINES = 400;
 /** Output lines reported to Baton when a job ends (BAT#23). */
@@ -200,6 +202,9 @@ export class Runner extends EventEmitter {
   private finished: FinishedJob[] = [];
   private installed = new Map<HarnessId, HarnessInfo>();
   private stopController: AbortController | null = null;
+  /** BAT#42: the active jobs the last heartbeat reported; a change wakes the heartbeat early. */
+  private reportedActive = '';
+  private heartbeatWake = new AbortController();
 
   constructor(
     private readonly api: BatonApi,
@@ -227,6 +232,15 @@ export class Runner extends EventEmitter {
 
   private changed() {
     this.emit('change', this.snapshot());
+    // BAT#42: Baton shows "… is working" from the heartbeat; tell it now, not in up to 30 s.
+    if (this.activeJobIds().join(',') !== this.reportedActive) this.heartbeatWake.abort();
+  }
+
+  /** Jobs whose harness is running now (not starting, waiting on usage or finishing). */
+  private activeJobIds(): string[] {
+    return [...this.running.values()]
+      .filter((job) => job.state === 'running' || job.state === 'blocked')
+      .map((job) => job.jobId);
   }
 
   private setStatus(status: RunnerStatus, text: string | null = null) {
@@ -360,14 +374,18 @@ export class Runner extends EventEmitter {
 
   private async heartbeatLoop(signal: AbortSignal) {
     while (!signal.aborted) {
+      const beatAt = this.now();
       try {
         const runnerId = this.runnerId ?? (await this.register());
+        const active = this.activeJobIds();
         const state = await this.api.heartbeat(runnerId, {
           running: this.running.size,
           jobIds: [...this.running.keys()],
+          activeJobIds: active,
           harnesses: [...this.installed.values()],
           projectIds: this.store.projectIds(),
         });
+        this.reportedActive = active.join(',');
         this.waitingCount = state.waitingCount;
         this.cancel(state.cancelledJobIds ?? []);
         this.setStatus(
@@ -379,7 +397,11 @@ export class Runner extends EventEmitter {
         if (error instanceof ApiError && error.status === 404) this.runnerId = null;
         this.onError(error);
       }
-      await sleep(HEARTBEAT_MS, signal);
+      await sleep(HEARTBEAT_MS, signal, this.heartbeatWake.signal);
+      if (this.heartbeatWake.signal.aborted) {
+        this.heartbeatWake = new AbortController();
+        await sleep(Math.max(0, beatAt + EARLY_HEARTBEAT_GAP_MS - this.now()), signal);
+      }
     }
   }
 

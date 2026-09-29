@@ -26,6 +26,7 @@ import { absoluteUrl, appPaths } from '../lib/urls';
 import { canViewProject, getProjectAccess, visibleProjectIds } from './access';
 import { recordActivity } from './activity';
 import { agentIdsAmong, agentPauseReason, findAgentId } from './agents';
+import { refreshJobsWorking } from './agentWorking';
 import { emitAfterCommit, emitEvent } from './events';
 import { findItem, type ItemInfo } from './items';
 import { beginListening, isSessionListening, refreshPresence } from './presence';
@@ -868,10 +869,13 @@ export function sweepListenerSessions(deps: AppDeps, now: Date = new Date()): nu
       if (agent && !owners.has(agent.ownerId)) owners.set(agent.ownerId, row);
     }
     for (const [ownerId, row] of owners) jobChanged(tx, row, ownerId);
-    return rows.length;
+    return rows;
   });
-  if (requeued > 0) deps.logger.info({ requeued }, 'agent jobs of vanished listeners requeued');
-  return requeued;
+  if (requeued.length > 0) {
+    deps.logger.info({ requeued: requeued.length }, 'agent jobs of vanished listeners requeued');
+    refreshJobsWorking(deps, requeued);
+  }
+  return requeued.length;
 }
 
 function touchSession(deps: AppDeps, sessionId: string): void {
@@ -1221,7 +1225,12 @@ export async function listen(
   signal?: AbortSignal,
 ): Promise<JobRow[]> {
   sweepListenerSessions(deps);
-  const claim = () => claimJobs(deps, agent, sessionId, projectIds, options);
+  const claim = () => {
+    const rows = claimJobs(deps, agent, sessionId, projectIds, options);
+    // BAT#42: a listener works on what it claims at once; a runner once its heartbeat says so.
+    refreshJobsWorking(deps, rows);
+    return rows;
+  };
   const first = claim();
   if (first.length > 0 || options.timeoutSeconds <= 0 || signal?.aborted) {
     refreshPresence(deps, [agent.id]);
@@ -1374,6 +1383,7 @@ export function completeJob(
       if (actor.ownerId) jobChanged(tx, job, actor.ownerId);
     });
     if (job.sessionId) touchSession(deps, job.sessionId);
+    refreshJobsWorking(deps, [job]);
   }
   const updated = requireOwnJob(deps, actor, job.id);
   return jobContexts(deps, [updated])[0] as AgentJobContext;
@@ -1432,6 +1442,7 @@ export function releaseJob(deps: AppDeps, actor: Actor, input: { jobId: string }
       if (actor.ownerId) jobChanged(tx, job, actor.ownerId);
     });
     if (job.sessionId) touchSession(deps, job.sessionId);
+    refreshJobsWorking(deps, [job]);
   }
   return jobContexts(deps, [requireOwnJob(deps, actor, job.id)])[0] as AgentJobContext;
 }

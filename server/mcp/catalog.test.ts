@@ -82,6 +82,8 @@ const DOCUMENTED_ADDITIONS = [
   'delete_pipeline',
   // listener (DECISIONS 2026-09-29 chat: catch-up summaries)
   'submit_catch_up',
+  // listener (DECISIONS 2026-09-29 tasks from issues and messages: agent task drafts)
+  'submit_task_draft',
 ].sort();
 
 let ctx: TestContext;

@@ -483,9 +483,17 @@ export const moveTaskInputSchema = z.object({
 });
 export type MoveTaskInput = z.infer<typeof moveTaskInputSchema>;
 
-/** `POST /api/projects/:projectId/tasks/from-issue` (the issue page's "Create task"). */
-export const createTaskFromIssueSchema = z.object({ issueId: idSchema });
-export type CreateTaskFromIssueInput = z.infer<typeof createTaskFromIssueSchema>;
+/**
+ * `POST /api/projects/:projectId/tasks/from-issue` (the issue page's "Create task"). Only
+ * `issueId` is required: every other field of `createTaskInputSchema` overrides what the issue
+ * gives (title, description, labels), and the issue is linked on top of any `issueLinks`.
+ */
+export const createTaskFromIssueSchema = createTaskInputSchema.extend({
+  issueId: idSchema,
+  title: titleSchema.optional(),
+});
+export type CreateTaskFromIssueInput = z.input<typeof createTaskFromIssueSchema>;
+export type CreateTaskFromIssueData = z.output<typeof createTaskFromIssueSchema>;
 
 /** `PUT /api/tasks/:taskId/issues/:issueId`. */
 export const setIssueLinkInputSchema = z.object({ kind: issueLinkKindSchema });

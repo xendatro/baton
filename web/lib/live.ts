@@ -183,6 +183,8 @@ export const LIVE_INVALIDATIONS: Readonly<Record<LiveEventType, Invalidation>> =
     queryKeys.account.agentConnection(),
     // A catch-up summary arrived, or the catch-up job moved on.
     queryKeys.catchUp.all(),
+    // A task draft arrived (Make task from this → Have my agent draft it).
+    queryKeys.taskDraft(),
     queryKeys.account.agentRequests(),
     queryKeys.account.agentModelOptions(),
     queryKeys.account.agentAccess(),

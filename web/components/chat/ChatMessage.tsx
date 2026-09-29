@@ -1,9 +1,17 @@
 import type { QueryKey } from '@tanstack/react-query';
-import { CornerUpLeftIcon, LinkIcon, PencilIcon, SmilePlusIcon, Trash2Icon } from 'lucide-react';
+import {
+  CornerUpLeftIcon,
+  LinkIcon,
+  ListPlusIcon,
+  PencilIcon,
+  SmilePlusIcon,
+  Trash2Icon,
+} from 'lucide-react';
 import { lazy, memo, Suspense, useState } from 'react';
 import { toast } from 'sonner';
 import { QUICK_REACTIONS } from '@shared/constants';
 import type { Reply } from '@shared/schemas/core';
+import { ItemAgentRequests } from '@web/components/agentRequests/ItemAgentRequests';
 import { AttachmentList } from '@web/components/attachments/AttachmentList';
 import { ActorAvatar } from '@web/components/common/AgentAvatar';
 import { ConfirmDialog } from '@web/components/common/ConfirmDialog';
@@ -19,6 +27,7 @@ import {
   useUpdateReply,
 } from '@web/components/replies/queries';
 import { Button } from '@web/components/ui/button';
+import { Checkbox } from '@web/components/ui/checkbox';
 import { Popover, PopoverContent, PopoverTrigger } from '@web/components/ui/popover';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@web/components/ui/tooltip';
 import { errorMessage } from '@web/lib/api';
@@ -44,6 +53,12 @@ export interface ChatMessageProps {
   link: string;
   onReply: (message: Reply) => void;
   onJumpTo: (replyId: string) => void;
+  /** "Make task from this" (absent: the viewer can't create tasks here). */
+  onMakeTask?: ((message: Reply) => void) | undefined;
+  /** "Select messages" mode: a checkbox instead of the actions. */
+  selecting?: boolean;
+  selected?: boolean;
+  onToggleSelected?: (replyId: string) => void;
 }
 
 function clockTime(iso: string): string {
@@ -75,6 +90,10 @@ export const ChatMessage = memo(function ChatMessage({
   link,
   onReply,
   onJumpTo,
+  onMakeTask,
+  selecting = false,
+  selected = false,
+  onToggleSelected,
 }: ChatMessageProps) {
   const access = useProjectAccess(message.teamId, message.projectId);
   const [editing, setEditing] = useState(false);
@@ -129,8 +148,19 @@ export const ChatMessage = memo(function ChatMessage({
       className={cn(
         'group/message relative flex scroll-mt-24 gap-3 rounded-md px-2 outline-none target:bg-primary/5 focus-within:bg-muted/40 hover:bg-muted/40',
         grouped ? 'py-0.5' : 'mt-2 pt-1.5 pb-0.5',
+        selected && 'bg-primary/5 hover:bg-primary/10',
       )}
     >
+      {selecting ? (
+        <div className={cn('flex shrink-0 items-start', grouped ? 'pt-0.5' : 'pt-1')}>
+          <Checkbox
+            checked={selected}
+            onCheckedChange={() => onToggleSelected?.(message.id)}
+            aria-label={`Select message from ${authorName}`}
+            data-testid="chat-select"
+          />
+        </div>
+      ) : null}
       <div className="w-8 shrink-0">
         {grouped ? (
           <time
@@ -252,6 +282,12 @@ export const ChatMessage = memo(function ChatMessage({
             }}
           />
         ) : null}
+        {/* Requests this message made (someone asked an agent that waits for its owner). */}
+        <ItemAgentRequests
+          item={{ type: message.parentType, id: message.parentId }}
+          replyId={message.id}
+          className="mt-1 max-w-xl"
+        />
         {message.reactions.length > 0 ? (
           <ReactionBar
             className="mt-1"
@@ -265,7 +301,7 @@ export const ChatMessage = memo(function ChatMessage({
         ) : null}
       </div>
 
-      {editing ? null : (
+      {editing || selecting ? null : (
         <div
           role="toolbar"
           aria-label="Message actions"
@@ -340,6 +376,17 @@ export const ChatMessage = memo(function ChatMessage({
               }}
             >
               <PencilIcon aria-hidden="true" />
+            </Button>
+          ) : null}
+          {onMakeTask ? (
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              aria-label="Make task from this"
+              title="Make task from this"
+              onClick={() => onMakeTask(message)}
+            >
+              <ListPlusIcon aria-hidden="true" />
             </Button>
           ) : null}
           <Button

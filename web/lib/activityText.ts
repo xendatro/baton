@@ -504,9 +504,13 @@ export function describeActivity(
   const pipeline = pipelineSentence(entry, subject);
   if (pipeline) return pipeline;
 
-  // Agent access: the owner declined a request ("declined @caden’s request to @ethan-ai: …"),
-  // or Baton notes an agent doesn't take requests from someone.
-  if (verb === 'agent_request_declined' || verb === 'agent_request_refused') {
+  // Agent access: the owner approved or declined a request ("declined @caden’s request to
+  // @ethan-ai: …"), or Baton notes an agent doesn't take requests from someone.
+  if (
+    verb === 'agent_request_declined' ||
+    verb === 'agent_request_refused' ||
+    verb === 'agent_request_approved'
+  ) {
     const agent = metaString(entry, 'agent');
     const requester = metaString(entry, 'requester');
     const on: ActivityPart[] =
@@ -524,7 +528,7 @@ export function describeActivity(
     }
     const reason = metaString(entry, 'reason');
     return [
-      { text: 'declined' },
+      { text: verb === 'agent_request_approved' ? 'approved' : 'declined' },
       { text: requester ? `@${requester}’s` : 'a', emphasis: requester !== null },
       { text: 'request to' },
       { text: `@${agent ?? 'their agent'}`, emphasis: true },

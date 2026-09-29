@@ -134,6 +134,9 @@ export const queryKeys = {
     all: () => ['catch-up'] as const,
     item: (parentType: string, parentId: string) => ['catch-up', parentType, parentId] as const,
   },
+  /** A task draft by the viewer's own agent (`agent_job.changed` refreshes it); without args, all. */
+  taskDraft: (jobId?: string) =>
+    jobId === undefined ? (['task-draft'] as const) : (['task-draft', jobId] as const),
 
   activity: (entityType: string, entityId: string) => ['activity', entityType, entityId] as const,
   /** Requests to start agents about one task or issue (agent access); without args, all. */

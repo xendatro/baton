@@ -992,6 +992,8 @@ function jobInstructions(
     case 'catch_up':
       // Private to the owner: nothing is posted in the chat, and there is no handshake.
       return catchUpInstructions(job, ref);
+    case 'draft_task':
+      return taskDraftInstructions(job, ref);
   }
   // BAT-27: the task was sent back into the stage this job is for.
   const returnReason = typeof job.payload.returnReason === 'string' ? job.payload.returnReason : '';
@@ -1017,6 +1019,18 @@ function catchUpInstructions(job: JobRow, ref: string): string {
   return `Your owner asked you to catch them up on the chat of ${ref}: summarize its ${count} latest messages${
     from ? ` (from reply ${from} on)` : ''
   } (read them with list_replies { item: "${ref}", order: "desc", limit: ${Math.max(count, 1)} } unless they are given to you). Write a short markdown summary for them: what happened, decisions, open questions, and anything that needs them (who asked what). Submit it with submit_catch_up { jobId: "${job.id}", summary } — it is shown only to your owner. Do NOT post in the chat (no add_reply) and do not change anything. submit_catch_up completes the job.`;
+}
+
+/** What a `draft_task` job asks: a task title and description, privately, for the owner. */
+function taskDraftInstructions(job: JobRow, ref: string): string {
+  const replyIds = Array.isArray(job.payload.replyIds)
+    ? job.payload.replyIds.filter((id): id is string => typeof id === 'string')
+    : [];
+  const what =
+    replyIds.length > 0
+      ? `${replyIds.length} message(s) of the conversation on ${ref} (reply ids: ${replyIds.join(', ')}; read them with list_replies { item: "${ref}" })`
+      : `${ref} (read it with get_issue / get_task and its latest messages with list_replies { item: "${ref}", order: "desc", limit: 30 })`;
+  return `Your owner wants to make a task from ${what} and asked you to draft it. Write a short, actionable title and a markdown description: the goal, the context that matters, what is decided or open, acceptance criteria, and links back to the source messages. Submit it with submit_task_draft { jobId: "${job.id}", title, description } — only your owner sees it, and they review it before creating the task. Do NOT create the task, do NOT post in the conversation (no add_reply) and do not change anything. submit_task_draft completes the job.`;
 }
 
 function projectsById(db: DbExecutor, projectIds: readonly string[]): Map<string, AgentJobProject> {

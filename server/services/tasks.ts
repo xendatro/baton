@@ -6,7 +6,7 @@ import type {
   BoardQuery,
   BoardResponse,
   CreateTaskData,
-  CreateTaskFromIssueInput,
+  CreateTaskFromIssueData,
   IdListChange,
   ListTasksQuery,
   MoveTaskInput,
@@ -725,12 +725,14 @@ export function createTask(
  * (matched by name in the task's project) and a `fixes` link, so finishing the task resolves the
  * issue. Members who may not resolve the issue (not its author, no `RESOLVE_ISSUES`) get a
  * `relates` link instead. Audited on both: `task.created` (`meta.fromIssue`) and `issue.links_changed`.
+ * The New task form prefilled from the issue sends its fields along: they replace the defaults
+ * (title, description, labels) and pick the pipeline and stage like `createTask`.
  */
 export function createTaskFromIssue(
   deps: AppDeps,
   actor: Actor,
   projectId: string,
-  input: CreateTaskFromIssueInput,
+  input: CreateTaskFromIssueData,
 ): Task {
   const { orm } = deps.db;
   const { team, membership } = requireProject(orm, actor, projectId);
@@ -751,36 +753,45 @@ export function createTaskFromIssue(
   const { issue, key } = found;
   const ref = formatIssueRef(key, issue.number);
 
-  const header = `From issue [${ref}](${appPaths.issue(team.slug, key, issue.number)}): ${issue.title}`;
-  const room = LIMITS.body.max - header.length - 2;
-  const body = issue.body.trim().slice(0, Math.max(0, room));
-  const description = body ? `${header}\n\n${body}` : header;
+  const { issueId: _issueId, title, description: given, labelIds: givenLabels, ...rest } = input;
+  let description = given;
+  if (description === undefined) {
+    const header = `From issue [${ref}](${appPaths.issue(team.slug, key, issue.number)}): ${issue.title}`;
+    const room = LIMITS.body.max - header.length - 2;
+    const body = issue.body.trim().slice(0, Math.max(0, room));
+    description = body ? `${header}\n\n${body}` : header;
+  }
 
-  const issueLabelNames = orm
-    .select({ name: s.label.name })
-    .from(s.issueLabel)
-    .innerJoin(s.label, eq(s.label.id, s.issueLabel.labelId))
-    .where(eq(s.issueLabel.issueId, issue.id))
-    .all()
-    .map((row) => row.name.toLowerCase());
-  const labelIds = orm
-    .select({ id: s.label.id, name: s.label.name })
-    .from(s.label)
-    .where(eq(s.label.projectId, projectId))
-    .all()
-    .filter((label) => issueLabelNames.includes(label.name.toLowerCase()))
-    .map((label) => label.id);
+  let labelIds = givenLabels;
+  if (labelIds === undefined) {
+    const issueLabelNames = orm
+      .select({ name: s.label.name })
+      .from(s.issueLabel)
+      .innerJoin(s.label, eq(s.label.id, s.issueLabel.labelId))
+      .where(eq(s.issueLabel.issueId, issue.id))
+      .all()
+      .map((row) => row.name.toLowerCase());
+    labelIds = orm
+      .select({ id: s.label.id, name: s.label.name })
+      .from(s.label)
+      .where(eq(s.label.projectId, projectId))
+      .all()
+      .filter((label) => issueLabelNames.includes(label.name.toLowerCase()))
+      .map((label) => label.id);
+  }
 
   return createTask(
     deps,
     actor,
     projectId,
     {
-      title: issue.title,
+      ...rest,
+      title: title ?? issue.title,
       description,
       labelIds,
       // `fixes` resolves the issue when the task is done: only for those who may resolve it.
       issueLinks: [
+        ...(rest.issueLinks ?? []).filter((link) => link.issueId !== issue.id),
         {
           issueId: issue.id,
           kind: canTriageIssue(membership, issue.authorId) ? 'fixes' : 'relates',

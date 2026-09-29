@@ -64,6 +64,7 @@ import { pipelineIdOfStatus, pipelineRow } from './projectPipelines';
 import { isSessionListening, refreshPresence } from './presence';
 import { resolveTask } from './refs';
 import { catchUpBriefMessages, catchUpPrompt } from './chat';
+import { taskDraftPrompt } from './taskDrafts';
 import { getUserSummaries } from './users';
 
 /**
@@ -973,8 +974,9 @@ export function jobBrief(
   // Harness sessions on this machine (most recent first).
   const resume: Record<string, string> = {};
   let sessionHarness: HarnessId | null = null;
-  // A catch-up summary starts fresh: it must not continue (or disturb) the task's work session.
-  if (runnerId && task && job.kind !== 'catch_up') {
+  // A catch-up summary (or a task draft) starts fresh: it must not continue (or disturb) the
+  // task's work session.
+  if (runnerId && task && job.kind !== 'catch_up' && job.kind !== 'draft_task') {
     const runner = requireRunner(deps, agent.id, runnerId);
     for (const row of orm
       .select()
@@ -1038,6 +1040,9 @@ export function jobBrief(
         messages: catchUpBriefMessages(orm, job),
       }),
     };
+  }
+  if (job.kind === 'draft_task') {
+    return { ...briefBase, prompt: taskDraftPrompt(deps, job, { me, owner }) };
   }
   const stage = task
     ? stageOf(orm, { userId: agent.id, ownerId: agent.ownerId, source: 'api', key: null }, task)

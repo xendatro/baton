@@ -18,6 +18,7 @@ const KIND_LABELS: Record<AgentJobKind, string> = {
   approval: 'Approval',
   action_result: 'Action result',
   catch_up: 'Catch up',
+  draft_task: 'Task draft',
 };
 
 const STATUS_LABELS: Record<AgentJobStatus, string> = {

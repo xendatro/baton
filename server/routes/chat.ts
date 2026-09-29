@@ -1,10 +1,13 @@
 import { Hono } from 'hono';
+import { z } from 'zod';
 import {
   catchUpRangeInputSchema,
   chatPageQuerySchema,
   itemParamsSchema,
+  requestTaskDraftInputSchema,
   setConversationModeInputSchema,
 } from '@shared/schemas/chat';
+import { idSchema } from '@shared/schemas/common';
 import type { AppEnv } from '../context';
 import { validateJson, validateParams, validateQuery } from '../lib/validate';
 import { requireActor } from '../middleware/actor';
@@ -15,10 +18,11 @@ import {
   sendTyping,
   setConversationMode,
 } from '../services/chat';
+import { getTaskDraft, requestTaskDraft } from '../services/taskDrafts';
 
 /**
- * Chat conversations on issues and tasks: /items/:type/:id/{chat,typing,conversation-mode,catch-up}.
- * Paths are relative to /api and declared in full in this file.
+ * Chat conversations on issues and tasks: /items/:type/:id/{chat,typing,conversation-mode,catch-up,
+ * task-draft} and /task-drafts/:jobId. Paths are relative to /api and declared in full in this file.
  */
 export const chatRoutes = new Hono<AppEnv>();
 
@@ -55,4 +59,19 @@ chatRoutes.post(
       requestCatchUp(c.var.deps, requireActor(c), c.req.valid('param'), c.req.valid('json')),
       201,
     ),
+);
+
+chatRoutes.post(
+  '/items/:type/:id/task-draft',
+  itemParams,
+  validateJson(requestTaskDraftInputSchema),
+  (c) =>
+    c.json(
+      requestTaskDraft(c.var.deps, requireActor(c), c.req.valid('param'), c.req.valid('json')),
+      201,
+    ),
+);
+
+chatRoutes.get('/task-drafts/:jobId', validateParams(z.object({ jobId: idSchema })), (c) =>
+  c.json(getTaskDraft(c.var.deps, requireActor(c), c.req.valid('param').jobId)),
 );

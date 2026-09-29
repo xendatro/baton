@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router';
 import { toast } from 'sonner';
 import { LIMITS, type ConversationMode, type PriorityValue } from '@shared/constants';
 import type { Attachment, MeProject, MeTeam } from '@shared/schemas/core';
-import { createTaskInputSchema } from '@shared/schemas/tasks';
+import { createTaskInputSchema, type Task } from '@shared/schemas/tasks';
 import { AttachmentList } from '@web/components/attachments/AttachmentList';
 import { AttachmentUploader } from '@web/components/attachments/AttachmentUploader';
 import { FormError } from '@web/components/auth/FormField';
@@ -39,9 +39,12 @@ import { Switch } from '@web/components/ui/switch';
 import { errorMessage, isApiError } from '@web/lib/api';
 import { useMe } from '@web/lib/auth';
 import { acceptsNewTasks } from '@web/lib/newTaskStages';
+import type { TaskPrefill, TaskPrefillIssue } from '@web/lib/taskPrefill';
 import { useDifficulties } from '../projects/difficultyQueries';
 import { useCreateLabel, useLabels, usePipelines, useStatuses } from '../projects/queries';
 import { useAssignables, useCreateTask } from './queries';
+import { TaskSourceBar } from './TaskSource';
+import { useCreateTaskFromIssueWith } from './taskSourceQueries';
 
 /**
  * The body of the "New task" dialog (web/pages/tasks/NewTaskDialog.tsx). A module of its own, so
@@ -60,6 +63,8 @@ export interface NewTaskFormProps {
   initialStatusId: string | undefined;
   /** The pipeline to start in (BAT-25: the board's selected pipeline). */
   initialPipelineId?: string | undefined;
+  /** Started from an issue or messages: title, description, the issue to link, the source. */
+  prefill?: TaskPrefill | undefined;
   onDone: () => void;
 }
 
@@ -68,6 +73,7 @@ export default function NewTaskForm({
   initialProjectId,
   initialStatusId,
   initialPipelineId,
+  prefill,
   onDone,
 }: NewTaskFormProps) {
   const requested = choices.find((choice) => choice.project.id === initialProjectId);
@@ -129,6 +135,7 @@ export default function NewTaskForm({
           project={choice.project}
           initialStatusId={choice.project.id === initialProjectId ? initialStatusId : undefined}
           initialPipelineId={choice.project.id === initialProjectId ? initialPipelineId : undefined}
+          prefill={prefill}
           onDone={onDone}
         />
       ) : (
@@ -148,12 +155,14 @@ function TaskFields({
   project,
   initialStatusId,
   initialPipelineId,
+  prefill,
   onDone,
 }: {
   team: MeTeam;
   project: MeProject;
   initialStatusId: string | undefined;
   initialPipelineId: string | undefined;
+  prefill: TaskPrefill | undefined;
   onDone: () => void;
 }) {
   const navigate = useNavigate();
@@ -168,8 +177,12 @@ function TaskFields({
   const editor = useRef<RichTextEditorHandle>(null);
   const titleRef = useRef<HTMLInputElement>(null);
 
-  const [title, setTitle] = useState('');
-  const [description, setDescription] = useState('');
+  const [title, setTitle] = useState(prefill?.title ?? '');
+  const [description, setDescription] = useState(prefill?.description ?? '');
+  // Create task / Make task from this on an issue: linked as `fixes` (the server decides again).
+  const [linkedIssue, setLinkedIssue] = useState<TaskPrefillIssue | null>(prefill?.issue ?? null);
+  const createFromIssue = useCreateTaskFromIssueWith(project.id);
+  const creating = create.isPending || createFromIssue.isPending;
   const [statusId, setStatusId] = useState<string | null>(initialStatusId ?? null);
   const [priority, setPriority] = useState<PriorityValue>(0);
   const [assignees, setAssignees] = useState<AssigneeValue>({ userIds: [], roleIds: [] });
@@ -216,7 +229,7 @@ function TaskFields({
 
   const submit = (event?: FormEvent) => {
     event?.preventDefault();
-    if (create.isPending) return;
+    if (creating) return;
     setFormError(null);
     const parsed = createTaskInputSchema.safeParse({
       title,
@@ -242,8 +255,8 @@ function TaskFields({
       return;
     }
     setTitleError(null);
-    create.mutate(parsed.data, {
-      onSuccess: (task) => {
+    const callbacks = {
+      onSuccess: (task: Task) => {
         toast.success(`Created ${task.ref}`, {
           description: task.title,
           action: { label: 'Open', onClick: () => void navigate(task.path) },
@@ -252,20 +265,28 @@ function TaskFields({
           setTitle('');
           setDescription('');
           setAttachments([]);
+          setLinkedIssue(null);
           editor.current?.clear();
           titleRef.current?.focus();
         } else {
           onDone();
+          // Create task on an issue opens the new task (messages keep you in the conversation).
+          if (prefill && prefill.source.replyIds.length === 0) void navigate(task.path);
         }
       },
-      onError: (error) => {
+      onError: (error: Error) => {
         if (isApiError(error) && error.code === 'validation_failed' && error.fieldErrors.title) {
           setTitleError(error.fieldErrors.title);
         } else {
           setFormError(errorMessage(error));
         }
       },
-    });
+    };
+    if (linkedIssue) {
+      createFromIssue.mutate({ ...parsed.data, issueId: linkedIssue.id }, callbacks);
+    } else {
+      create.mutate(parsed.data, callbacks);
+    }
   };
 
   return (
@@ -282,6 +303,19 @@ function TaskFields({
         }
       }}
     >
+      {prefill ? (
+        <TaskSourceBar
+          prefill={prefill}
+          projectId={project.id}
+          issue={linkedIssue}
+          onRemoveIssue={() => setLinkedIssue(null)}
+          onUseDraft={(draft) => {
+            setTitle(draft.title);
+            setDescription(draft.description);
+            titleRef.current?.focus();
+          }}
+        />
+      ) : null}
       <div className="grid gap-1.5">
         <Label htmlFor="new-task-title" className="sr-only">
           Title
@@ -396,11 +430,11 @@ function TaskFields({
           <span className="hidden items-center gap-1 text-xs text-muted-foreground sm:inline-flex">
             <Kbd keys="mod+enter" />
           </span>
-          <Button type="button" variant="outline" onClick={onDone} disabled={create.isPending}>
+          <Button type="button" variant="outline" onClick={onDone} disabled={creating}>
             Cancel
           </Button>
-          <Button type="submit" disabled={create.isPending || !title.trim() || noStartStage}>
-            {create.isPending ? <Spinner /> : null}
+          <Button type="submit" disabled={creating || !title.trim() || noStartStage}>
+            {creating ? <Spinner /> : null}
             Create task
           </Button>
         </div>

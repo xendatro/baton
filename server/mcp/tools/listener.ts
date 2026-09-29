@@ -1,10 +1,11 @@
 import { z } from 'zod';
-import { AGENT_JOB_STATUSES, AGENT_LISTENER, CHAT_LIMITS } from '@shared/constants';
+import { AGENT_JOB_STATUSES, AGENT_LISTENER, CHAT_LIMITS, LIMITS } from '@shared/constants';
 import { HARNESS_IDS, JOB_OUTCOMES } from '@shared/schemas/agentRunner';
 import { completeJob, listJobs, releaseJob, startListener } from '../../services/agentJobs';
 import { listAgentRequests } from '../../services/agentRequests';
 import { recordJobUsage } from '../../services/agentRunner';
 import { submitCatchUp } from '../../services/chat';
+import { submitTaskDraft } from '../../services/taskDrafts';
 import { defineTool, toolInput, type McpTool } from './define';
 
 /**
@@ -163,6 +164,29 @@ const submitCatchUpTool = defineTool({
   handler: (ctx, input) => submitCatchUp(ctx.deps, ctx.actor, input),
 });
 
+const submitTaskDraftTool = defineTool({
+  name: 'submit_task_draft',
+  title: 'Submit task draft',
+  description:
+    'Hands in the draft of a draft_task job: your owner wants to turn an issue or chat messages into a task and asked you to write its title and description. The draft is shown only to your owner, in their New task form, to review before they create the task (you never create it); it also completes the job. Only for your own draft_task jobs.',
+  input: toolInput({
+    jobId,
+    title: z
+      .string()
+      .min(1)
+      .max(LIMITS.title.max)
+      .describe('Short, actionable task title (no ref or prefix)'),
+    description: z
+      .string()
+      .max(LIMITS.body.max)
+      .describe(
+        'Markdown: the goal, the context that matters, what is decided or open, acceptance criteria, and links back to the source messages',
+      ),
+  }),
+  annotations: { destructiveHint: false },
+  handler: (ctx, input) => submitTaskDraft(ctx.deps, ctx.actor, input),
+});
+
 const listRequestsTool = defineTool({
   name: 'list_requests',
   title: 'List requests',
@@ -179,5 +203,6 @@ export const listenerTools: McpTool[] = [
   releaseJobTool,
   listJobsTool,
   submitCatchUpTool,
+  submitTaskDraftTool,
   listRequestsTool,
 ];

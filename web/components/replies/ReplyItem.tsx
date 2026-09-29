@@ -1,8 +1,10 @@
-import { MoreHorizontalIcon, PencilIcon, Trash2Icon } from 'lucide-react';
+import { ListPlusIcon, MoreHorizontalIcon, PencilIcon, Trash2Icon } from 'lucide-react';
 import { useState, type ReactNode } from 'react';
 import { toast } from 'sonner';
 import type { Reply } from '@shared/schemas/core';
+import { ItemAgentRequests } from '@web/components/agentRequests/ItemAgentRequests';
 import { AttachmentList } from '@web/components/attachments/AttachmentList';
+import { useConversationItem, useMakeTask } from '@web/components/chat/conversationItem';
 import { ActorAvatar } from '@web/components/common/AgentAvatar';
 import { ConfirmDialog } from '@web/components/common/ConfirmDialog';
 import { RelativeTime } from '@web/components/common/RelativeTime';
@@ -42,6 +44,9 @@ export function ReplyItem({ reply, footer }: ReplyItemProps) {
   const authorId = reply.author?.id;
   const canEdit = access.canEdit(authorId);
   const canDelete = access.canDelete(authorId);
+  // In its conversation: "Make task from this" and the agent requests it made.
+  const inConversation = useConversationItem() !== null;
+  const makeTask = useMakeTask();
 
   const save = () => {
     const body = draft.trim();
@@ -85,7 +90,7 @@ export function ReplyItem({ reply, footer }: ReplyItemProps) {
               <TooltipContent>Edited {formatDateTime(reply.editedAt)}</TooltipContent>
             </Tooltip>
           ) : null}
-          {(canEdit || canDelete) && !editing ? (
+          {(canEdit || canDelete || makeTask) && !editing ? (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button
@@ -98,6 +103,12 @@ export function ReplyItem({ reply, footer }: ReplyItemProps) {
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
+                {makeTask ? (
+                  <DropdownMenuItem onSelect={() => makeTask([reply])}>
+                    <ListPlusIcon aria-hidden="true" />
+                    Make task from this
+                  </DropdownMenuItem>
+                ) : null}
                 {canEdit ? (
                   <DropdownMenuItem
                     onSelect={() => {
@@ -158,6 +169,12 @@ export function ReplyItem({ reply, footer }: ReplyItemProps) {
             toast.success('Attachment moved to Trash');
           }}
         />
+        {inConversation ? (
+          <ItemAgentRequests
+            item={{ type: reply.parentType, id: reply.parentId }}
+            replyId={reply.id}
+          />
+        ) : null}
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
           {editing ? null : footer}
           <ReactionBar

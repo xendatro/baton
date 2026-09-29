@@ -245,10 +245,16 @@ test('an issue becomes a task; finishing the task resolves the issue and tells i
   await stream;
   await expect(reporter.getByRole('heading', { name: 'Inbox' })).toBeVisible();
 
-  // The issue page's "Create task" opens the new task, linked with "fixes".
+  // The issue page's "Create task" opens New task prefilled; creating it opens the new task,
+  // linked with "fixes".
   await page.goto(`/t/${team.slug}/p/SF/issues/1`);
   const issueDetails = page.getByRole('complementary', { name: 'Issue details' });
   await issueDetails.getByRole('button', { name: 'Create task' }).click();
+  const newTask = page.getByRole('dialog', { name: 'New task' });
+  await expect(newTask.getByPlaceholder('Task title')).toHaveValue(
+    'Coupon codes are case-sensitive',
+  );
+  await newTask.getByRole('button', { name: 'Create task' }).click();
   await expect(page).toHaveURL(new RegExp(`/t/${team.slug}/p/SF/tasks/1$`));
   await expect(
     page.getByRole('heading', { level: 1, name: 'Coupon codes are case-sensitive' }),

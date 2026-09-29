@@ -5,7 +5,7 @@ import {
   CONVERSATION_MODES,
   REPLY_PARENT_TYPES,
 } from '../constants';
-import { idSchema, timestampSchema } from './common';
+import { idSchema, markdownSchema, timestampSchema, titleSchema } from './common';
 import { replySchema, userSummarySchema } from './core';
 
 /**
@@ -116,3 +116,40 @@ export const submitCatchUpInputSchema = z.object({
   summary: z.string().trim().min(1, 'Required').max(CHAT_LIMITS.catchUpSummaryMax),
 });
 export type SubmitCatchUpInput = z.infer<typeof submitCatchUpInputSchema>;
+
+// ---------------------------------------------------------------------------------------------
+// Task drafts ("Have my agent draft it")
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * `POST /api/items/:type/:id/task-draft`: asks the viewer's **own** agent to turn the item (no
+ * `replyIds`: its title, description and latest messages) or the chosen messages into a task
+ * title and description. The draft is private to the viewer and never creates anything.
+ */
+export const requestTaskDraftInputSchema = z.object({
+  replyIds: z.array(idSchema).max(CHAT_LIMITS.taskFromMessagesMax).optional(),
+});
+export type RequestTaskDraftInput = z.infer<typeof requestTaskDraftInputSchema>;
+
+export const taskDraftSchema = z.object({ title: z.string(), description: z.string() });
+export type TaskDraft = z.infer<typeof taskDraftSchema>;
+
+/** `GET /api/task-drafts/:jobId` (and the POST's answer): the job and, once handed in, the draft. */
+export const taskDraftStateSchema = z.object({
+  jobId: z.string(),
+  status: z.enum(AGENT_JOB_STATUSES),
+  itemType: z.enum(REPLY_PARENT_TYPES),
+  itemId: z.string(),
+  replyIds: z.array(z.string()),
+  draft: taskDraftSchema.nullable(),
+  createdAt: timestampSchema,
+});
+export type TaskDraftState = z.infer<typeof taskDraftStateSchema>;
+
+/** MCP `submit_task_draft`. */
+export const submitTaskDraftInputSchema = z.object({
+  jobId: idSchema,
+  title: titleSchema,
+  description: markdownSchema,
+});
+export type SubmitTaskDraftInput = z.infer<typeof submitTaskDraftInputSchema>;

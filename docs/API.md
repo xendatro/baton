@@ -104,6 +104,14 @@ search and the audit log use core services, but their routes belong to admin.
 
 `ApiKey` = `{ id, name, prefix, lastUsedAt, expiresAt, revokedAt, createdAt }`.
 
+Project order (BAT#27): `PUT /api/me/teams/:teamId/projects/order` `ReorderMyProjectsInput`
+`{ projectIds }` (1–1000 distinct ids of the team's projects you can see, top first) arranges that
+team's projects in your sidebar and answers the new `MeResponse`, whose `projects` then come in
+your order; projects left out (created meanwhile, say) and never-arranged ones follow, by name.
+Projects only move within their team: another team's, a deleted or a hidden project is `400`; not
+a member of the team: `404`. It replaces your saved order of that team, emits `me.updated` and
+writes no activity (personal, like the team order).
+
 Notifications (list, unread count, `me.unreadNotifications` and MCP `list_notifications`) leave out
 those about an issue, task, reply or project README that is in Trash, directly or through its issue,
 task or project; they come back if it is restored. Editing an item's title or text updates the

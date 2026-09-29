@@ -75,7 +75,13 @@ import { pipelineBoardPath, resolvePipelineTab } from '@web/pages/tasks/pipeline
 import { DesktopUpdateNotice } from './DesktopUpdateNotice';
 import { DesktopVersionLine } from './DesktopVersionLine';
 import { LogoMark } from './Logo';
-import { moveTeam, useReorderMyTeams, useUpdateMyTeam } from './sidebarTeams';
+import {
+  moveProject,
+  moveTeam,
+  useReorderMyProjects,
+  useReorderMyTeams,
+  useUpdateMyTeam,
+} from './sidebarTeams';
 import { useUnreadCount } from './useUnreadCount';
 import { UserMenu } from './UserMenu';
 
@@ -129,35 +135,90 @@ function NavLink({ to, label, icon: Icon, active, badge, shortcut }: NavLinkProp
   );
 }
 
+/**
+ * dnd-kit stops the click that ends a drag before React sees it, but not its default action: the
+ * dropped team's or project's link would open as a full page load. Cancel that click (if one comes).
+ */
+function swallowClick() {
+  const prevent = (event: MouseEvent) => event.preventDefault();
+  window.addEventListener('click', prevent, { capture: true, once: true });
+  setTimeout(() => window.removeEventListener('click', prevent, { capture: true }), 300);
+}
+
+interface ProjectLinkProps {
+  team: MeTeam;
+  project: MeProject;
+  /** Its neighbours in the team, for Move up / Move down (BAT#27). */
+  above: MeProject | undefined;
+  below: MeProject | undefined;
+  draggable: boolean;
+  onMove: (overId: string) => void;
+  pathname: string;
+  search: string;
+}
+
 function ProjectLink({
   team,
   project,
+  above,
+  below,
+  draggable,
+  onMove,
   pathname,
   search,
-}: {
-  team: MeTeam;
-  project: MeProject;
-  pathname: string;
-  search: string;
-}) {
+}: ProjectLinkProps) {
   const { setOpenMobile } = useSidebar();
+  const { setNodeRef, setActivatorNodeRef, listeners, transform, transition, isDragging } =
+    useSortable({ id: project.id, disabled: !draggable });
   const to = `/t/${team.slug}/p/${project.key}`;
   const active = pathname === to || pathname.startsWith(`${to}/`);
   // On its board the pipeline below is the highlighted item instead.
   const current = active && pathname !== `${to}/tasks`;
   return (
-    <SidebarMenuSubItem>
-      <SidebarMenuSubButton asChild isActive={current}>
-        <Link
-          to={to}
-          onClick={() => setOpenMobile(false)}
-          aria-current={current ? 'page' : undefined}
-          className={active ? 'font-medium' : undefined}
-        >
-          <EntityIcon icon={project.icon} name={project.name} color={project.color} />
-          <span>{project.name}</span>
-        </Link>
-      </SidebarMenuSubButton>
+    <SidebarMenuSubItem
+      ref={setNodeRef}
+      style={{ transform: CSS.Translate.toString(transform), transition }}
+      className={cn(isDragging && 'z-10 rounded-md bg-sidebar shadow-md ring-1 ring-border')}
+    >
+      {/* Its own hover group: the pipelines below don't reveal the project's menu. */}
+      <div className="group/project-row relative">
+        <SidebarMenuSubButton asChild isActive={current} className={cn(draggable && 'pr-7')}>
+          <Link
+            ref={setActivatorNodeRef}
+            {...listeners}
+            to={to}
+            onClick={() => setOpenMobile(false)}
+            aria-current={current ? 'page' : undefined}
+            className={active ? 'font-medium' : undefined}
+          >
+            <EntityIcon icon={project.icon} name={project.name} color={project.color} />
+            <span>{project.name}</span>
+          </Link>
+        </SidebarMenuSubButton>
+        {draggable ? (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                type="button"
+                aria-label={`${project.name} options`}
+                className="absolute top-1 right-1 flex size-5 items-center justify-center rounded-md text-sidebar-foreground ring-sidebar-ring outline-hidden group-data-[collapsible=icon]:hidden hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-2 data-[state=open]:opacity-100 md:opacity-0 md:group-focus-within/project-row:opacity-100 md:group-hover/project-row:opacity-100 [&>svg]:size-4 [&>svg]:shrink-0"
+              >
+                <MoreHorizontalIcon aria-hidden="true" />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent side="right" align="start" className="w-44">
+              <DropdownMenuItem disabled={!above} onSelect={() => above && onMove(above.id)}>
+                <ArrowUpIcon aria-hidden="true" />
+                Move up
+              </DropdownMenuItem>
+              <DropdownMenuItem disabled={!below} onSelect={() => below && onMove(below.id)}>
+                <ArrowDownIcon aria-hidden="true" />
+                Move down
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        ) : null}
+      </div>
       {/* The project you're in lists its pipelines (teams → projects → pipelines). */}
       {active ? (
         <ProjectPipelines projectBase={to} project={project} pathname={pathname} search={search} />
@@ -223,6 +284,61 @@ function ProjectPipelines({
         );
       })}
     </ul>
+  );
+}
+
+/**
+ * A team's projects in your order (BAT#27): drag a project within its team (never to another
+ * team), or use its menu (Move up, Move down), which the keyboard reaches too.
+ */
+function ProjectList({
+  team,
+  pathname,
+  search,
+}: {
+  team: MeTeam;
+  pathname: string;
+  search: string;
+}) {
+  const reorder = useReorderMyProjects();
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }));
+  const projects = team.projects;
+  const move = (activeId: string, overId: string) => {
+    const next = moveProject(projects, activeId, overId);
+    if (next) reorder.mutate({ teamId: team.id, projectIds: next });
+  };
+  const onDragEnd = ({ active, over }: DragEndEvent) => {
+    swallowClick();
+    if (over) move(String(active.id), String(over.id));
+  };
+  return (
+    <DndContext
+      sensors={sensors}
+      collisionDetection={closestCenter}
+      onDragEnd={onDragEnd}
+      onDragCancel={swallowClick}
+      // Its live region and instructions go outside the list: a <ul> holds only list items.
+      accessibility={{ container: document.body }}
+    >
+      <SortableContext
+        items={projects.map((project) => project.id)}
+        strategy={verticalListSortingStrategy}
+      >
+        {projects.map((project, index) => (
+          <ProjectLink
+            key={project.id}
+            team={team}
+            project={project}
+            above={projects[index - 1]}
+            below={projects[index + 1]}
+            draggable={projects.length > 1}
+            onMove={(overId) => move(project.id, overId)}
+            pathname={pathname}
+            search={search}
+          />
+        ))}
+      </SortableContext>
+    </DndContext>
   );
 }
 
@@ -313,16 +429,8 @@ function TeamItem({ team, above, below, draggable, onMove, pathname, search }: T
               </SidebarMenuAction>
             </CollapsibleTrigger>
             <CollapsibleContent>
-              <SidebarMenuSub>
-                {team.projects.map((project) => (
-                  <ProjectLink
-                    key={project.id}
-                    team={team}
-                    project={project}
-                    pathname={pathname}
-                    search={search}
-                  />
-                ))}
+              <SidebarMenuSub aria-label={`${team.name} projects`}>
+                <ProjectList team={team} pathname={pathname} search={search} />
               </SidebarMenuSub>
             </CollapsibleContent>
           </>
@@ -353,13 +461,6 @@ function TeamList({
     const next = moveTeam(allTeams, activeId, overId);
     if (next) reorder.mutate(next);
   };
-  // dnd-kit stops the click that ends a drag before React sees it, but not its default action: the
-  // dropped team's link would open as a full page load. Cancel that click (if one comes).
-  const swallowClick = () => {
-    const prevent = (event: MouseEvent) => event.preventDefault();
-    window.addEventListener('click', prevent, { capture: true, once: true });
-    setTimeout(() => window.removeEventListener('click', prevent, { capture: true }), 300);
-  };
   const onDragEnd = ({ active, over }: DragEndEvent) => {
     swallowClick();
     if (over) move(String(active.id), String(over.id));
@@ -370,6 +471,8 @@ function TeamList({
       collisionDetection={closestCenter}
       onDragEnd={onDragEnd}
       onDragCancel={swallowClick}
+      // Its live region and instructions go outside the list: a <ul> holds only list items.
+      accessibility={{ container: document.body }}
     >
       <SortableContext items={teams.map((team) => team.id)} strategy={verticalListSortingStrategy}>
         {teams.map((team, index) => (

@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import { idSchema } from '@shared/schemas/common';
 import {
+  reorderMyProjectsInputSchema,
   reorderMyTeamsInputSchema,
   securityLogQuerySchema,
   updateMyTeamInputSchema,
@@ -10,10 +11,11 @@ import type { AppEnv } from '../context';
 import { validateJson, validateParams, validateQuery } from '../lib/validate';
 import { requireActor } from '../middleware/actor';
 import { listSecurityLog } from '../services/activity';
-import { getMe, reorderMyTeams, updateMyTeam } from '../services/users';
+import { getMe, reorderMyProjects, reorderMyTeams, updateMyTeam } from '../services/users';
 
 /**
- * Current user: GET /me, GET /me/security-log, PUT /me/teams/order, PATCH /me/teams/:teamId.
+ * Current user: GET /me, GET /me/security-log, PUT /me/teams/order, PATCH /me/teams/:teamId,
+ * PUT /me/teams/:teamId/projects/order.
  * Owner: core module. Paths are relative to /api and declared in full in this file.
  */
 export const meRoutes = new Hono<AppEnv>();
@@ -36,5 +38,21 @@ meRoutes.patch(
   (c) =>
     c.json(
       updateMyTeam(c.var.deps, requireActor(c), c.req.valid('param').teamId, c.req.valid('json')),
+    ),
+);
+
+// BAT#27: your order of a team's projects (they only move within their team).
+meRoutes.put(
+  '/me/teams/:teamId/projects/order',
+  validateParams(z.object({ teamId: idSchema })),
+  validateJson(reorderMyProjectsInputSchema),
+  (c) =>
+    c.json(
+      reorderMyProjects(
+        c.var.deps,
+        requireActor(c),
+        c.req.valid('param').teamId,
+        c.req.valid('json'),
+      ),
     ),
 );

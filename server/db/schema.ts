@@ -1758,3 +1758,25 @@ export const projectMemberSettings = sqliteTable(
     index('project_member_settings_project_idx').on(t.projectId),
   ],
 );
+
+/**
+ * BAT#27: a person's own order of a team's projects in the sidebar and `GET /api/me` (projects
+ * only move within their team; the team order is `team_member.sidebar_position`, BAT-36). Projects
+ * without a row (new, or never arranged) follow, by name.
+ */
+export const sidebarProjectOrder = sqliteTable(
+  'sidebar_project_order',
+  {
+    userId: text('user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    projectId: text('project_id')
+      .notNull()
+      .references(() => project.id, { onDelete: 'cascade' }),
+    position: integer('position').notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.userId, t.projectId] }),
+    index('sidebar_project_order_project_idx').on(t.projectId),
+  ],
+);

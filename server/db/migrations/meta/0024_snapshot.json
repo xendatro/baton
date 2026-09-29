@@ -1,8 +1,8 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "38b7ed71-5d91-470f-8d12-aac444d31705",
-  "prevId": "3445f53d-26b4-4a1e-8a84-ba00948b5eba",
+  "id": "e91fca4a-7b39-4261-b154-6a26b0a2a734",
+  "prevId": "38b7ed71-5d91-470f-8d12-aac444d31705",
   "tables": {
     "account": {
       "name": "account",
@@ -795,6 +795,55 @@
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false
+        },
+        "held_at": {
+          "name": "held_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "run_outcome": {
+          "name": "run_outcome",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "run_error": {
+          "name": "run_error",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "run_output": {
+          "name": "run_output",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "run_ended_at": {
+          "name": "run_ended_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "cleared_at": {
+          "name": "cleared_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "cleared_reason": {
+          "name": "cleared_reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
         }
       },
       "indexes": {
@@ -1302,6 +1351,14 @@
           "autoincrement": false,
           "default": "''"
         },
+        "reported_model": {
+          "name": "reported_model",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "''"
+        },
         "effort": {
           "name": "effort",
           "type": "text",
@@ -1320,6 +1377,30 @@
         },
         "tokens_out": {
           "name": "tokens_out",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        },
+        "tokens_cache_read": {
+          "name": "tokens_cache_read",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        },
+        "tokens_cache_write": {
+          "name": "tokens_cache_write",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        },
+        "tokens_reasoning": {
+          "name": "tokens_reasoning",
           "type": "integer",
           "primaryKey": false,
           "notNull": true,
@@ -1347,6 +1428,13 @@
           "type": "text",
           "primaryKey": false,
           "notNull": true,
+          "autoincrement": false
+        },
+        "error": {
+          "name": "error",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
           "autoincrement": false
         },
         "created_at": {

@@ -64,6 +64,12 @@ describe('project settings → Difficulty', { timeout: 30_000 }, () => {
     expect(names).toEqual(['Hard', 'Normal', 'Easy']);
     expect(screen.getByText('Hardest')).toBeVisible();
     expect(screen.getByText('Easiest')).toBeVisible();
+    // BAT#21: each person maps levels to models in their own settings for the project.
+    const intro = screen.getByText(/How hard a task is/);
+    expect(
+      within(intro).getByRole('link', { name: 'Your settings for this project' }),
+    ).toHaveAttribute('href', '/t/acme/p/WEB/me');
+    expect(screen.queryByText(/Account settings/)).toBeNull();
     expect(screen.queryByRole('button', { name: /^Move / })).toBeNull();
 
     // The grip is a focusable handle (the keyboard sensor reorders with Space and the arrows).

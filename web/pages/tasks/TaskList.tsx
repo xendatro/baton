@@ -13,6 +13,7 @@ import { RoleChip } from '@web/components/common/RoleChip';
 import { StatusBadge, StatusIcon } from '@web/components/common/StatusBadge';
 import { UnreadBadge } from '@web/components/common/UnreadBadge';
 import { AvatarStack } from '@web/components/common/UserAvatar';
+import { WorkingDot } from '@web/components/common/WorkingDot';
 import { Skeleton } from '@web/components/ui/skeleton';
 import { cn } from '@web/lib/utils';
 import type { ListOptions } from './filters';
@@ -181,6 +182,7 @@ function Row({ task, statuses }: { task: TaskCard; statuses: readonly Status[] }
             >
               {task.title}
             </Link>
+            <WorkingDot working={task.agentWorking} />
             <UnreadBadge count={task.unreadCount} />
             {task.blocked ? <BlockedBadge blockers={task.blockers} /> : null}
             {task.labels.map((label) => (

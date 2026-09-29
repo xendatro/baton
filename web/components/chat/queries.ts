@@ -40,8 +40,7 @@ export function useChatMessages(type: ReplyParentType, id: string) {
       }),
     initialPageParam: undefined as string | undefined,
     getNextPageParam: (page) => page.olderCursor ?? undefined,
-    // Agents working on the item stop without a reply event now and then.
-    refetchInterval: 20_000,
+    // "… is working" follows `item.working_changed` (BAT#42); no polling needed.
   });
 }
 

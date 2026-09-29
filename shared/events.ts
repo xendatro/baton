@@ -54,6 +54,11 @@ export const LIVE_EVENT_TYPES = [
    * Ephemeral (never stored, no queries to refresh): clients show it for a few seconds.
    */
   'typing',
+  /**
+   * BAT#42: the agents working on an issue or task changed (a harness started or stopped running
+   * one of their jobs about it, or the agent answered); entity = the item.
+   */
+  'item.working_changed',
 ] as const;
 
 export type LiveEventType = (typeof LIVE_EVENT_TYPES)[number];

@@ -23,6 +23,7 @@ import { PageContainer } from '@web/components/common/PageContainer';
 import { RelativeTime } from '@web/components/common/RelativeTime';
 import { Spinner } from '@web/components/common/Spinner';
 import { UserName } from '@web/components/common/UserName';
+import { WorkingDot } from '@web/components/common/WorkingDot';
 import { usePaletteCommands } from '@web/components/palette/registry';
 import { ActivitySheet } from '@web/components/replies/ActivitySheet';
 import { Button } from '@web/components/ui/button';
@@ -211,6 +212,7 @@ function IssueDetail({
             <h1 className="min-w-0 grow basis-full text-xl leading-snug font-semibold tracking-tight break-words sm:basis-0 sm:text-2xl">
               {issue.title}{' '}
               <span className="font-normal text-muted-foreground">#{issue.number}</span>
+              <WorkingDot working={issue.agentWorking} className="ml-2 align-middle" />
             </h1>
           )}
           {editingTitle ? null : (

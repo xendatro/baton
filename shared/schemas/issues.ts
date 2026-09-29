@@ -8,7 +8,13 @@ import {
   timestampSchema,
   titleSchema,
 } from './common';
-import { attachmentSchema, reactionSummarySchema, userSummarySchema, viaKeySchema } from './core';
+import {
+  agentWorkingSchema,
+  attachmentSchema,
+  reactionSummarySchema,
+  userSummarySchema,
+  viaKeySchema,
+} from './core';
 
 /**
  * Wire contracts of the issues module (SPEC §1.7): forum-style issues, numbered per project
@@ -76,6 +82,8 @@ export const issueSummarySchema = z.object({
    * issue list.
    */
   unreadCount: z.number().int().nonnegative().optional(),
+  /** BAT#42: agents working on it right now (the pulsing dot); null when none. */
+  agentWorking: agentWorkingSchema.nullable().optional(),
 });
 export type IssueSummary = z.infer<typeof issueSummarySchema>;
 

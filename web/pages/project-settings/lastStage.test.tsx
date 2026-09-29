@@ -31,7 +31,6 @@ const only: Status = {
   isDefault: true,
   taskCount: 0,
   rules: { ...DEFAULT_STAGE_RULES, allowCreate: true },
-  defaultDifficultyId: null,
 };
 
 const pipeline: Pipeline = {
@@ -93,7 +92,6 @@ function setup() {
     '/api/projects/p1': project,
     '/api/projects/p1/statuses': () => jsonResponse({ items: statuses }),
     '/api/projects/p1/pipelines': { items: [pipeline] },
-    '/api/projects/p1/difficulties': { items: [] },
     '/api/projects/p1/roles': { items: [] },
     '/api/teams/t1/roles': { items: [] },
     '/api/teams/t1/members': { items: [] },

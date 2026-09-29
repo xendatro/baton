@@ -1,10 +1,10 @@
 /**
  * `/t/:team/p/:key/settings/pipelines` (optionally one pipeline's stages, highlighting one stage),
- * `…/labels` or `…/difficulty`.
+ * or `…/labels`.
  */
 export function projectSettingsPath(
   projectBase: string,
-  section: 'pipelines' | 'labels' | 'difficulty',
+  section: 'pipelines' | 'labels',
   statusId?: string,
   /** BAT-25: the pipeline whose statuses to show. */
   pipelineId?: string,

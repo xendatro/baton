@@ -1,64 +1,142 @@
+import { stepAvailabilityOf } from './modelOptions';
 import {
+  AGENT_RUNNER_LIMITS,
   DEFAULT_CHAIN,
+  HARNESS_LABELS,
   type Chain,
-  type DefaultMapping,
+  type ChainEntry,
   type HarnessId,
-  type ProjectMapping,
+  type ModelOptions,
+  type ModelSource,
 } from './schemas/agentRunner';
 
 /**
- * Which model chain runs a task (BAT-24): the person's mapping for the task's difficulty level in
- * its project; else the closest mapped level below it, then above it; else their account default
- * for a level of that name; else their account default chain. Pure, so the server (job briefs)
- * and the desktop app agree.
+ * Which model chain runs a job (difficulty is gone, 2026-09-29), in this order:
+ * 1. the model the owner chose when approving the request (exactly that, no fallback);
+ * 2. the requester's suggestion, when one of the owner's computers has it;
+ * 3. the stage's suggestion, likewise;
+ * 4. the owner's default for the project;
+ * 5. the owner's account default (else Baton's `DEFAULT_CHAIN`).
+ * A suggestion that runs goes first, with the default (4, else 5) after it as the fallback.
+ * Pure, so the server (job briefs, the Requests page) and the web agree.
  */
 
-export interface ChainLevel {
-  id: string;
-  name: string;
-  /** Easiest first. */
-  position: number;
+export interface ResolveJobModelInput {
+  /** The model chosen when approving the request (`agent_job.model_override`). */
+  override?: Chain | null;
+  /** What the person who started the job suggested, and who ("@caden"). */
+  requester?: { step: ChainEntry; by: string } | null;
+  /** What the job's stage suggests, and the stage's name. */
+  stage?: { step: ChainEntry; stage: string } | null;
+  /** The owner's own default for the project, and the project's name. */
+  project?: { chain: Chain; name: string } | null;
+  /** The owner's account default. */
+  account?: Chain | null;
+  /**
+   * What the owner's computers report (`GET /api/me/agent/model-options`). Null or empty: nothing
+   * can be said (no desktop app reported yet), so suggestions are taken as they are.
+   */
+  options?: ModelOptions | null;
 }
 
 export interface ResolvedChain {
   chain: Chain;
-  /** Where it came from, in words: "Hard", "Normal (closest mapped level)", "account default". */
+  /** Where it came from, in words: "suggested by @caden", "your default for API". */
   source: string;
+  modelSource: ModelSource;
+  /** Suggestions that were not used, with why. */
+  skipped: string[];
 }
 
-function usable(chain: Chain | undefined): chain is Chain {
-  return chain !== undefined && chain.length > 0;
+function usable(chain: Chain | null | undefined): chain is Chain {
+  return chain !== null && chain !== undefined && chain.length > 0;
 }
 
-export function resolveChain(input: {
-  /** The project's levels. */
-  levels: readonly ChainLevel[];
-  /** The task's level, null for none. */
-  difficultyId: string | null;
-  project: ProjectMapping | null;
-  defaults: DefaultMapping | null;
-}): ResolvedChain {
-  const defaultChain = usable(input.defaults?.chain) ? input.defaults.chain : DEFAULT_CHAIN;
-  const level = input.levels.find((candidate) => candidate.id === input.difficultyId);
-  if (!level) return { chain: defaultChain, source: 'account default' };
+function sameStep(a: ChainEntry, b: ChainEntry): boolean {
+  return (
+    a.harness === b.harness &&
+    a.model.trim().toLowerCase() === b.model.trim().toLowerCase() &&
+    a.effort.trim().toLowerCase() === b.effort.trim().toLowerCase()
+  );
+}
 
-  const mapped = input.project?.levels ?? {};
-  const own = mapped[level.id];
-  if (usable(own)) return { chain: own, source: level.name };
+/** "Codex · gpt-6-sol · high" (a default model or effort left out). */
+export function stepLabel(step: Pick<ChainEntry, 'harness' | 'model' | 'effort'>): string {
+  return [HARNESS_LABELS[step.harness], step.model.trim(), step.effort.trim()]
+    .filter(Boolean)
+    .join(' · ');
+}
 
-  const ordered = [...input.levels].sort((a, b) => a.position - b.position);
-  const below = ordered.filter((candidate) => candidate.position < level.position).reverse();
-  const above = ordered.filter((candidate) => candidate.position > level.position);
-  for (const candidate of [...below, ...above]) {
-    const chain = mapped[candidate.id];
-    if (usable(chain)) return { chain, source: `${candidate.name} (closest mapped level)` };
+/** `step` first, then `rest` without it, at most `AGENT_RUNNER_LIMITS.chain` entries. */
+export function withFirst(step: ChainEntry, rest: Chain): Chain {
+  return [step, ...rest.filter((entry) => !sameStep(entry, step))].slice(
+    0,
+    AGENT_RUNNER_LIMITS.chain,
+  );
+}
+
+/** The owner's default for a job: the project's own chain, else the account's. */
+export function defaultChainOf(input: Pick<ResolveJobModelInput, 'project' | 'account'>): {
+  chain: Chain;
+  source: string;
+  modelSource: ModelSource;
+} {
+  if (input.project && usable(input.project.chain)) {
+    return {
+      chain: input.project.chain,
+      source: `your default for ${input.project.name}`,
+      modelSource: 'project',
+    };
   }
+  return {
+    chain: usable(input.account) ? input.account : DEFAULT_CHAIN,
+    source: 'your account default',
+    modelSource: 'account',
+  };
+}
 
-  const byName = Object.entries(input.defaults?.levels ?? {}).find(
-    ([name]) => name.trim().toLowerCase() === level.name.trim().toLowerCase(),
-  )?.[1];
-  if (usable(byName)) return { chain: byName, source: `${level.name} (account default)` };
-  return { chain: defaultChain, source: 'account default' };
+export function resolveJobModel(input: ResolveJobModelInput): ResolvedChain {
+  if (usable(input.override)) {
+    return {
+      chain: input.override,
+      source: 'chosen by your owner when approving the request',
+      modelSource: 'approval',
+      skipped: [],
+    };
+  }
+  const fallback = defaultChainOf(input);
+  const skipped: string[] = [];
+  const candidates: Array<{ step: ChainEntry; source: string; modelSource: ModelSource }> = [];
+  if (input.requester) {
+    candidates.push({
+      step: input.requester.step,
+      source: `suggested by ${input.requester.by}`,
+      modelSource: 'requester',
+    });
+  }
+  if (input.stage) {
+    candidates.push({
+      step: input.stage.step,
+      source: `suggested by the stage ${input.stage.stage}`,
+      modelSource: 'stage',
+    });
+  }
+  for (const candidate of candidates) {
+    const availability = stepAvailabilityOf(input.options ?? undefined, candidate.step);
+    if (availability && !availability.available) {
+      skipped.push(
+        `${candidate.source} (${stepLabel(candidate.step)}), not used: ${availability.message ?? 'not available'}`,
+      );
+      continue;
+    }
+    return {
+      chain: withFirst(candidate.step, fallback.chain),
+      source: `${candidate.source}; then ${fallback.source}`,
+      modelSource: candidate.modelSource,
+      skipped,
+    };
+  }
+  return { ...fallback, skipped };
 }
 
 /**

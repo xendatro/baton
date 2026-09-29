@@ -80,9 +80,6 @@ export type Me = z.infer<typeof meSchema>;
 const projectSchema = z.object({
   id: z.string(),
   repoUrl: z.string().nullable().optional(),
-  difficulties: z
-    .array(z.object({ id: z.string(), name: z.string(), position: z.number() }))
-    .optional(),
 });
 
 export class BatonApi {

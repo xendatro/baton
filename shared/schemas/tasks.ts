@@ -102,15 +102,6 @@ export const taskAssigneesSchema = z.object({
 });
 export type TaskAssignees = z.infer<typeof taskAssigneesSchema>;
 
-/** A task's difficulty level, as cards and the task page show it. */
-export const taskDifficultySummarySchema = z.object({
-  id: z.string(),
-  name: z.string(),
-  color: z.string(),
-  position: z.number().int().nonnegative(),
-});
-export type TaskDifficultySummary = z.infer<typeof taskDifficultySummarySchema>;
-
 /** Who is working on the task: a (user, API key) pair; `via` is null for claims made on the web. */
 export const taskClaimSchema = z.object({
   user: userSummarySchema,
@@ -141,8 +132,6 @@ export const taskSummarySchema = z.object({
   /** `YYYY-MM-DD`. */
   dueDate: z.string().nullable(),
   labels: z.array(taskLabelSummarySchema),
-  /** Difficulty level (BAT-24); null: none, "use my default". Optional for older fixtures. */
-  difficulty: taskDifficultySummarySchema.nullable().optional(),
   assignees: taskAssigneesSchema,
   claim: taskClaimSchema.nullable(),
   blocked: z.boolean(),
@@ -417,8 +406,6 @@ export const createTaskInputSchema = z.object({
   /** Team roles (not `@everyone`). */
   assigneeRoleIds: idListSchema(TASK_LIMITS.assignees).optional(),
   labelIds: idListSchema(TASK_LIMITS.labels).optional(),
-  /** A difficulty level of the project (null or absent: none). */
-  difficultyId: idSchema.nullable().optional(),
   /** Tasks of the same project this one waits for. */
   blockedByTaskIds: idListSchema(TASK_LIMITS.blockers).optional(),
   issueLinks: z.array(issueLinkInputSchema).max(TASK_LIMITS.issueLinks).optional(),
@@ -442,11 +429,6 @@ export const updateTaskInputSchema = z
     assigneeUsers: idListChangeSchema(TASK_LIMITS.assignees).optional(),
     assigneeRoles: idListChangeSchema(TASK_LIMITS.assignees).optional(),
     labels: idListChangeSchema(TASK_LIMITS.labels).optional(),
-    /**
-     * A difficulty level of the project; null clears it. BAT-28: the difficulty of the task's
-     * current stage, or, together with `statusId`, of the stage it moves to.
-     */
-    difficultyId: idSchema.nullable().optional(),
     blockedBy: idListChangeSchema(TASK_LIMITS.blockers).optional(),
     issueLinks: issueLinksChangeSchema.optional(),
     /** Pending uploads to attach. */
@@ -473,11 +455,6 @@ export const moveTaskInputSchema = z.object({
   beforeId: idSchema.optional(),
   /** Evidence for the current stage's exit criteria (criterion id → text), saved first. */
   evidence: evidenceInputSchema.optional(),
-  /**
-   * BAT-28: the difficulty for the stage it moves to (null: none), over the default rules (its
-   * last value there, else the stage's default, else the current one).
-   */
-  difficultyId: idSchema.nullable().optional(),
   /** Owner/administrator: move past the stage rules (needs `reason`). */
   ...forceMoveFields,
 });

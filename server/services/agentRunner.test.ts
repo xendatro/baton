@@ -38,8 +38,7 @@ import {
   setModelMappings,
 } from './agentRunner';
 import { setTeamAgentAccess } from './agentAccess';
-import { listAgentRequests } from './agentRequests';
-import { listDifficulties } from './difficulties';
+import { approveAgentRequest, listAgentRequests } from './agentRequests';
 import { getTeamPresence } from './presence';
 import { createReply } from './replies';
 import { decideApproval } from './pipelines';
@@ -227,18 +226,11 @@ describe('runners', () => {
 });
 
 describe('job briefs, sessions and usage', () => {
-  it('brief the task, stage and trigger, with the chain for its difficulty and the session to resume', async () => {
+  it('brief the task, stage and trigger, with the project’s default chain and the session to resume', async () => {
     const runner = register();
-    const levels = listDifficulties(ctx.deps, ethanWeb, projectId).items;
-    const hard = levels.find((level) => level.name === 'Hard');
-    updateTask(ctx.deps, ethanWeb, task.id, { difficultyId: hard?.id ?? null });
     setModelMappings(ctx.deps, ethanWeb, {
-      default: { chain: [{ harness: 'claude', model: 'sonnet', effort: '' }], levels: {} },
-      projects: {
-        [projectId]: {
-          levels: { [hard?.id ?? '']: [{ harness: 'codex', model: 'gpt-5', effort: 'high' }] },
-        },
-      },
+      default: { chain: [{ harness: 'claude', model: 'sonnet', effort: '' }] },
+      projects: { [projectId]: { chain: [{ harness: 'codex', model: 'gpt-5', effort: 'high' }] } },
     });
     mention(ethanWeb, 'Build the runner please @ethan-ai');
     const [job] = (await nextRunnerJobs(ctx.deps, runnerKey, runner.id, 0)).jobs;
@@ -250,16 +242,25 @@ describe('job briefs, sessions and usage', () => {
     });
 
     const brief = jobBrief(ctx.deps, runnerKey, jobId, runner.id);
+    const projectName = ctx.db.orm
+      .select({ name: s.project.name })
+      .from(s.project)
+      .where(eq(s.project.id, projectId))
+      .get()?.name;
     expect(brief).toMatchObject({
-      difficulty: { name: 'Hard' },
+      difficulty: null,
       chain: [{ harness: 'codex', model: 'gpt-5', effort: 'high' }],
-      chainSource: 'Hard',
+      chainSource: `your default for ${projectName}`,
+      modelSource: 'project',
       resume: { codex: 'thread-123' },
       target: { ref: 'baton/BAT-1', title: 'Desktop app' },
     });
     expect(brief.prompt).toContain('You are **@ethan-ai**, the Baton agent of **@ethan**');
     expect(brief.prompt).toContain('Build the runner please @ethan-ai');
-    expect(brief.prompt).toContain('- Difficulty: Hard');
+    expect(brief.prompt).toContain(
+      `- Model: Codex · gpt-5 · high (your default for ${projectName})`,
+    );
+    expect(brief.prompt).not.toContain('Difficulty');
     expect(brief.prompt).toContain(`complete_job { jobId: "${jobId}" }`);
     // Another machine starts fresh.
     const laptop = registerRunner(ctx.deps, runnerKey, {
@@ -306,66 +307,206 @@ describe('job briefs, sessions and usage', () => {
     ]);
   });
 
-  it('picks the chain from the difficulty of the stage the job is for (BAT-28)', async () => {
-    const runner = register();
-    const levels = listDifficulties(ctx.deps, ethanWeb, projectId).items;
-    const byName = (name: string) => levels.find((level) => level.name === name)?.id ?? '';
-    const [open, done] = ctx.db.orm
-      .select()
-      .from(s.status)
-      .where(eq(s.status.projectId, projectId))
-      .orderBy(s.status.position)
-      .all();
-    if (!open || !done) throw new Error('statuses');
-    setModelMappings(ctx.deps, ethanWeb, {
-      default: { chain: [{ harness: 'claude', model: 'sonnet', effort: '' }], levels: {} },
-      projects: {
-        [projectId]: {
-          levels: {
-            [byName('Hard')]: [{ harness: 'claude', model: 'opus', effort: 'high' }],
-            [byName('Easy')]: [{ harness: 'claude', model: 'haiku', effort: '' }],
+  describe('model resolution: approval > requester’s suggestion > stage’s > project > account', () => {
+    /** A runner whose Claude Code reports opus, sonnet and haiku (no Codex here). */
+    function reportingRunner() {
+      return registerRunner(ctx.deps, runnerKey, {
+        machineId: 'machine-msi-1',
+        machineName: 'MSI',
+        harnesses: [
+          {
+            id: 'claude',
+            version: '2.1.0',
+            models: ['opus', 'sonnet', 'haiku'].map((id) => ({
+              id,
+              label: null,
+              efforts: ['low', 'high'],
+            })),
+            efforts: ['low', 'high'],
           },
-        },
-      },
+        ],
+        projectIds: [projectId],
+      }).runner;
+    }
+
+    function stages() {
+      const [open, done] = ctx.db.orm
+        .select()
+        .from(s.status)
+        .where(eq(s.status.projectId, projectId))
+        .orderBy(s.status.position)
+        .all();
+      if (!open || !done) throw new Error('statuses');
+      return { open, done };
+    }
+
+    function queueStageJob(statusId: string, stage: string) {
+      ctx.db.write((tx) =>
+        queueJobs(tx, [
+          {
+            agentUserId: runnerKey.userId,
+            teamId,
+            projectId,
+            kind: 'approval',
+            targetType: 'task',
+            targetId: task.id,
+            payload: { stage, statusId },
+            triggeredById: ethan.id,
+          },
+        ]),
+      );
+    }
+
+    const briefOf = async (runnerId: string, kind: string) => {
+      const jobs = (await nextRunnerJobs(ctx.deps, runnerKey, runnerId, 0)).jobs;
+      const job = jobs.find((item) => item.kind === kind);
+      expect(job).toBeDefined();
+      return jobBrief(ctx.deps, runnerKey, job?.jobId ?? '', runnerId);
+    };
+
+    beforeEach(() => {
+      setModelMappings(ctx.deps, ethanWeb, {
+        default: { chain: [{ harness: 'claude', model: 'sonnet', effort: '' }] },
+        projects: {},
+      });
     });
-    // Hard in Open, Easy once in Done.
-    updateTask(ctx.deps, ethanWeb, task.id, { difficultyId: byName('Hard') });
-    updateTask(ctx.deps, ethanWeb, task.id, { statusId: done.id, difficultyId: byName('Easy') });
-    // A job for the Open stage (e.g. an approval asked there) and one for the task as it is now.
-    ctx.db.write((tx) =>
-      queueJobs(tx, [
-        {
-          agentUserId: runnerKey.userId,
-          teamId,
-          projectId,
-          kind: 'approval',
-          targetType: 'task',
-          targetId: task.id,
-          payload: { stage: 'Open', statusId: open.id },
-          triggeredById: ethan.id,
+
+    it('uses the account default, then the project’s own default', async () => {
+      const runner = reportingRunner();
+      const { open } = stages();
+      queueStageJob(open.id, 'Open');
+      const first = await briefOf(runner.id, 'approval');
+      expect(first).toMatchObject({
+        chain: [{ model: 'sonnet' }],
+        modelSource: 'account',
+        chainSource: 'your account default',
+      });
+      finishJob(ctx.deps, runnerKey, first.jobId, 'complete', { usage: [] });
+      setModelMappings(ctx.deps, ethanWeb, {
+        default: { chain: [{ harness: 'claude', model: 'sonnet', effort: '' }] },
+        projects: {
+          [projectId]: { chain: [{ harness: 'claude', model: 'opus', effort: 'high' }] },
         },
-      ]),
-    );
-    mention(ethanWeb, 'Have a look @ethan-ai');
-    const jobs = (await nextRunnerJobs(ctx.deps, runnerKey, runner.id, 0)).jobs;
-    const forOpen = jobBrief(
-      ctx.deps,
-      runnerKey,
-      jobs.find((job) => job.kind === 'approval')?.jobId ?? '',
-      runner.id,
-    );
-    expect(forOpen).toMatchObject({
-      difficulty: { name: 'Hard' },
-      chain: [{ model: 'opus' }],
+      });
+      queueStageJob(open.id, 'Open');
+      expect(await briefOf(runner.id, 'approval')).toMatchObject({
+        chain: [{ model: 'opus' }],
+        modelSource: 'project',
+      });
     });
-    expect(forOpen.prompt).toContain('- Difficulty: Hard (the task’s difficulty in Open');
-    const current = jobBrief(
-      ctx.deps,
-      runnerKey,
-      jobs.find((job) => job.kind === 'mention')?.jobId ?? '',
-      runner.id,
-    );
-    expect(current).toMatchObject({ difficulty: { name: 'Easy' }, chain: [{ model: 'haiku' }] });
+
+    it('takes the stage’s suggestion when a computer has it, before the defaults', async () => {
+      const runner = reportingRunner();
+      const { open } = stages();
+      updateStatus(ctx.deps, ethanWeb, open.id, {
+        rules: { suggestedModel: { harness: 'claude', model: 'haiku', effort: 'low' } },
+      });
+      queueStageJob(open.id, 'Open');
+      const brief = await briefOf(runner.id, 'approval');
+      expect(brief.chain).toEqual([
+        { harness: 'claude', model: 'haiku', effort: 'low' },
+        { harness: 'claude', model: 'sonnet', effort: '' },
+      ]);
+      expect(brief.modelSource).toBe('stage');
+      expect(brief.chainSource).toBe('suggested by the stage Open; then your account default');
+      // The job carries it.
+      const row = ctx.db.orm.select().from(s.agentJob).where(eq(s.agentJob.id, brief.jobId)).get();
+      expect(row?.payload.stageModel).toEqual({ harness: 'claude', model: 'haiku', effort: 'low' });
+    });
+
+    it('lets a requester’s suggestion win over the stage’s, and skips one no computer has', async () => {
+      const runner = reportingRunner();
+      openAgentAccess(ctx.db, ethan.id, teamId);
+      createReply(ctx.deps, cadenWeb, {
+        parentType: 'task',
+        parentId: task.id,
+        body: 'Plan this @ethan-ai',
+        suggestedModel: { harness: 'claude', model: 'opus', effort: 'high' },
+      });
+      const brief = await briefOf(runner.id, 'mention');
+      expect(brief).toMatchObject({
+        chain: [{ model: 'opus' }, { model: 'sonnet' }],
+        modelSource: 'requester',
+        chainSource: 'suggested by @caden; then your account default',
+      });
+      expect(brief.prompt).toContain('- Model: Claude Code · opus · high (suggested by @caden');
+      finishJob(ctx.deps, runnerKey, brief.jobId, 'complete', { usage: [] });
+
+      // Codex isn't on any of Ethan's computers: his default runs, and the brief says why.
+      createReply(ctx.deps, cadenWeb, {
+        parentType: 'task',
+        parentId: task.id,
+        body: 'Now with Sol @ethan-ai',
+        suggestedModel: { harness: 'codex', model: 'gpt-6-sol', effort: 'high' },
+      });
+      const skipped = await briefOf(runner.id, 'mention');
+      expect(skipped.chain[0]).toMatchObject({ harness: 'claude', model: 'sonnet' });
+      expect(skipped.modelSource).not.toBe('requester');
+      expect(skipped.prompt).toContain(
+        'Not used: suggested by @caden (Codex · gpt-6-sol · high), not used: You don’t have Codex set up on any of your computers',
+      );
+    });
+
+    it('runs exactly what the owner chose when approving, and shows the suggestion on the request', async () => {
+      const runner = reportingRunner();
+      // Caden may only ask (the built-in default).
+      createReply(ctx.deps, cadenWeb, {
+        parentType: 'task',
+        parentId: task.id,
+        body: 'Could you @ethan-ai',
+        suggestedModel: { harness: 'claude', model: 'opus', effort: 'high' },
+      });
+      const [request] = listAgentRequests(ctx.deps, ethanWeb).requests;
+      expect(request).toMatchObject({
+        suggestedModel: { harness: 'claude', model: 'opus', effort: 'high' },
+        suggestedModelFrom: 'requester',
+        // The "Run with" picker starts at the suggestion, which Ethan's computers have.
+        suggestedChain: [{ model: 'opus' }, { model: 'sonnet' }],
+        ranWith: null,
+      });
+      approveAgentRequest(ctx.deps, ethanWeb, request?.jobId ?? '', {
+        model: { harness: 'claude', model: 'haiku', effort: 'low' },
+      });
+      const brief = await briefOf(runner.id, 'mention');
+      expect(brief).toMatchObject({
+        chain: [{ harness: 'claude', model: 'haiku', effort: 'low' }],
+        modelSource: 'approval',
+      });
+      // What ran shows on the request and on the task.
+      finishJob(ctx.deps, runnerKey, brief.jobId, 'complete', {
+        usage: [
+          {
+            harness: 'claude',
+            model: 'haiku',
+            effort: 'low',
+            reportedModel: 'claude-haiku-5',
+            costUsd: 0.01,
+            durationMs: 1_000,
+            outcome: 'done',
+          },
+        ],
+      });
+      expect(listAgentRequests(ctx.deps, ethanWeb).requests[0]?.ranWith).toEqual({
+        harness: 'claude',
+        model: 'claude-haiku-5',
+        effort: 'low',
+      });
+      const res = await ctx.app.request(`/api/agent-runs?itemType=task&itemId=${task.id}`, {
+        headers: bearer(createApiKey(ctx.db, { userId: caden.id, name: 'Web' }).key),
+      });
+      expect(res.status).toBe(200);
+      expect(await res.json()).toMatchObject({
+        runs: [
+          {
+            jobId: brief.jobId,
+            status: 'done',
+            agent: { username: 'ethan-ai' },
+            triggeredBy: { username: 'caden' },
+            ranWith: { harness: 'claude', model: 'claude-haiku-5', effort: 'low' },
+          },
+        ],
+      });
+    });
   });
 
   it('puts the send-back reason at the top of the brief (BAT-27)', async () => {
@@ -437,7 +578,7 @@ describe('job briefs, sessions and usage', () => {
       { outcome: 'done', jobs: 1 },
       { outcome: 'out_of_usage', jobs: 1 },
     ]);
-    expect(stats.byDifficulty).toMatchObject([{ difficulty: 'None', jobs: 1 }]);
+    expect(stats).not.toHaveProperty('byDifficulty');
   });
 
   it('holds killed runs for the owner’s OK, and leaves jobs the agent released itself alone', async () => {
@@ -536,7 +677,6 @@ describe('job briefs, sessions and usage', () => {
             { harness: 'codex', model: 'gpt-5', effort: 'high' },
             { harness: 'claude', model: 'opus', effort: 'high' },
           ],
-          levels: {},
         },
         projects: {},
       });
@@ -547,14 +687,14 @@ describe('job briefs, sessions and usage', () => {
         { harness: 'codex', model: 'gpt-5', effort: 'high' },
       ]);
       expect(brief.chainSource).toBe(
-        'account default; Claude Code first: it has been working on this task',
+        'your account default; Claude Code first: it has been working on this task',
       );
     });
 
     it('uses the harness’s defaults when the chain doesn’t have it, and a stored session first', async () => {
       const runner = register();
       setModelMappings(ctx.deps, ethanWeb, {
-        default: { chain: [{ harness: 'codex', model: '', effort: '' }], levels: {} },
+        default: { chain: [{ harness: 'codex', model: '', effort: '' }] },
         projects: {},
       });
       const opened = taskOpenedBy('Claude');
@@ -571,7 +711,7 @@ describe('job briefs, sessions and usage', () => {
       });
       const brief = jobBrief(ctx.deps, runnerKey, jobId, runner.id);
       expect(brief.chain).toEqual([{ harness: 'codex', model: '', effort: '' }]);
-      expect(brief.chainSource).toBe('account default');
+      expect(brief.chainSource).toBe('your account default');
       expect(brief.resume).toEqual({ codex: 'thread-1' });
     });
 
@@ -623,10 +763,10 @@ describe('job briefs, sessions and usage', () => {
       expect(brief.chain[0]?.harness).toBe('claude');
     });
 
-    it('leaves other jobs’ chains to the difficulty', async () => {
+    it('leaves other jobs’ chains to the defaults', async () => {
       const runner = register();
       setModelMappings(ctx.deps, ethanWeb, {
-        default: { chain: [{ harness: 'codex', model: '', effort: '' }], levels: {} },
+        default: { chain: [{ harness: 'codex', model: '', effort: '' }] },
         projects: {},
       });
       const opened = taskOpenedBy('Claude');
@@ -668,20 +808,33 @@ describe('job briefs, sessions and usage', () => {
     expect(runnerHeartbeat(ctx.deps, runnerKey, register().id, { running: 0 }).paused).toBe(true);
   });
 
-  it('keeps mappings personal and checks their levels', async () => {
+  it('keeps default chains personal, per project, and only for projects you can see', async () => {
     expect(getModelMappings(ctx.deps, cadenWeb).default.chain).toEqual([
       { harness: 'claude', model: 'opus', effort: 'high' },
     ]);
+    const sonnet = [{ harness: 'claude' as const, model: 'sonnet', effort: '' }];
+    setModelMappings(ctx.deps, ethanWeb, {
+      default: { chain: sonnet },
+      projects: { [projectId]: { chain: [{ harness: 'codex', model: '', effort: '' }] } },
+    });
+    expect(getModelMappings(ctx.deps, ethanWeb)).toEqual({
+      default: { chain: sonnet },
+      projects: { [projectId]: { chain: [{ harness: 'codex', model: '', effort: '' }] } },
+    });
+    expect(getModelMappings(ctx.deps, cadenWeb).projects).toEqual({});
+    // Left out: the project uses the account default again.
+    setModelMappings(ctx.deps, ethanWeb, { default: { chain: sonnet }, projects: {} });
+    expect(getModelMappings(ctx.deps, ethanWeb).projects).toEqual({});
+    const other = createTeam(ctx.db, { ownerId: caden.id, slug: 'other' }).team;
+    const hidden = createProject(ctx.db, { teamId: other.id, key: 'HID', createdById: caden.id });
     expect(
       await failure(() =>
         setModelMappings(ctx.deps, ethanWeb, {
-          default: { chain: [], levels: {} },
-          projects: {
-            [projectId]: { levels: { nope: [{ harness: 'claude', model: '', effort: '' }] } },
-          },
+          default: { chain: [] },
+          projects: { [hidden.project.id]: { chain: sonnet } },
         }),
       ),
-    ).toBe('validation_failed');
+    ).toBe('not_found');
   });
 
   it('serves the app over REST with an API key', async () => {

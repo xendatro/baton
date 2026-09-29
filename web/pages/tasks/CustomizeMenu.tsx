@@ -1,5 +1,4 @@
 import {
-  GaugeIcon,
   KanbanSquareIcon,
   MoreHorizontalIcon,
   Settings2Icon,
@@ -78,14 +77,6 @@ export function CustomizeMenu({
             <Link to={projectSettingsPath(projectBase, 'labels')}>
               <TagsIcon aria-hidden="true" />
               Edit labels
-            </Link>
-          </DropdownMenuItem>
-        ) : null}
-        {canManageLabels ? (
-          <DropdownMenuItem asChild>
-            <Link to={projectSettingsPath(projectBase, 'difficulty')}>
-              <GaugeIcon aria-hidden="true" />
-              Edit difficulty levels
             </Link>
           </DropdownMenuItem>
         ) : null}

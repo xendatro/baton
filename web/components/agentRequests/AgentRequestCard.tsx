@@ -10,6 +10,7 @@ import {
   type ModelOptions,
 } from '@shared/schemas/agentRunner';
 import { RelativeTime } from '@web/components/common/RelativeTime';
+import { ranWithText } from '@web/lib/agentModels';
 import { Spinner } from '@web/components/common/Spinner';
 import { stepAvailabilityOf } from '@shared/modelOptions';
 import { ModelStepPicker } from '@web/components/pickers/ModelStepPicker';
@@ -25,8 +26,9 @@ import { useApproveRequest, useDeclineRequest, useModelOptions } from './queries
 /**
  * A request to start the viewer's agent, as a card: the agent's question ("Can I reply to Caden’s
  * message here?"), who asked and when, the item and the message that asked (with links), and
- * **Approve** with **Run with** (harness, model and effort from what your computers report; the
- * suggestion is your mapping for the project) or **Decline** with an optional reason the
+ * **Approve** with **Run with** (harness, model and effort from what your computers report; it
+ * starts from the requester's or stage's suggestion when you have it, else your default for the
+ * project), the suggestion itself ("Caden suggests …"), or **Decline** with an optional reason the
  * requester sees. Used by the Requests page and, `compact`, inline in a conversation (only its
  * owner gets cards: `useAgentRequestsFor(item).mine`).
  */
@@ -166,6 +168,7 @@ export function AgentRequestCard({
         </blockquote>
       ) : null}
 
+      <SuggestionLine request={request} options={modelOptions} />
       {pending ? (
         <div className="grid gap-2">
           <div className="flex flex-wrap items-start gap-2">
@@ -179,9 +182,7 @@ export function AgentRequestCard({
             />
           </div>
           {sameStep(step, suggested) ? (
-            <p className="text-xs text-muted-foreground">
-              Suggested from your models for this project ({request.suggestedSource}).
-            </p>
+            <p className="text-xs text-muted-foreground">Starts from {request.suggestedSource}.</p>
           ) : null}
           {declining ? (
             <div className="grid gap-1.5">
@@ -271,6 +272,31 @@ function StatusBadge({ request }: { request: AgentRequest }) {
   );
 }
 
+/** "Caden suggests Codex · gpt-6-sol · high" (or the stage), and whether you have it. */
+function SuggestionLine({
+  request,
+  options,
+}: {
+  request: AgentRequest;
+  options: ModelOptions | undefined;
+}) {
+  const model = request.suggestedModel;
+  if (!model) return null;
+  const who =
+    request.suggestedModelFrom === 'stage'
+      ? `The stage${request.stage ? ` ${request.stage}` : ''}`
+      : (request.requester?.name ?? 'Someone');
+  const availability = request.status === 'pending' ? stepAvailabilityOf(options, model) : null;
+  return (
+    <p className="text-xs text-muted-foreground" data-testid="request-suggestion">
+      {who} suggests <span className="font-medium text-foreground">{stepText(model)}</span>
+      {availability && !availability.available
+        ? ` — ${availability.message ?? 'not on your computers'}, so it starts from your default.`
+        : null}
+    </p>
+  );
+}
+
 function DecidedLine({ request }: { request: AgentRequest }) {
   const when = request.decidedAt ? (
     <>
@@ -283,7 +309,11 @@ function DecidedLine({ request }: { request: AgentRequest }) {
     return (
       <p className="text-xs">
         Approved{when}
-        {model ? ` · runs with ${stepText(model)}` : ' · runs with your models for the project'}
+        {request.ranWith
+          ? ` · ran with ${ranWithText(request.ranWith)}`
+          : model
+            ? ` · runs with ${stepText(model)}`
+            : ` · runs with ${request.suggestedChain[0] ? stepText(request.suggestedChain[0]) : 'your default'}`}
       </p>
     );
   }

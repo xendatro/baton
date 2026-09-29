@@ -38,12 +38,7 @@ import {
 } from 'react';
 import { Link, useNavigate } from 'react-router';
 import type { Status } from '@shared/schemas/projects';
-import {
-  taskSchema,
-  type BoardColumn,
-  type BoardResponse,
-  type TaskCard,
-} from '@shared/schemas/tasks';
+import { type BoardColumn, type BoardResponse, type TaskCard } from '@shared/schemas/tasks';
 import { FinishedMark } from '@web/components/common/FinishedMark';
 import { StatusIcon } from '@web/components/common/StatusBadge';
 import { MenuRow } from '@web/components/layout/SidebarMenus';
@@ -54,7 +49,6 @@ import {
   ContextMenuTrigger,
 } from '@web/components/ui/context-menu';
 import { Skeleton } from '@web/components/ui/skeleton';
-import { api } from '@web/lib/api';
 import { cn } from '@web/lib/utils';
 import { ColumnMenu } from './CustomizeMenu';
 import {
@@ -66,7 +60,6 @@ import {
   type Layout,
 } from './helpers';
 import type { MoveVariables } from './queries';
-import type { DifficultyLevel } from './DifficultySelect';
 import { SendBackDialog, type SendBackStage } from './SendBackDialog';
 import { TaskCardBody } from './TaskCard';
 import { TaskContextMenu } from './TaskCardMenu';
@@ -130,8 +123,6 @@ export interface BoardProps {
   editStatusHref?: (statusId: string) => string;
   /** BAT-25, the "All" view of several pipelines: each column's pipeline, above its name. */
   pipelineNameOf?: (pipelineId: string | undefined) => string | undefined;
-  /** BAT-28: the project's difficulty levels, for the difficulty of a move back. */
-  difficulties?: readonly DifficultyLevel[] | undefined;
 }
 
 export function Board({
@@ -144,7 +135,6 @@ export function Board({
   hint,
   editStatusHref,
   pipelineNameOf,
-  difficulties,
 }: BoardProps) {
   const [dragLayout, setDragLayout] = useState<Layout | null>(null);
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -319,35 +309,8 @@ export function Board({
       setSendingBack({
         move: { taskId: card.id, ...move },
         from: card.status.name,
-        back: targets.back.map((status) => ({
-          id: status.id,
-          name: status.name,
-          difficultyId: status.defaultDifficultyId ?? card.difficulty?.id ?? null,
-        })),
+        back: targets.back.map((status) => ({ id: status.id, name: status.name })),
       });
-      // BAT-28: the exact difficulty each stage would give it (its last one there) comes with the task.
-      if (difficulties?.length) {
-        void api.get(`/api/tasks/${encodeURIComponent(card.id)}`, { schema: taskSchema }).then(
-          (full) => {
-            const exact = full.stage?.canMoveTo?.back;
-            if (!exact) return;
-            setSendingBack((current) =>
-              current?.move.taskId === card.id
-                ? {
-                    ...current,
-                    back: current.back.map((stage) => ({
-                      ...stage,
-                      difficultyId:
-                        exact.find((item) => item.id === stage.id)?.difficultyId ??
-                        stage.difficultyId,
-                    })),
-                  }
-                : current,
-            );
-          },
-          () => undefined,
-        );
-      }
       return;
     }
     setSettling(move ? { layout: after, board } : null);
@@ -398,7 +361,6 @@ export function Board({
             pipelineName={pipelineNameOf?.(column.status.pipelineId)}
             forbidden={forbidden(column.status.id)}
             statuses={statuses}
-            difficulties={difficulties}
           />
         ))}
       </div>
@@ -408,8 +370,7 @@ export function Board({
         from={sendingBack?.from ?? ''}
         stages={sendingBack?.back ?? []}
         initialStageId={sendingBack?.move.statusId}
-        difficulties={difficulties?.length ? difficulties : undefined}
-        onConfirm={({ statusId, reason, difficultyId }) => {
+        onConfirm={({ statusId, reason }) => {
           const pending = sendingBack;
           if (!pending) return Promise.resolve();
           onMove({
@@ -423,7 +384,6 @@ export function Board({
                 }
               : {}),
             reason,
-            ...(difficultyId !== undefined ? { difficultyId } : {}),
           });
           return Promise.resolve();
         }}
@@ -483,7 +443,6 @@ interface ColumnProps {
   forbidden?: boolean;
   /** Every column's stage, for the cards' Move to menu. */
   statuses: readonly Status[];
-  difficulties?: readonly DifficultyLevel[] | undefined;
 }
 
 function Column({
@@ -499,7 +458,6 @@ function Column({
   pipelineName,
   forbidden = false,
   statuses,
-  difficulties,
 }: ColumnProps) {
   const navigate = useNavigate();
   const { status } = column;
@@ -579,7 +537,6 @@ function Column({
                 disabled={!canMove}
                 showPipeline={pipelineName !== undefined}
                 statuses={statuses}
-                difficulties={difficulties}
               />
             ) : null;
           })}
@@ -632,13 +589,11 @@ function SortableCard({
   disabled,
   showPipeline,
   statuses,
-  difficulties,
 }: {
   task: TaskCard;
   disabled: boolean;
   showPipeline: boolean;
   statuses: readonly Status[];
-  difficulties?: readonly DifficultyLevel[] | undefined;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: task.id,
@@ -651,12 +606,7 @@ function SortableCard({
       style={{ transform: CSS.Translate.toString(transform), transition }}
       className={cn(isDragging && 'opacity-40')}
     >
-      <TaskContextMenu
-        task={task}
-        statuses={statuses}
-        difficulties={difficulties}
-        disabled={isDragging}
-      >
+      <TaskContextMenu task={task} statuses={statuses} disabled={isDragging}>
         <Link
           ref={setNodeRef}
           to={task.path}

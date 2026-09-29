@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { principalRuleSchema, type Principal, type PrincipalRule } from '../principals';
-import { chainEntrySchema, chainSchema } from './agentRunner';
+import { chainEntrySchema, chainSchema, ranWithSchema } from './agentRunner';
 import { idSchema, timestampSchema } from './common';
 import { userSummarySchema } from './core';
 
@@ -173,9 +173,19 @@ export const agentRequestSchema = z.object({
     .nullable(),
   /** The pipeline stage the job is for, when a stage handed it over. */
   stage: z.string().nullable(),
-  /** What would run without a choice: the owner's mapping for the project (first = default). */
+  /**
+   * What runs without a choice (first = the "Run with" picker's starting point): the suggestion
+   * when one of the owner's computers has it, else the owner's default for the project, else
+   * their account default.
+   */
   suggestedChain: chainSchema,
   suggestedSource: z.string(),
+  /** The model suggested for this run (the requester's, else the stage's; null: none). */
+  suggestedModel: chainEntrySchema.nullable().optional(),
+  /** Who suggested it: the requester or the job's stage. */
+  suggestedModelFrom: z.enum(['requester', 'stage']).nullable().optional(),
+  /** The model its last run actually used (null: it hasn't run). */
+  ranWith: ranWithSchema.nullable().optional(),
   createdAt: timestampSchema,
   decidedAt: timestampSchema.nullable(),
   /** Why it was declined. */

@@ -13,15 +13,14 @@ import {
 import type { Actor, AppDeps } from '../context';
 import type { DbExecutor } from '../db';
 import * as s from '../db/schema';
-import { errors } from '../lib/errors';
 import { personActor } from './agents';
 import { emitAfterCommit } from './events';
 import { requireProject } from './projects';
 
 /**
  * Your settings for one project (BAT-29): notification overrides (`project_member_settings`) and
- * your models by the project's difficulty levels (`agent_project_mapping`, the same rows Settings
- * → Automatic agents used to edit). Personal: anyone who can see the project has their own, and
+ * your agent's default model chain there (`agent_project_mapping.chain`, the same rows Settings
+ * → Automatic agents lists as "Projects with their own default"). Personal: anyone who can see the project has their own, and
  * an agent's key reads and writes its owner's. Whatever is unset uses the account's settings.
  */
 
@@ -119,21 +118,10 @@ function requirePersonInProject(deps: AppDeps, actor: Actor, projectId: string):
   return person;
 }
 
-function levelIdsOf(db: DbExecutor, projectId: string): Set<string> {
-  return new Set(
-    db
-      .select({ id: s.difficulty.id })
-      .from(s.difficulty)
-      .where(eq(s.difficulty.projectId, projectId))
-      .all()
-      .map((row) => row.id),
-  );
-}
-
 function readSettings(db: DbExecutor, userId: string, projectId: string): MyProjectSettings {
   const prefs = projectNotificationPrefs(db, projectId, [userId]).get(userId);
   const mapping = db
-    .select({ levels: s.agentProjectMapping.levels })
+    .select({ chain: s.agentProjectMapping.chain })
     .from(s.agentProjectMapping)
     .where(
       and(eq(s.agentProjectMapping.userId, userId), eq(s.agentProjectMapping.projectId, projectId)),
@@ -144,23 +132,15 @@ function readSettings(db: DbExecutor, userId: string, projectId: string): MyProj
     .from(s.agentSettings)
     .where(eq(s.agentSettings.userId, userId))
     .get()?.defaultMapping;
-  // Levels deleted since they were mapped are left out.
-  const levelIds = levelIdsOf(db, projectId);
   return {
     projectId,
     notifications: prefs?.notifications ?? null,
     agentNotifications: prefs?.agentNotifications ?? null,
-    models: {
-      levels: Object.fromEntries(
-        Object.entries(mapping?.levels ?? {}).filter(
-          ([id, chain]) => levelIds.has(id) && chain.length > 0,
-        ),
-      ),
-    },
+    models: { chain: mapping?.chain ?? [] },
     defaults: {
       notifications: ACCOUNT_NOTIFICATIONS,
       agentNotifications: agentNotificationLevel(db, userId, null),
-      models: defaults ?? { chain: DEFAULT_CHAIN, levels: {} },
+      models: { chain: defaults?.chain ?? DEFAULT_CHAIN },
     },
   };
 }
@@ -186,19 +166,12 @@ export function updateMyProjectSettings(
   const userId = person.userId;
   const { orm } = deps.db;
 
-  let levels: Record<string, Chain> | undefined;
-  if (input.models) {
-    levels = Object.fromEntries(
-      Object.entries(input.models.levels).filter(([, chain]) => chain.length > 0),
-    );
-    const known = levelIdsOf(orm, projectId);
-    const unknown = Object.keys(levels).filter((id) => !known.has(id));
-    if (unknown.length > 0) {
-      throw errors.validation('Models can only be set for this project’s difficulty levels', {
-        levels: unknown,
-      });
-    }
-  }
+  // An empty chain: back to the account default (the row's legacy `levels` stay).
+  const chain: Chain | null | undefined = input.models
+    ? input.models.chain.length > 0
+      ? input.models.chain
+      : null
+    : undefined;
 
   deps.db.write((tx) => {
     const now = new Date();
@@ -238,22 +211,14 @@ export function updateMyProjectSettings(
           .run();
       }
     }
-    if (levels) {
-      const where = and(
-        eq(s.agentProjectMapping.userId, userId),
-        eq(s.agentProjectMapping.projectId, projectId),
-      );
-      if (Object.keys(levels).length === 0) {
-        tx.delete(s.agentProjectMapping).where(where).run();
-      } else {
-        tx.insert(s.agentProjectMapping)
-          .values({ userId, projectId, levels, updatedAt: now })
-          .onConflictDoUpdate({
-            target: [s.agentProjectMapping.userId, s.agentProjectMapping.projectId],
-            set: { levels, updatedAt: now },
-          })
-          .run();
-      }
+    if (chain !== undefined) {
+      tx.insert(s.agentProjectMapping)
+        .values({ userId, projectId, chain, updatedAt: now })
+        .onConflictDoUpdate({
+          target: [s.agentProjectMapping.userId, s.agentProjectMapping.projectId],
+          set: { chain, updatedAt: now },
+        })
+        .run();
     }
     // Personal: your other tabs refresh (settings and models are under `account`).
     emitAfterCommit(tx, {

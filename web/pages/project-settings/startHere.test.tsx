@@ -30,7 +30,6 @@ function stage(id: string, name: string, position: number, rules: Partial<StageR
     isDefault: position === 0,
     taskCount: position,
     rules: { ...DEFAULT_STAGE_RULES, ...rules },
-    defaultDifficultyId: null,
   };
 }
 
@@ -115,7 +114,6 @@ function setup({ canManage = true, fail = false } = {}) {
     '/api/projects/p1': project,
     '/api/projects/p1/statuses': () => jsonResponse({ items: statuses }),
     '/api/projects/p1/pipelines': { items: [pipeline(canManage)] },
-    '/api/projects/p1/difficulties': { items: [] },
     '/api/projects/p1/roles': { items: [] },
     '/api/teams/t1/roles': { items: [] },
     '/api/teams/t1/members': { items: [] },

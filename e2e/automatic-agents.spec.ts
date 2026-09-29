@@ -66,7 +66,8 @@ test('models, and who can start my agent', async ({ page, browser }) => {
   await expect(models.getByRole('combobox', { name: 'Default chain: harness 2' })).toHaveValue(
     'codex',
   );
-  await expect(page.getByRole('group', { name: 'Hard chain' })).toHaveCount(0);
+  // Difficulty is gone: no chains by level, and no stats by difficulty.
+  await expect(page.getByText(/difficulty/i)).toHaveCount(0);
   await page.getByRole('button', { name: 'Save models' }).click();
   await expect(page.getByText('Saved your models')).toBeVisible();
 

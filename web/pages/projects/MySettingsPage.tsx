@@ -2,7 +2,6 @@ import { FolderIcon } from 'lucide-react';
 import { useId, useState } from 'react';
 import { Link } from 'react-router';
 import { toast } from 'sonner';
-import { resolveChain } from '@shared/agentChains';
 import type { AgentNotificationLevel } from '@shared/constants';
 import type { Chain } from '@shared/schemas/agentRunner';
 import type { MeProject, MeTeam } from '@shared/schemas/core';
@@ -33,7 +32,6 @@ import { Skeleton } from '@web/components/ui/skeleton';
 import { Switch } from '@web/components/ui/switch';
 import { errorMessage } from '@web/lib/api';
 import { isDesktopApp, useDesktopState } from '@web/lib/desktop';
-import { hardestFirst } from '@web/lib/difficulty';
 import { useRouteContext } from '@web/lib/routeContext';
 import { useDocumentTitle } from '@web/lib/title';
 import { ChainEditor } from '../settings/ChainEditor';
@@ -41,12 +39,11 @@ import { chainSummary } from '../settings/chainSummary';
 import { SettingsCard, SettingsCardSkeleton } from '../settings/SettingsCard';
 import { useProjectRoles } from '../project-settings/accessQueries';
 import { useMembers, useRoles } from '../teams/api';
-import { useDifficulties } from './difficultyQueries';
 import { useMyProjectSettings, useUpdateMyProjectSettings } from './mySettingsQueries';
 
 /**
  * `/t/:team/p/:key/me`: your settings for this project (BAT-29), like Discord's per-server
- * settings. This project's notifications and your models by its difficulty levels, each "Use my
+ * settings. This project's notifications and your agent's default model here, each "Use my
  * defaults" (the account's) until you override it, and in the desktop app this project's folder
  * on this computer. Personal: anyone who can see the project has their own.
  */
@@ -371,32 +368,23 @@ function NotificationsCard({
 }
 
 // ---------------------------------------------------------------------------------------------
-// Models by difficulty
+// Your agent's default model for this project
 // ---------------------------------------------------------------------------------------------
 
 function ModelsCard({ projectId, settings }: { projectId: string; settings: MyProjectSettings }) {
-  const levels = useDifficulties(projectId);
   const update = useUpdateMyProjectSettings(projectId);
-  const [draft, setDraft] = useState<Record<string, Chain> | null>(null);
-  const mapping = draft ?? settings.models.levels;
-  const dirty = draft !== null && JSON.stringify(draft) !== JSON.stringify(settings.models.levels);
-  const setLevel = (levelId: string, chain: Chain | null) => {
-    const next = { ...mapping };
-    if (chain === null) delete next[levelId];
-    else next[levelId] = chain;
-    setDraft(next);
-  };
+  const [draft, setDraft] = useState<Chain | null>(null);
+  const chain = draft ?? settings.models.chain;
+  const dirty = draft !== null && JSON.stringify(draft) !== JSON.stringify(settings.models.chain);
+  const inherits = chain.length === 0;
+  const switchId = useId();
   const submit = () =>
     update.mutate(
-      {
-        models: {
-          levels: Object.fromEntries(Object.entries(mapping).filter(([, chain]) => chain.length)),
-        },
-      },
+      { models: { chain } },
       {
         onSuccess: () => {
           setDraft(null);
-          toast.success('Saved your models for this project');
+          toast.success('Saved your default model for this project');
         },
         onError: (cause) => toast.error(errorMessage(cause)),
       },
@@ -404,100 +392,55 @@ function ModelsCard({ projectId, settings }: { projectId: string; settings: MyPr
 
   return (
     <SettingsCard
-      title="Models by difficulty"
-      description="Which harness and model your agent runs for this project’s tasks, by their difficulty. When a harness is out of usage, the desktop app moves on to the next step. Hardest first: a level on your defaults uses the closest easier level you mapped, then a harder one, then your account’s models."
+      title="Default model"
+      description="Which harness and model your agent runs in this project, unless someone suggests a model your computers have (or you pick one when approving a request). When a harness is out of usage, the desktop app moves on to the next step."
       footer={
         <div className="flex w-full justify-end">
           <Button size="sm" onClick={submit} disabled={!dirty || update.isPending}>
             {update.isPending ? <Spinner /> : null}
-            Save models
+            Save model
           </Button>
         </div>
       }
     >
-      {levels.isPending ? (
-        <Skeleton className="h-24" />
-      ) : levels.isError ? (
-        <ErrorState
-          title="Couldn’t load the difficulty levels"
-          error={levels.error}
-          onRetry={() => void levels.refetch()}
-        />
-      ) : levels.data.length === 0 ? (
-        <p className="text-sm text-muted-foreground">
-          This project has no difficulty levels: its tasks use your{' '}
-          <Link to="/settings/automatic-agents" className="underline underline-offset-2">
-            default models
-          </Link>
-          .
-        </p>
-      ) : (
-        <ul className="grid gap-3" aria-label="Models by difficulty level, hardest first">
-          {hardestFirst(levels.data).map((level) => {
-            const chain = mapping[level.id];
-            const inherits = chain === undefined;
-            const resolved = resolveChain({
-              levels: levels.data,
-              difficultyId: level.id,
-              project: { levels: mapping },
-              defaults: settings.defaults.models,
-            });
-            const switchId = `defaults-${level.id}`;
-            return (
-              <li key={level.id} className="grid gap-2 rounded-md border p-3">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <span className="flex items-center gap-2 text-sm font-medium">
-                    <span
-                      className="size-2.5 rounded-full"
-                      style={{ backgroundColor: level.color }}
-                      aria-hidden="true"
-                    />
-                    {level.name}
-                  </span>
-                  <div className="flex items-center gap-2">
-                    <Label htmlFor={switchId} className="text-xs font-normal">
-                      Use my defaults
-                    </Label>
-                    <Switch
-                      id={switchId}
-                      aria-label={`${level.name}: use my defaults`}
-                      checked={inherits}
-                      onCheckedChange={(on) =>
-                        setLevel(
-                          level.id,
-                          on ? null : resolved.chain.map((entry) => ({ ...entry })),
-                        )
-                      }
-                    />
-                  </div>
-                </div>
-                {inherits ? (
-                  <p className="text-sm text-muted-foreground">{sourceText(resolved)}</p>
-                ) : (
-                  <ChainEditor
-                    label={`${level.name} chain`}
-                    value={chain}
-                    onChange={(next) => setLevel(level.id, next)}
-                    emptyText="No model yet: add one, or use your defaults."
-                  />
-                )}
-              </li>
-            );
-          })}
-        </ul>
-      )}
+      <div className="grid gap-3" data-testid="project-default-model">
+        <div className="flex items-center justify-between gap-2">
+          <Label htmlFor={switchId} className="text-sm font-normal">
+            Use my account default
+          </Label>
+          <Switch
+            id={switchId}
+            checked={inherits}
+            onCheckedChange={(on) =>
+              setDraft(
+                on
+                  ? []
+                  : settings.defaults.models.chain.length > 0
+                    ? settings.defaults.models.chain.map((entry) => ({ ...entry }))
+                    : [{ harness: 'claude', model: '', effort: '' }],
+              )
+            }
+          />
+        </div>
+        {inherits ? (
+          <p className="text-sm text-muted-foreground">
+            Your{' '}
+            <Link to="/settings/automatic-agents" className="underline underline-offset-2">
+              account default
+            </Link>
+            : {chainSummary(settings.defaults.models.chain) || 'Claude Code opus'}
+          </p>
+        ) : (
+          <ChainEditor
+            label="Default model for this project"
+            value={chain}
+            onChange={setDraft}
+            emptyText="No model yet: add one, or use your account default."
+          />
+        )}
+      </div>
     </SettingsCard>
   );
-}
-
-/** Where an inherited level's model comes from, in words. */
-function sourceText(resolved: { chain: Chain; source: string }): string {
-  const models = chainSummary(resolved.chain);
-  const closest = / \(closest mapped level\)$/.exec(resolved.source);
-  if (closest) {
-    return `From ${resolved.source.slice(0, closest.index)}, the closest level you mapped: ${models}`;
-  }
-  return `From your defaults: ${models}`;
 }
 
 // ---------------------------------------------------------------------------------------------

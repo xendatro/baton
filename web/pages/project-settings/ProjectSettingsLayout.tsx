@@ -1,5 +1,4 @@
 import {
-  GaugeIcon,
   ShieldIcon,
   SlidersHorizontalIcon,
   TagsIcon,
@@ -22,7 +21,6 @@ const SECTIONS: ReadonlyArray<{ to: string; label: string; icon: LucideIcon }> =
   { to: 'general', label: 'General', icon: SlidersHorizontalIcon },
   { to: 'pipelines', label: 'Pipelines', icon: WorkflowIcon },
   { to: 'labels', label: 'Labels', icon: TagsIcon },
-  { to: 'difficulty', label: 'Difficulty', icon: GaugeIcon },
   { to: 'access', label: 'Access', icon: ShieldIcon },
 ];
 

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { LIMITS, STATUS_CATEGORIES, STATUS_ICONS } from '@shared/constants';
+import { HARNESS_IDS, type HarnessId } from '@shared/schemas/agentRunner';
 import { PIPELINE_TEMPLATE_IDS, PIPELINE_TEMPLATE_LIST } from '@shared/pipelineTemplates';
 import {
   createLabelInputSchema,
@@ -17,7 +18,6 @@ import {
 } from '@shared/schemas/projects';
 import { parseInput } from '../../lib/validate';
 import { createLabel, deleteLabel, listLabels, updateLabel } from '../../services/labels';
-import { resolveDifficulty } from '../../services/difficulties';
 import {
   createProject,
   deleteProject,
@@ -278,13 +278,19 @@ const stageFields = {
     .enum(STATUS_CATEGORIES)
     .optional()
     .describe('Deprecated and ignored: statuses have no open/done category any more'),
-  defaultDifficulty: z
-    .string()
-    .min(1)
+  suggestedModel: z
+    .object({
+      harness: z
+        .enum(HARNESS_IDS)
+        .describe('Harness: claude (Claude Code), codex, gemini, cursor or opencode'),
+      model: z.string().optional().describe('Model name or alias (empty: the harness default)'),
+      effort: z.string().optional().describe('Effort (empty: the harness default)'),
+    })
+    .strict()
     .nullable()
     .optional()
     .describe(
-      'Difficulty (level name or id) a task gets on its first visit to this stage; null for none (it keeps the one it had)',
+      'A model to suggest for agent runs in this stage, e.g. { harness: "claude", model: "opus" } for planning; null clears it. Only a suggestion: each agent owner runs it when one of their computers has it (a requester’s own suggestion wins)',
     ),
   sendBackTo: z
     .array(z.string().min(1))
@@ -295,12 +301,21 @@ const stageFields = {
     ),
 };
 
-/** `{ defaultDifficultyId }` for a level ref (null: none), or nothing when not given. */
-function defaultDifficultyOf(ctx: ToolContext, projectId: string, ref: string | null | undefined) {
-  if (ref === undefined) return {};
+/** `rules` with the stage's suggested model when given (null clears it). */
+function withSuggestedModel(
+  rules: ReturnType<typeof stageRulesPatch>,
+  suggestedModel: { harness: HarnessId; model?: string; effort?: string } | null | undefined,
+) {
+  if (suggestedModel === undefined) return rules;
   return {
-    defaultDifficultyId:
-      ref === null ? null : resolveDifficulty(ctx.deps.db.orm, projectId, ref).id,
+    ...rules,
+    suggestedModel: suggestedModel
+      ? {
+          harness: suggestedModel.harness,
+          model: suggestedModel.model ?? '',
+          effort: suggestedModel.effort ?? '',
+        }
+      : null,
   };
 }
 
@@ -477,21 +492,24 @@ const createStatusTool = defineTool({
       claimable,
       allowCreate,
       sendBackTo,
-      defaultDifficulty,
+      suggestedModel,
       ...fields
     } = input;
     const projectId = projectContext(ctx, project).id;
     const pipelineId = pipeline
       ? resolvePipeline(ctx.deps.db.orm, projectId, pipeline).id
       : undefined;
-    const rules = stageRulesPatch({
-      handoff,
-      onEnter,
-      blocksDependents,
-      claimable,
-      allowCreate,
-      sendBackTo: sendBackIds(ctx, projectId, sendBackTo, pipelineId),
-    });
+    const rules = withSuggestedModel(
+      stageRulesPatch({
+        handoff,
+        onEnter,
+        blocksDependents,
+        claimable,
+        allowCreate,
+        sendBackTo: sendBackIds(ctx, projectId, sendBackTo, pipelineId),
+      }),
+      suggestedModel,
+    );
     const copyRulesFrom = copyFrom
       ? resolveStatus(
           ctx.deps.db.orm,
@@ -505,7 +523,6 @@ const createStatusTool = defineTool({
       ...(rules ? { rules } : {}),
       ...(pipelineId ? { pipelineId } : {}),
       ...(copyRulesFrom ? { copyRulesFrom } : {}),
-      ...defaultDifficultyOf(ctx, projectId, defaultDifficulty),
     });
     return createStatus(ctx.deps, ctx.actor, projectId, parsed);
   },
@@ -538,24 +555,26 @@ const updateStatusTool = defineTool({
       claimable,
       allowCreate,
       sendBackTo,
-      defaultDifficulty,
+      suggestedModel,
       ...fields
     } = input;
     const projectId = projectContext(ctx, project).id;
     const row = resolveStatus(ctx.deps.db.orm, projectId, status);
     const statusId = row.id;
-    const rules = stageRulesPatch({
-      handoff,
-      onEnter,
-      blocksDependents,
-      claimable,
-      allowCreate,
-      sendBackTo: sendBackIds(ctx, projectId, sendBackTo, row.pipelineId),
-    });
+    const rules = withSuggestedModel(
+      stageRulesPatch({
+        handoff,
+        onEnter,
+        blocksDependents,
+        claimable,
+        allowCreate,
+        sendBackTo: sendBackIds(ctx, projectId, sendBackTo, row.pipelineId),
+      }),
+      suggestedModel,
+    );
     const parsed = parseInput(updateStatusInputSchema, {
       ...fields,
       ...(rules ? { rules } : {}),
-      ...defaultDifficultyOf(ctx, projectId, defaultDifficulty),
     });
     return updateStatus(ctx.deps, ctx.actor, statusId, parsed);
   },

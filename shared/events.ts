@@ -23,8 +23,6 @@ export const LIVE_EVENT_TYPES = [
   'project_access.changed',
   'status.changed',
   'label.changed',
-  /** A project's difficulty levels changed (BAT-24). */
-  'difficulty.changed',
   'issue.created',
   'issue.updated',
   'issue.deleted',

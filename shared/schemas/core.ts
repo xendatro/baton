@@ -15,6 +15,7 @@ import {
   USER_KINDS,
 } from '../constants';
 import { PERMISSIONS } from '../permissions';
+import { suggestedModelSchema } from './agentRunner';
 import {
   cursorPaginationSchema,
   idSchema,
@@ -477,6 +478,11 @@ export const createReplyInputSchema = z
     attachmentIds: z.array(idSchema).max(LIMITS.attachmentsPerItem).optional(),
     /** No further discussion needed at this time (agents' done handshake, design §4). */
     closing: z.boolean().optional(),
+    /**
+     * A model to suggest to the agents this reply starts (mentions, thread replies): only a
+     * suggestion, each owner's agent runs it when one of their computers has it.
+     */
+    suggestedModel: suggestedModelSchema.nullable().optional(),
   })
   .refine(
     (value) => value.body.length >= LIMITS.replyBody.min || (value.attachmentIds?.length ?? 0) > 0,

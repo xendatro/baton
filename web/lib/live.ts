@@ -76,6 +76,8 @@ const replyChange: Invalidation = (e) => [
   ...parentItemKeys(e),
   // A mention may have asked someone's agent (agent access): the item's request status.
   ...parentKey(e, queryKeys.agentRequestsFor),
+  // An agent's reply usually ends its run: the item's runs and the model each ran with.
+  ...parentKey(e, queryKeys.agentRunsFor),
 ];
 
 // Reactions show only on task and issue pages and in threads, so lists and boards stay put.
@@ -123,10 +125,6 @@ export const LIVE_INVALIDATIONS: Readonly<Record<LiveEventType, Invalidation>> =
   ],
   'label.changed': (e) => [
     ...projectKeys(e, queryKeys.projects.labels, queryKeys.tasks.all, queryKeys.issues.all),
-    queryKeys.work.all(),
-  ],
-  'difficulty.changed': (e) => [
-    ...projectKeys(e, queryKeys.projects.detail, queryKeys.tasks.all),
     queryKeys.work.all(),
   ],
   'issue.created': issueChange,
@@ -187,6 +185,7 @@ export const LIVE_INVALIDATIONS: Readonly<Record<LiveEventType, Invalidation>> =
     queryKeys.account.agentModelOptions(),
     queryKeys.account.agentAccess(),
     queryKeys.agentRequestsFor(),
+    queryKeys.agentRunsFor(),
   ],
   // Personal: your agent asked for sign-off, or a request was decided or expired (design §6).
   'agent_action.changed': () => [queryKeys.account.agentActions(), queryKeys.notifications.all()],

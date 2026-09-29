@@ -84,8 +84,6 @@ export const queryKeys = {
     /** The project's pipelines the viewer can see (BAT-25). */
     pipelines: (projectId: string) => ['projects', projectId, 'pipelines'] as const,
     labels: (projectId: string) => ['projects', projectId, 'labels'] as const,
-    /** Difficulty levels, easiest first (BAT-24). */
-    difficulties: (projectId: string) => ['projects', projectId, 'difficulties'] as const,
     /** Project roles and their members (design §3). */
     roles: (projectId: string) => ['projects', projectId, 'roles'] as const,
     /** The project's permission overrides and the viewer's permissions there. */
@@ -93,6 +91,9 @@ export const queryKeys = {
     /** What copying another project's pipeline into this one would do (design §5). */
     pipelineCopy: (projectId: string, fromProjectId: string) =>
       ['projects', projectId, 'pipeline-copy', fromProjectId] as const,
+    /** Models known to the team's computers, for suggesting one to an agent. */
+    suggestableModels: (projectId: string) =>
+      ['projects', projectId, 'suggestable-models'] as const,
     /** A document of the project's GitHub README (`path` null: the first one). */
     githubReadme: (projectId: string, path: string | null) =>
       ['projects', projectId, 'readme', 'github', path] as const,
@@ -141,6 +142,11 @@ export const queryKeys = {
     itemType === undefined || itemId === undefined
       ? (['agent-requests'] as const)
       : (['agent-requests', itemType, itemId] as const),
+  /** Agent runs about one task or issue, with the model each ran with; without args, all. */
+  agentRunsFor: (itemType?: string, itemId?: string) =>
+    itemType === undefined || itemId === undefined
+      ? (['agent-runs'] as const)
+      : (['agent-runs', itemType, itemId] as const),
   attachments: (parentType: string, parentId: string) =>
     ['attachments', parentType, parentId] as const,
   subscription: (entityType: string, entityId: string) =>

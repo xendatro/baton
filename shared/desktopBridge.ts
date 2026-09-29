@@ -18,6 +18,8 @@ export interface DesktopJob {
   kind: string;
   harness: HarnessId | null;
   model: string;
+  /** The chain step's effort ('' = the harness's default). Optional: apps before 0.6. */
+  effort?: string;
   startedAt: number;
   /** starting | running | blocked (on an Allow / Deny prompt) | waiting-usage | finishing. */
   state: string;

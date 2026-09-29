@@ -54,6 +54,7 @@ describe('LIVE_INVALIDATIONS', () => {
       queryKeys.replies.list('issue', 'iss1'),
       queryKeys.issues.all('proj1'),
       queryKeys.agentRequestsFor('issue', 'iss1'),
+      queryKeys.agentRunsFor('issue', 'iss1'),
     ]);
   });
 

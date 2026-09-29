@@ -157,7 +157,7 @@ describe('back', () => {
   it('only to the checked stages, always with a reason', () => {
     const task = newTask(review.id);
     expect(getTask(ctx.deps, web(ben), task.id).stage?.canMoveTo?.back).toEqual([
-      { id: doing.id, name: 'Implementation', difficultyId: null },
+      { id: doing.id, name: 'Implementation' },
     ]);
     expect(failure(() => move(ben, task.id, todo, { reason: 'x' })).message).toBe(
       'From Human Review, tasks can only be sent back to Implementation.',

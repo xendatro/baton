@@ -57,7 +57,6 @@ import {
 } from '../../services/tasks';
 import { parseToolInput, qualifyRef, toAbsolute, withAbsoluteUrls } from '../util';
 import { defineTool, toolInput, type McpTool, type ToolContext } from './define';
-import { resolveDifficulty } from '../../services/difficulties';
 
 /**
  * Task MCP tools (SPEC §5.1 [tasks]): the board, tasks, links and claims. Handlers resolve refs
@@ -172,7 +171,6 @@ const TASK_FIELD_NAMES: Readonly<Record<string, string>> = {
   assigneeRoleIds: 'assigneeRoles',
   assigneeUsers: 'assignees',
   labelIds: 'labels',
-  difficultyId: 'difficulty',
   blockedByTaskIds: 'blockedBy',
   issueLinks: 'issues',
   roleId: 'role',
@@ -227,12 +225,6 @@ function pipelineOfTask(ctx: ToolContext, task: { statusId: string }): string | 
 
 function pipelineId(ctx: ToolContext, projectId: string, ref: string | undefined) {
   return ref === undefined ? undefined : resolvePipeline(ctx.deps.db.orm, projectId, ref).id;
-}
-
-/** A difficulty level ref as its id (null: none; undefined: not given). */
-function difficultyIdOf(ctx: ToolContext, projectId: string, ref: string | null | undefined) {
-  if (ref === undefined) return undefined;
-  return ref === null ? null : resolveDifficulty(ctx.deps.db.orm, projectId, ref).id;
 }
 
 function priorityOf(value: z.infer<typeof priorityField> | undefined) {
@@ -507,13 +499,6 @@ const createTaskTool = defineTool({
     assignees: usernames.optional(),
     assigneeRoles: roleNames.optional(),
     labels: labelNames.optional(),
-    difficulty: z
-      .string()
-      .min(1)
-      .optional()
-      .describe(
-        'Difficulty level of the project (e.g. Easy, Normal, Hard); picks the model agents run',
-      ),
     blockedBy: taskRefs.optional().describe('Tasks of the same project this one waits for'),
     issues: z
       .array(issueLinkField)
@@ -552,9 +537,6 @@ const createTaskTool = defineTool({
         assigneeUserIds: userIds(ctx, team.id, input.assignees),
         assigneeRoleIds: roleIds(ctx, team.id, input.assigneeRoles),
         labelIds: labelIds(ctx, project.id, input.labels),
-        difficultyId: input.difficulty
-          ? resolveDifficulty(ctx.deps.db.orm, project.id, input.difficulty).id
-          : undefined,
         blockedByTaskIds: taskIds(ctx, input.blockedBy),
         issueLinks: input.issues?.map((link) => ({
           issueId: resolveIssue(ctx.deps, ctx.actor, link.issue).issue.id,
@@ -591,14 +573,6 @@ const updateTaskTool = defineTool({
     assignees: listChange(z.string().min(1), 'Assigned members (usernames or ids)').optional(),
     assigneeRoles: listChange(z.string().min(1), 'Assigned roles (names, slugs or ids)').optional(),
     labels: listChange(z.string().min(1), 'Labels (names or ids)').optional(),
-    difficulty: z
-      .string()
-      .min(1)
-      .nullable()
-      .optional()
-      .describe(
-        'Difficulty level (name), or null to clear it: of the current stage, or with `status` of the stage it moves to',
-      ),
     blockedBy: listChange(
       z.string().min(1),
       'Blocking tasks of the same project (KEY-12)',
@@ -637,12 +611,6 @@ const updateTaskTool = defineTool({
         assigneeUsers: mapChange(input.assignees, (refs) => userIds(ctx, team.id, refs)),
         assigneeRoles: mapChange(input.assigneeRoles, (refs) => roleIds(ctx, team.id, refs)),
         labels: mapChange(input.labels, (refs) => labelIds(ctx, project.id, refs)),
-        difficultyId:
-          input.difficulty === undefined
-            ? undefined
-            : input.difficulty === null
-              ? null
-              : resolveDifficulty(ctx.deps.db.orm, project.id, input.difficulty).id,
         blockedBy: mapChange(input.blockedBy, (refs) => taskIds(ctx, refs)),
         issueLinks: input.issues
           ? {
@@ -685,14 +653,6 @@ const moveTaskTool = defineTool({
       .optional()
       .describe('Place right before this task (KEY-12) of the target column'),
     evidence: evidenceField.optional(),
-    difficulty: z
-      .string()
-      .min(1)
-      .nullable()
-      .optional()
-      .describe(
-        'Difficulty (level name or id; null: none) for the stage it moves to, instead of the default (its last difficulty there, else the stage’s default, else the current one)',
-      ),
     force: forceField.optional(),
     reason: reasonField
       .optional()
@@ -710,7 +670,6 @@ const moveTaskTool = defineTool({
         afterId: input.after ? taskOf(ctx, input.after).task.id : undefined,
         beforeId: input.before ? taskOf(ctx, input.before).task.id : undefined,
         evidence: evidenceOf(input.evidence),
-        difficultyId: difficultyIdOf(ctx, project.id, input.difficulty),
         force: input.force,
         reason: input.reason,
       },
@@ -742,14 +701,6 @@ const approveTaskTool = defineTool({
       .describe(
         'Request changes: the earlier stage to send it back to (default: the nearest one it may go back to)',
       ),
-    difficulty: z
-      .string()
-      .min(1)
-      .nullable()
-      .optional()
-      .describe(
-        'Request changes: the difficulty (level name or id; null: none) for the stage it goes back to, e.g. Hard after a failed review',
-      ),
   }),
   annotations: { destructiveHint: false },
   handler: (ctx, input) => {
@@ -760,7 +711,6 @@ const approveTaskTool = defineTool({
         decision: input.decision === 'changes' ? 'request_changes' : input.decision,
         comment: input.comment,
         sendBackTo: statusId(ctx, project.id, input.sendBackTo, pipelineOfTask(ctx, task)),
-        difficultyId: difficultyIdOf(ctx, project.id, input.difficulty),
       }),
     );
   },

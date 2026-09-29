@@ -3,7 +3,8 @@ import { AGENT_LISTENER, PRIORITIES } from '@shared/constants';
 import {
   harnessOfAgentName,
   preferHarness,
-  resolveChain,
+  resolveJobModel,
+  stepLabel,
   type ResolvedChain,
 } from '@shared/agentChains';
 import { canonicalModel, estimateCost } from '@shared/modelPrices';
@@ -12,6 +13,7 @@ import {
   CLEARED_JOBS_SHOWN_MS,
   DEFAULT_CHAIN,
   HARNESS_IDS,
+  chainEntrySchema,
   HARNESS_LABELS,
   MODEL_OPTIONS_RUNNER_DAYS,
   harnessIdSchema,
@@ -21,6 +23,10 @@ import {
   type ModelOptions,
   type AgentStats,
   type AgentUsageTotals,
+  type Chain,
+  type ChainEntry,
+  type ItemAgentRuns,
+  type RanWith,
   type FinishJobInput,
   type HarnessSessionInput,
   type JobBrief,
@@ -38,11 +44,11 @@ import {
 import { finishJobInputSchema } from '@shared/schemas/agentRunner';
 import type { TaskStage } from '@shared/schemas/pipelines';
 import type { Actor, AppDeps } from '../context';
-import type { DbExecutor } from '../db';
+import type { DbExecutor, Tx } from '../db';
 import * as s from '../db/schema';
 import { errors } from '../lib/errors';
 import { newId } from '../lib/ids';
-import { canViewProject, getProjectAccess } from './access';
+import { canViewProject, getProjectAccess, requireProjectAccess } from './access';
 import {
   cancelledJobIds,
   clearSettledJobs,
@@ -62,6 +68,7 @@ import { emitEvent } from './events';
 import { stageOf } from './pipelines';
 import { pipelineIdOfStatus, pipelineRow } from './projectPipelines';
 import { isSessionListening, refreshPresence } from './presence';
+import { findItem } from './items';
 import { resolveTask } from './refs';
 import { catchUpBriefMessages, catchUpPrompt } from './chat';
 import { getUserSummaries } from './users';
@@ -326,13 +333,43 @@ export async function nextRunnerJobs(
 export function modelOptions(deps: AppDeps, actor: Actor): ModelOptions {
   const owner = requireOwner(deps, actor);
   if (!owner.agentId) return { harnesses: [] };
+  return collectModelOptions(deps, [owner.agentId], true);
+}
+
+/**
+ * `GET /api/projects/:projectId/suggestable-models`: what a requester can suggest to the agents
+ * of a project's team — the union of the models their owners' computers report (last 30 days),
+ * without machine names. Only a list to pick from: each owner's agent decides by its own.
+ */
+export function suggestableModels(deps: AppDeps, actor: Actor, projectId: string): ModelOptions {
+  const access = requireProjectAccess(deps.db.orm, actor, projectId);
+  const agentIds = deps.db.orm
+    .select({ id: s.user.id })
+    .from(s.teamMember)
+    .innerJoin(s.user, eq(s.user.id, s.teamMember.userId))
+    .where(and(eq(s.teamMember.teamId, access.teamId), eq(s.user.kind, 'agent')))
+    .all()
+    .map((row) => row.id);
+  const options = collectModelOptions(deps, agentIds, false);
+  return {
+    harnesses: options.harnesses.map((harness) => ({ ...harness, machines: [] })),
+  };
+}
+
+/** The union of what the desktop apps of `agentIds` report (seen in the last 30 days). */
+function collectModelOptions(
+  deps: AppDeps,
+  agentIds: readonly string[],
+  withMachines: boolean,
+): ModelOptions {
+  if (agentIds.length === 0) return { harnesses: [] };
   const since = new Date(Date.now() - MODEL_OPTIONS_RUNNER_DAYS * 24 * 60 * 60 * 1000);
   const rows = deps.db.orm
     .select()
     .from(s.agentSession)
     .where(
       and(
-        eq(s.agentSession.agentUserId, owner.agentId),
+        inArray(s.agentSession.agentUserId, [...agentIds]),
         eq(s.agentSession.kind, 'runner'),
         gte(s.agentSession.lastSeenAt, since),
       ),
@@ -359,7 +396,7 @@ export function modelOptions(deps: AppDeps, actor: Actor): ModelOptions {
       }
       entry.online ||= online;
       const machine = row.machineName ?? 'Unknown machine';
-      if (!entry.machines.includes(machine)) entry.machines.push(machine);
+      if (withMachines && !entry.machines.includes(machine)) entry.machines.push(machine);
       if (info.models) entry.reported = true;
       for (const model of info.models ?? []) {
         const known = entry.models.find(
@@ -410,6 +447,94 @@ export function listRunners(deps: AppDeps, actor: Actor): { runners: Runner[] } 
 // Waiting for the owner's OK
 // ---------------------------------------------------------------------------------------------
 
+/**
+ * The model each job's last run used (from its last usage row): the harness, the model it
+ * reported (else the chain's) and the effort. Jobs without usage are left out.
+ */
+export function ranWithOf(db: DbExecutor, jobIds: readonly string[]): Map<string, RanWith> {
+  const result = new Map<string, RanWith>();
+  if (jobIds.length === 0) return result;
+  const rows = db
+    .select({
+      jobId: s.agentUsage.jobId,
+      harness: s.agentUsage.harness,
+      model: s.agentUsage.model,
+      reportedModel: s.agentUsage.reportedModel,
+      effort: s.agentUsage.effort,
+    })
+    .from(s.agentUsage)
+    .where(inArray(s.agentUsage.jobId, [...jobIds]))
+    .orderBy(asc(s.agentUsage.createdAt), asc(s.agentUsage.id))
+    .all();
+  for (const row of rows) {
+    if (!row.jobId) continue;
+    result.set(row.jobId, {
+      harness: row.harness,
+      model: row.reportedModel || row.model,
+      effort: row.effort,
+    });
+  }
+  return result;
+}
+
+/** Item runs listed at most. */
+const ITEM_RUNS_LIMIT = 20;
+
+/**
+ * `GET /api/agent-runs?itemType=&itemId=`: the agent jobs about a task or issue that were claimed
+ * (running, done, released or cancelled after starting), newest first, with the model each ran
+ * with. Anyone who can see the item sees them: which model did the work is part of the record.
+ */
+export function listItemAgentRuns(
+  deps: AppDeps,
+  actor: Actor,
+  item: { itemType: 'task' | 'issue'; itemId: string },
+): ItemAgentRuns {
+  const { orm } = deps.db;
+  const found = findItem(orm, item.itemType, item.itemId);
+  if (!found) throw errors.notFound(item.itemType === 'task' ? 'Task' : 'Issue');
+  requireProjectAccess(orm, actor, found.projectId, item.itemType === 'task' ? 'Task' : 'Issue');
+  const rows = orm
+    .select()
+    .from(s.agentJob)
+    .where(
+      and(
+        eq(s.agentJob.targetType, item.itemType),
+        eq(s.agentJob.targetId, item.itemId),
+        isNotNull(s.agentJob.claimedAt),
+      ),
+    )
+    .orderBy(desc(s.agentJob.claimedAt), desc(s.agentJob.id))
+    .limit(ITEM_RUNS_LIMIT)
+    .all();
+  const users = getUserSummaries(
+    orm,
+    rows.flatMap((row) => [row.agentUserId, row.triggeredById]),
+  );
+  const ran = ranWithOf(
+    orm,
+    rows.map((row) => row.id),
+  );
+  const person = (id: string | null) => {
+    const user = id ? users.get(id) : undefined;
+    return user ? { id: user.id, username: user.username, name: user.name } : null;
+  };
+  return {
+    runs: rows.map((row) => ({
+      jobId: row.id,
+      kind: row.kind,
+      status: row.status,
+      agent: person(row.agentUserId) ?? { id: row.agentUserId, username: null, name: 'An agent' },
+      triggeredBy: person(row.triggeredById),
+      stage: typeof row.payload.stage === 'string' ? row.payload.stage : null,
+      ranWith: ran.get(row.id) ?? null,
+      outcome: row.runOutcome ?? null,
+      startedAt: row.claimedAt?.toISOString() ?? null,
+      endedAt: (row.runEndedAt ?? row.completedAt)?.toISOString() ?? null,
+    })),
+  };
+}
+
 /** The last run of each job (BAT#23): its outcome and error, with the harness and model. */
 function jobRuns(db: DbExecutor, rows: readonly JobRow[]): Map<string, JobRun> {
   const runs = new Map<string, JobRun>();
@@ -421,6 +546,7 @@ function jobRuns(db: DbExecutor, rows: readonly JobRow[]): Map<string, JobRun> {
       harness: s.agentUsage.harness,
       model: s.agentUsage.model,
       reportedModel: s.agentUsage.reportedModel,
+      effort: s.agentUsage.effort,
     })
     .from(s.agentUsage)
     .where(
@@ -439,6 +565,7 @@ function jobRuns(db: DbExecutor, rows: readonly JobRow[]): Map<string, JobRun> {
       error: row.runError,
       harness: entry?.harness ?? null,
       model: entry ? entry.reportedModel || entry.model || null : null,
+      effort: entry ? entry.effort || null : null,
       endedAt: (row.runEndedAt ?? row.createdAt).toISOString(),
       hasOutput: Boolean(row.runOutput),
     });
@@ -598,60 +725,56 @@ export function getModelMappings(deps: AppDeps, actor: Actor): ModelMappings {
     .get();
   const projects = Object.fromEntries(
     orm
-      .select()
+      .select({ projectId: s.agentProjectMapping.projectId, chain: s.agentProjectMapping.chain })
       .from(s.agentProjectMapping)
       .where(eq(s.agentProjectMapping.userId, owner.ownerId))
       .all()
-      .map((row) => [row.projectId, { levels: row.levels }]),
+      .flatMap((row) => (row.chain?.length ? [[row.projectId, { chain: row.chain }]] : [])),
   );
-  return {
-    default: settings?.defaultMapping ?? { chain: DEFAULT_CHAIN, levels: {} },
-    projects,
-  };
+  return { default: { chain: settings?.defaultMapping?.chain ?? DEFAULT_CHAIN }, projects };
 }
 
 /**
- * Replaces the owner's mappings. Project mappings must be of projects they can see, and name
- * that project's levels; empty chains are dropped.
+ * The owner's own default chain for one project (null: none, the account default applies).
+ * Keeps the row's legacy `levels`; an empty or null chain clears the project's default.
+ */
+export function setProjectDefaultChain(
+  tx: Tx,
+  ownerId: string,
+  projectId: string,
+  chain: Chain | null,
+  now: Date,
+): void {
+  const value = chain && chain.length > 0 ? chain : null;
+  tx.insert(s.agentProjectMapping)
+    .values({ userId: ownerId, projectId, chain: value, updatedAt: now })
+    .onConflictDoUpdate({
+      target: [s.agentProjectMapping.userId, s.agentProjectMapping.projectId],
+      set: { chain: value, updatedAt: now },
+    })
+    .run();
+}
+
+/**
+ * Replaces the owner's default chains: the account default and each project's own default
+ * (projects left out, or given an empty chain, use the account default again). Projects must be
+ * ones they can see. Legacy difficulty mappings stay stored, unread.
  */
 export function setModelMappings(deps: AppDeps, actor: Actor, input: ModelMappings): ModelMappings {
   const owner = requireOwner(deps, actor);
   const { orm } = deps.db;
-  const projects: Array<{
-    projectId: string;
-    levels: Record<string, ModelMappings['default']['chain']>;
-  }> = [];
-  for (const [projectId, mapping] of Object.entries(input.projects)) {
+  for (const projectId of Object.keys(input.projects)) {
     const access = getProjectAccess(orm, owner.ownerId, projectId);
     if (!access || !canViewProject(access)) throw errors.notFound('Project');
-    const levelIds = new Set(
-      orm
-        .select({ id: s.difficulty.id })
-        .from(s.difficulty)
-        .where(eq(s.difficulty.projectId, projectId))
-        .all()
-        .map((row) => row.id),
-    );
-    const levels = Object.fromEntries(
-      Object.entries(mapping.levels).filter(([, chain]) => chain.length > 0),
-    );
-    const unknown = Object.keys(levels).filter((id) => !levelIds.has(id));
-    if (unknown.length > 0) {
-      throw errors.validation('Mappings can only name difficulty levels of their project', {
-        projectId,
-        levels: unknown,
-      });
-    }
-    if (Object.keys(levels).length > 0) projects.push({ projectId, levels });
   }
-  const defaults = {
-    chain: input.default.chain,
-    levels: Object.fromEntries(
-      Object.entries(input.default.levels).filter(([, chain]) => chain.length > 0),
-    ),
-  };
   deps.db.write((tx) => {
     const now = new Date();
+    const stored = tx
+      .select({ defaultMapping: s.agentSettings.defaultMapping })
+      .from(s.agentSettings)
+      .where(eq(s.agentSettings.userId, owner.ownerId))
+      .get()?.defaultMapping;
+    const defaults = { ...stored, chain: input.default.chain };
     tx.insert(s.agentSettings)
       .values({ userId: owner.ownerId, defaultMapping: defaults, updatedAt: now })
       .onConflictDoUpdate({
@@ -659,11 +782,23 @@ export function setModelMappings(deps: AppDeps, actor: Actor, input: ModelMappin
         set: { defaultMapping: defaults, updatedAt: now },
       })
       .run();
-    tx.delete(s.agentProjectMapping).where(eq(s.agentProjectMapping.userId, owner.ownerId)).run();
-    for (const project of projects) {
-      tx.insert(s.agentProjectMapping)
-        .values({ userId: owner.ownerId, ...project, updatedAt: now })
-        .run();
+    const existing = tx
+      .select({ projectId: s.agentProjectMapping.projectId })
+      .from(s.agentProjectMapping)
+      .where(
+        and(
+          eq(s.agentProjectMapping.userId, owner.ownerId),
+          isNotNull(s.agentProjectMapping.chain),
+        ),
+      )
+      .all();
+    for (const row of existing) {
+      if (!(row.projectId in input.projects)) {
+        setProjectDefaultChain(tx, owner.ownerId, row.projectId, null, now);
+      }
+    }
+    for (const [projectId, mapping] of Object.entries(input.projects)) {
+      setProjectDefaultChain(tx, owner.ownerId, projectId, mapping.chain, now);
     }
   });
   return getModelMappings(deps, actor);
@@ -768,85 +903,82 @@ function sentBackSection(job: JobRow, stage: TaskStage | null): string[] {
   ];
 }
 
-/**
- * BAT-28: the difficulty of the stage a job is for — the task's difficulty in `payload.statusId`
- * when the job names another stage it has been in, else its current stage's.
- */
-function jobDifficultyId(
-  db: DbExecutor,
-  job: Pick<JobRow, 'payload'>,
-  task: { id: string; statusId: string; difficultyId: string | null },
-): string | null {
-  const statusId = typeof job.payload.statusId === 'string' ? job.payload.statusId : null;
-  if (statusId && statusId !== task.statusId) {
-    const row = db
-      .select({ difficultyId: s.taskStageDifficulty.difficultyId })
-      .from(s.taskStageDifficulty)
-      .where(
-        and(
-          eq(s.taskStageDifficulty.taskId, task.id),
-          eq(s.taskStageDifficulty.statusId, statusId),
-        ),
-      )
-      .get();
-    if (row) return row.difficultyId;
-  }
-  return task.difficultyId;
+/** A harness, model and effort from a job's payload (null when missing or malformed). */
+function payloadStep(value: unknown): ChainEntry | null {
+  const parsed = chainEntrySchema.safeParse(value);
+  return parsed.success ? parsed.data : null;
 }
 
-/**
- * The chain the owner's model mappings give a job (BAT-24, BAT-28: by the difficulty of the stage
- * it is for), with that level. What runs unless the owner chose a model when approving it.
- */
-export function mappedChain(
+/** The suggestion a job carries: the requester's (from their reply), else its stage's. */
+export function jobSuggestion(
+  job: Pick<JobRow, 'payload'>,
+): { step: ChainEntry; from: 'requester' | 'stage' } | null {
+  const requester = payloadStep(job.payload.suggestedModel);
+  if (requester) return { step: requester, from: 'requester' };
+  const stage = payloadStep(job.payload.stageModel);
+  return stage ? { step: stage, from: 'stage' } : null;
+}
+
+/** The owner's default chains: their account default and their own default for `projectId`. */
+function ownerDefaults(
   db: DbExecutor,
   ownerId: string,
-  job: Pick<JobRow, 'payload' | 'projectId' | 'targetType' | 'targetId'>,
-  loadedTask?: { id: string; statusId: string; difficultyId: string | null },
-): { level: { id: string; name: string } | undefined; resolved: ResolvedChain } {
-  let task = loadedTask;
-  if (!task) {
-    const item = jobItem(db, job);
-    task =
-      item?.type === 'task'
-        ? db
-            .select({ id: s.task.id, statusId: s.task.statusId, difficultyId: s.task.difficultyId })
-            .from(s.task)
-            .where(eq(s.task.id, item.id))
-            .get()
-        : undefined;
-  }
-  const levels = db
-    .select()
-    .from(s.difficulty)
-    .where(eq(s.difficulty.projectId, job.projectId))
-    .all();
-  const difficultyId = task ? jobDifficultyId(db, job, task) : null;
-  const level = difficultyId ? levels.find((row) => row.id === difficultyId) : undefined;
-  const mappings = db
+  projectId: string,
+): { account: Chain | null; project: Chain | null } {
+  const settings = db
     .select({ defaultMapping: s.agentSettings.defaultMapping })
     .from(s.agentSettings)
     .where(eq(s.agentSettings.userId, ownerId))
     .get();
-  const projectMapping = db
-    .select({ levels: s.agentProjectMapping.levels })
+  const project = db
+    .select({ chain: s.agentProjectMapping.chain })
     .from(s.agentProjectMapping)
     .where(
       and(
         eq(s.agentProjectMapping.userId, ownerId),
-        eq(s.agentProjectMapping.projectId, job.projectId),
+        eq(s.agentProjectMapping.projectId, projectId),
       ),
     )
     .get();
-  return {
-    level,
-    resolved: resolveChain({
-      levels,
-      difficultyId: level?.id ?? null,
-      project: projectMapping ? { levels: projectMapping.levels } : null,
-      defaults: mappings?.defaultMapping ?? null,
-    }),
-  };
+  return { account: settings?.defaultMapping?.chain ?? null, project: project?.chain ?? null };
+}
+
+/**
+ * The model chain a job runs with (`resolveJobModel`): the owner's choice when approving, else
+ * the requester's suggestion when one of the owner's computers has it, else the stage's, else the
+ * owner's default for the project, else their account default.
+ */
+export function resolveModelForJob(
+  deps: AppDeps,
+  owner: { ownerId: string; agentId: string | null },
+  job: Pick<JobRow, 'payload' | 'projectId' | 'modelOverride' | 'triggeredById'>,
+): ResolvedChain {
+  const db = deps.db.orm;
+  const defaults = ownerDefaults(db, owner.ownerId, job.projectId);
+  const projectName =
+    db.select({ name: s.project.name }).from(s.project).where(eq(s.project.id, job.projectId)).get()
+      ?.name ?? 'this project';
+  const requester = payloadStep(job.payload.suggestedModel);
+  const suggestedById =
+    typeof job.payload.suggestedById === 'string'
+      ? job.payload.suggestedById
+      : (job.triggeredById ?? null);
+  const requesterName = suggestedById
+    ? getUserSummaries(db, [suggestedById]).get(suggestedById)?.username
+    : undefined;
+  const stage = payloadStep(job.payload.stageModel);
+  return resolveJobModel({
+    override: job.modelOverride ?? null,
+    requester: requester
+      ? { step: requester, by: requesterName ? `@${requesterName}` : 'the requester' }
+      : null,
+    stage: stage
+      ? { step: stage, stage: typeof job.payload.stage === 'string' ? job.payload.stage : 'stage' }
+      : null,
+    project: defaults.project ? { chain: defaults.project, name: projectName } : null,
+    account: defaults.account,
+    options: owner.agentId ? collectModelOptions(deps, [owner.agentId], true) : null,
+  });
 }
 
 function recentReplies(
@@ -960,15 +1092,9 @@ export function jobBrief(
       ? orm.select().from(s.task).where(eq(s.task.id, item.id)).get()
       : undefined;
 
-  // Difficulty and the chain.
-  const { level, resolved: mapped } = mappedChain(orm, agent.ownerId, job, task);
-  const jobStage =
-    typeof job.payload.stage === 'string' ? job.payload.stage : (context.target.status ?? null);
-  // Agent access: the model the owner chose when approving the request wins over the mappings.
-  const override = job.modelOverride?.length ? job.modelOverride : null;
-  const resolved = override
-    ? { chain: override, source: 'chosen by your owner when approving the request' }
-    : mapped;
+  // The model: the owner's choice when approving, else a suggestion their computers have, else
+  // their default for the project, else their account default.
+  const resolved = resolveModelForJob(deps, { ownerId: agent.ownerId, agentId: agent.id }, job);
 
   // Harness sessions on this machine (most recent first).
   const resume: Record<string, string> = {};
@@ -994,14 +1120,18 @@ export function jobBrief(
     }
   }
 
-  // BAT#28: a follow-up goes to the harness that has been working on the item.
+  // BAT#28: a follow-up goes to the harness that has been working on the item, unless a model
+  // was chosen or suggested for it.
   let chain = resolved.chain;
   let chainSource = resolved.source;
-  if (item && !override && FOLLOW_UP_KINDS.has(job.kind)) {
+  let modelSource = resolved.modelSource;
+  const defaulted = modelSource === 'project' || modelSource === 'account';
+  if (item && defaulted && FOLLOW_UP_KINDS.has(job.kind)) {
     const working = sessionHarness ?? lastWriteHarness(orm, agent.id, item);
     if (working && chain[0]?.harness !== working) {
       chain = preferHarness(chain, working, AGENT_RUNNER_LIMITS.chain);
       chainSource = `${resolved.source}; ${HARNESS_LABELS[working]} first: it has been working on this ${item.type}`;
+      modelSource = 'working_harness';
     }
   }
 
@@ -1019,9 +1149,11 @@ export function jobBrief(
       title: context.target.title,
       url: context.target.url,
     },
-    difficulty: level ? { id: level.id, name: level.name } : null,
+    // Deprecated (difficulty was removed): kept for desktop apps that still read it.
+    difficulty: null,
     chain,
     chainSource,
+    modelSource,
     resume,
   };
   if (job.kind === 'catch_up') {
@@ -1056,17 +1188,8 @@ export function jobBrief(
       ...(pipeline && !pipeline.isDefault ? [`- Pipeline: ${pipeline.name}`] : []),
       ...(context.target.status ? [`- Status: ${context.target.status}`] : []),
       ...(task ? [`- Priority: ${PRIORITIES[task.priority]?.label ?? 'None'}`] : []),
-      ...(task
-        ? [
-            `- Difficulty: ${level?.name ?? 'none'}${
-              override
-                ? ' (your owner chose your model for this job)'
-                : jobStage
-                  ? ` (the task’s difficulty in ${jobStage}; it picked your model)`
-                  : ''
-            }`,
-          ]
-        : []),
+      ...(chain[0] ? [`- Model: ${stepLabel(chain[0])} (${chainSource})`] : []),
+      ...resolved.skipped.map((note) => `- Not used: ${note}`),
     ];
     sections.push(
       `## ${item.type === 'task' ? 'Task' : 'Issue'} ${ref}: ${item.title}\n\n${facts.join('\n')}\n\n### ${
@@ -1188,24 +1311,6 @@ export function recordUsage(
 ) {
   const { usage } = finishJobInputSchema.parse(input);
   if (usage.length === 0) return;
-  const { orm } = deps.db;
-  const item = jobItem(orm, job);
-  const task =
-    item?.type === 'task'
-      ? orm
-          .select({ id: s.task.id, statusId: s.task.statusId, difficultyId: s.task.difficultyId })
-          .from(s.task)
-          .where(eq(s.task.id, item.id))
-          .get()
-      : undefined;
-  const difficultyId = task ? jobDifficultyId(orm, job, task) : null;
-  const level = difficultyId
-    ? orm
-        .select({ name: s.difficulty.name })
-        .from(s.difficulty)
-        .where(eq(s.difficulty.id, difficultyId))
-        .get()
-    : undefined;
   const now = new Date();
   deps.db.write((tx) => {
     // One row per harness run, in the order they ran (a millisecond apart).
@@ -1217,7 +1322,6 @@ export function recordUsage(
           agentUserId: agent.id,
           jobId: job.id,
           projectId: job.projectId,
-          difficulty: level?.name ?? null,
           harness: entry.harness,
           model: entry.model,
           reportedModel: entry.reportedModel,
@@ -1346,7 +1450,7 @@ function runModel(row: Pick<UsageRow, 'model' | 'reportedModel'>): string {
 }
 
 /**
- * `GET /api/me/agent/stats?days=`: the owner's agent usage per day, harness, model, level. Costs:
+ * `GET /api/me/agent/stats?days=`: the owner's agent usage per day, harness and model. Costs:
  * what the harness reported, else an estimate at API prices (`shared/modelPrices.ts`, BAT#25);
  * runs of models without a known price count in `unpricedRuns`. Models are grouped by their
  * canonical id, so one model written several ways is one row.
@@ -1363,14 +1467,12 @@ export function agentStats(deps: AppDeps, actor: Actor, days: number): AgentStat
   const byDay = new Map<string, AgentUsageTotals>();
   const byHarness = new Map<string, AgentUsageTotals>();
   const byModel = new Map<string, AgentUsageTotals & { harness: string; model: string }>();
-  const byDifficulty = new Map<string, AgentUsageTotals>();
   const byOutcome = new Map<string, number>();
   const jobsSeen = {
     all: new Set<string>(),
     day: new Map<string, Set<string>>(),
     harness: new Map<string, Set<string>>(),
     model: new Map<string, Set<string>>(),
-    difficulty: new Map<string, Set<string>>(),
   };
   const estimates = new Map<string, number | null>();
   const add = (target: AgentUsageTotals, seen: Set<string>, row: UsageRow) => {
@@ -1426,7 +1528,6 @@ export function agentStats(deps: AppDeps, actor: Actor, days: number): AgentStat
       })),
       row,
     );
-    add(...bucket(byDifficulty, jobsSeen.difficulty, row.difficulty ?? 'None', emptyTotals), row);
     byOutcome.set(row.outcome, (byOutcome.get(row.outcome) ?? 0) + 1);
   }
   const sorted = <T>(entries: Iterable<[string, T]>) =>
@@ -1437,7 +1538,6 @@ export function agentStats(deps: AppDeps, actor: Actor, days: number): AgentStat
     byDay: sorted(byDay).map(([day, value]) => ({ day, ...value })),
     byHarness: sorted(byHarness).map(([harness, value]) => ({ harness, ...value })),
     byModel: sorted(byModel).map(([, value]) => value),
-    byDifficulty: sorted(byDifficulty).map(([difficulty, value]) => ({ difficulty, ...value })),
     byOutcome: sorted(byOutcome).map(([outcome, jobs]) => ({ outcome, jobs })),
   };
 }

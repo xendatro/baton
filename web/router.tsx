@@ -97,10 +97,8 @@ const shellRoutes: RouteObject[] = [
             path: 'labels',
             ...page(() => import('./pages/project-settings/LabelsSettingsPage')),
           },
-          {
-            path: 'difficulty',
-            ...page(() => import('./pages/project-settings/DifficultySettingsPage')),
-          },
+          // Difficulty was removed (2026-09-29): old links land on Pipelines.
+          { path: 'difficulty', element: <Navigate to="../pipelines" replace /> },
           {
             path: 'access',
             ...page(() => import('./pages/project-settings/AccessSettingsPage')),

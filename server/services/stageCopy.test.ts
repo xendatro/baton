@@ -136,6 +136,7 @@ describe('new stages', () => {
       sendBackTo: stages(projectA)
         .slice(0, 5)
         .map((item) => item.id),
+      suggestedModel: null,
     });
   });
 });

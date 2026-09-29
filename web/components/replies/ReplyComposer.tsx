@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import type { ReplyParentType } from '@shared/constants';
 import { agentUsername } from '@shared/principals';
+import type { ChainEntry } from '@shared/schemas/agentRunner';
 import type { Attachment, Reply } from '@shared/schemas/core';
 import { AttachmentList } from '@web/components/attachments/AttachmentList';
 import { AttachmentUploader } from '@web/components/attachments/AttachmentUploader';
@@ -10,12 +11,14 @@ import { Kbd } from '@web/components/common/Kbd';
 import { Spinner } from '@web/components/common/Spinner';
 import { RichTextEditor, type RichTextEditorHandle } from '@web/components/editor/RichTextEditor';
 import { Button } from '@web/components/ui/button';
+import { mentionsAgent } from '@web/lib/agentModels';
 import { errorMessage } from '@web/lib/api';
 import { useMe, useSession } from '@web/lib/auth';
 import { findMentions } from '@web/lib/mentions';
 import { useProjectAccess } from '@web/lib/permissions';
 import { readReplyDraft, writeReplyDraft, type ReplyDraft } from '@web/lib/replyDrafts';
 import { useCreateReply, useReplies } from './queries';
+import { SuggestModelChip } from './SuggestModelChip';
 import { threadAgents, type ThreadWrite } from './threadAgents';
 
 export interface ReplyComposerProps {
@@ -74,6 +77,9 @@ function Composer({
   const [body, setBody] = useState(saved?.body ?? '');
   const [attachments, setAttachments] = useState<Attachment[]>(saved?.attachments ?? []);
   const create = useCreateReply(parentType, parentId);
+  // A model suggested to the agents the reply @-mentions (only a suggestion to their owners).
+  const [suggested, setSuggested] = useState<ChainEntry | null>(null);
+  const agentMentioned = useMemo(() => mentionsAgent(body), [body]);
   // Mentioning your own agent where it isn't connected: say so before sending.
   const ownUsername = useMe().data?.user.username ?? null;
   const ownAgent = ownUsername ? agentUsername(ownUsername).toLowerCase() : null;
@@ -113,12 +119,14 @@ function Composer({
         body: text,
         attachmentIds: attachments.length ? attachments.map((a) => a.id) : undefined,
         parentReplyId,
+        ...(suggested && agentMentioned ? { suggestedModel: suggested } : {}),
       },
       {
         onError: () => saveDraft({ body, attachments }),
         onSuccess: (reply) => {
           setBody('');
           setAttachments([]);
+          setSuggested(null);
           editor.current?.clear();
           toast.success('Reply posted');
           onSent?.(reply);
@@ -162,7 +170,12 @@ function Composer({
         </p>
       ) : null}
       <div className="flex flex-wrap items-start justify-between gap-2">
-        <AttachmentUploader teamId={teamId} onUploaded={addAttachment} />
+        <div className="flex flex-wrap items-center gap-2">
+          <AttachmentUploader teamId={teamId} onUploaded={addAttachment} />
+          {projectId && agentMentioned ? (
+            <SuggestModelChip projectId={projectId} value={suggested} onChange={setSuggested} />
+          ) : null}
+        </div>
         <div className="flex items-center gap-3">
           <span className="hidden text-xs text-muted-foreground sm:inline-flex sm:items-center sm:gap-1">
             <Kbd keys="mod+enter" /> to send

@@ -178,6 +178,48 @@ describe('Requests page', () => {
     );
   });
 
+  it('shows who suggested which model, and which model a decided request ran with', async () => {
+    mockApi({
+      '/api/me': testMe(),
+      '/api/me/agent/model-options': MODEL_OPTIONS,
+      '/api/me/agent/requests': {
+        requests: [
+          requestFixture({
+            // Caden's suggestion isn't on Ethan's computers: Run with starts from his default.
+            suggestedModel: { harness: 'codex', model: 'gpt-6-sol', effort: 'high' },
+            suggestedModelFrom: 'requester',
+            suggestedSource: 'your default for Baton',
+          }),
+          requestFixture({
+            jobId: 'job-2',
+            status: 'approved',
+            summary: 'Start BAT-41 as Caden asked',
+            decidedAt: new Date().toISOString(),
+            suggestedModel: { harness: 'claude', model: 'sonnet', effort: '' },
+            suggestedModelFrom: 'stage',
+            stage: 'Planning',
+            ranWith: { harness: 'claude', model: 'claude-sonnet-5', effort: 'high' },
+          }),
+        ],
+      },
+    });
+    renderWithApp(<RequestsPage />);
+    const card = await screen.findByRole('article', {
+      name: 'Request: Reply to Caden’s message on BAT-40',
+    });
+    const suggestion = within(card).getByTestId('request-suggestion');
+    expect(suggestion).toHaveTextContent('Caden suggests Codex · gpt-6-sol · high');
+    expect(suggestion).toHaveTextContent('so it starts from your default');
+    expect(within(card).getByRole('combobox', { name: 'Run with (BAT-40): model' })).toHaveValue(
+      'opus',
+    );
+    expect(within(card).getByText('Starts from your default for Baton.')).toBeInTheDocument();
+    expect(await screen.findByText('The stage Planning suggests')).toBeInTheDocument();
+    expect(
+      screen.getByText(/ran with Claude Code · claude-sonnet-5 · high/, { exact: false }),
+    ).toBeInTheDocument();
+  });
+
   it('says so when nothing waits, with a way to who can start your agent', async () => {
     mockApi({ '/api/me': testMe(), '/api/me/agent/requests': { requests: [] } });
     renderWithApp(<RequestsPage />);

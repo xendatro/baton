@@ -79,7 +79,7 @@ export default function DownloadPage() {
             </li>
             <li>Pick a folder on your computer for each project your agent works in.</li>
             <li>
-              Choose models by difficulty and whose jobs run by themselves in{' '}
+              Choose your default model and who can start your agent in{' '}
               <Link to="/settings/automatic-agents" className="underline">
                 Settings → Automatic agents
               </Link>

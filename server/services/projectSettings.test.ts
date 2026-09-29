@@ -33,8 +33,8 @@ import {
 
 /**
  * Your settings for one project (BAT-29): notification overrides that fall back to the account's
- * wherever notifications are created, your agent's notification level there, and your models by
- * the project's difficulty levels.
+ * wherever notifications are created, your agent's notification level there, and your agent's
+ * default model chain there.
  */
 
 let ctx: TestContext;
@@ -123,7 +123,7 @@ describe('notification overrides', () => {
     expect(settings).toMatchObject({
       notifications: null,
       agentNotifications: null,
-      models: { levels: {} },
+      models: { chain: [] },
       defaults: { notifications: { level: 'all' }, agentNotifications: 'needs_me' },
     });
     const task = followedTask(api);
@@ -203,48 +203,40 @@ describe('GET/PUT /api/projects/:projectId/my-settings', () => {
     return web(ctx, await signIn(ctx, user));
   }
 
-  it('reads and saves your models for the project', async () => {
+  it('reads and saves your default model for the project', async () => {
     const headers = await session(mia);
     const url = `/api/projects/${api.project.id}/my-settings`;
-    const levels = ctx.db.orm
-      .select()
-      .from(s.difficulty)
-      .where(eq(s.difficulty.projectId, api.project.id))
-      .all();
-    const hard = levels.find((level) => level.name === 'Hard');
-    if (!hard) throw new Error('no Hard level');
 
     const saved = await ctx.app.request(
       url,
-      json(
-        'PUT',
-        { models: { levels: { [hard.id]: [{ harness: 'codex', effort: 'high' }] } } },
-        headers,
-      ),
+      json('PUT', { models: { chain: [{ harness: 'codex', effort: 'high' }] } }, headers),
     );
     expect(saved.status).toBe(200);
-    expect(myProjectSettingsSchema.parse(await saved.json()).models.levels).toEqual({
-      [hard.id]: [{ harness: 'codex', model: '', effort: 'high' }],
-    });
-    // The same stored mappings Automatic agents reads.
+    expect(myProjectSettingsSchema.parse(await saved.json()).models.chain).toEqual([
+      { harness: 'codex', model: '', effort: 'high' },
+    ]);
+    // The same stored default Automatic agents lists under "Projects with their own default".
     const mappings = modelMappingsSchema.parse(
       await (await ctx.app.request('/api/me/agent/models', { headers })).json(),
     );
-    expect(mappings.projects[api.project.id]?.levels[hard.id]?.[0]?.harness).toBe('codex');
+    expect(mappings.projects[api.project.id]?.chain[0]?.harness).toBe('codex');
 
-    const bad = await ctx.app.request(
+    // Difficulty levels are gone: the old shape isn't a chain.
+    const old = await ctx.app.request(
       url,
-      json(
-        'PUT',
-        { models: { levels: { [web2.statuses[0]!.id]: [{ harness: 'claude' }] } } },
-        headers,
-      ),
+      json('PUT', { models: { levels: { x: [{ harness: 'claude' }] } } }, headers),
     );
-    expect(bad.status).toBe(400);
+    expect(old.status).toBe(400);
 
-    // Empty: back to my defaults.
-    await ctx.app.request(url, json('PUT', { models: { levels: {} } }, headers));
-    expect(ctx.db.orm.select().from(s.agentProjectMapping).all()).toEqual([]);
+    // Empty: back to my account default (the row stays, without a chain).
+    await ctx.app.request(url, json('PUT', { models: { chain: [] } }, headers));
+    expect(
+      ctx.db.orm.select({ chain: s.agentProjectMapping.chain }).from(s.agentProjectMapping).all(),
+    ).toEqual([{ chain: null }]);
+    const cleared = modelMappingsSchema.parse(
+      await (await ctx.app.request('/api/me/agent/models', { headers })).json(),
+    );
+    expect(cleared.projects).toEqual({});
   });
 
   it('is personal and needs only to see the project', async () => {

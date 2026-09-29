@@ -93,7 +93,6 @@ import {
 import { BoardBackLink, ReadOnlyNotice, SettingsCard, SettingsHeader } from './common';
 import { CopyPipelineDialog } from './CopyPipelineDialog';
 import { CreateFromExistingDialog } from './CreateFromExistingDialog';
-import { useDifficulties } from '../projects/difficultyQueries';
 import { PipelineDiagram } from './PipelineDiagram';
 import { PipelineEditor } from './PipelineEditor';
 import { PipelinesBar } from './PipelinesBar';
@@ -189,7 +188,6 @@ function Statuses({ teamId, projectId }: { teamId: string; projectId: string }) 
   // After "Create" from the menu, the new stage's name takes the focus, not the menu's trigger.
   const keepMenuFocus = useRef(false);
   const principals = usePrincipalOptions(teamId, projectId);
-  const difficulties = useDifficulties(projectId);
   const me = useMe();
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
@@ -554,6 +552,7 @@ function Statuses({ teamId, projectId }: { teamId: string; projectId: string }) 
       />
       <StatusDialog
         state={dialog}
+        projectId={projectId}
         statuses={items}
         options={principals.options}
         teamId={teamId}
@@ -563,7 +562,6 @@ function Statuses({ teamId, projectId }: { teamId: string; projectId: string }) 
           create.mutateAsync({ ...input, ...(selected ? { pipelineId: selected.id } : {}) })
         }
         onUpdate={(id, input) => update.mutateAsync({ id, input })}
-        difficulties={difficulties.data}
       />
       <CreateFromExistingDialog
         open={creatingFrom}

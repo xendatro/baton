@@ -55,7 +55,6 @@ import {
   type ListGroup,
   type TaskView,
 } from './filters';
-import { useDifficulties } from '../projects/difficultyQueries';
 import { ALL_PIPELINES, rememberPipelineTab, resolvePipelineTab } from './pipelineTab';
 import { useAssignables, useBoard, useMoveTask, useTaskList } from './queries';
 import { NoStartStageNotices } from './NoStartStageNotices';
@@ -152,7 +151,6 @@ function Tasks({ team, project }: { team: MeTeam; project: MeProject }) {
     allStatuses.data,
   );
   const labels = useLabels(project.id);
-  const difficulties = useDifficulties(project.id);
   const people = useAssignables(team.id);
   // Wait for the tab (not all pipelines' tasks first, then one's).
   const tabReady = tab !== undefined || pipelines.isError;
@@ -368,7 +366,6 @@ function Tasks({ team, project }: { team: MeTeam; project: MeProject }) {
         }
         onQuickAdd={(statusId) => newTask(statusId)}
         pipelineNameOf={pipelineNameOf}
-        difficulties={difficulties.data}
         onMove={(variables) =>
           move.mutate(variables, {
             onError: (error) => toast.error(errorMessage(error, 'Couldn’t move the task.')),

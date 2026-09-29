@@ -1,68 +1,118 @@
 import { describe, expect, it } from 'vitest';
-import { resolveChain, runnableChain } from './agentChains';
-import type { Chain } from './schemas/agentRunner';
+import { resolveJobModel, runnableChain, stepLabel, withFirst } from './agentChains';
+import type { Chain, ModelOptions } from './schemas/agentRunner';
 
-const levels = [
-  { id: 'easy', name: 'Easy', position: 0 },
-  { id: 'normal', name: 'Normal', position: 1 },
-  { id: 'hard', name: 'Hard', position: 2 },
-];
 const opus: Chain = [{ harness: 'claude', model: 'opus', effort: 'high' }];
 const sonnet: Chain = [{ harness: 'claude', model: 'sonnet', effort: '' }];
 const codex: Chain = [{ harness: 'codex', model: '', effort: 'high' }];
+const sol = { harness: 'codex' as const, model: 'gpt-6-sol', effort: 'high' };
+const haiku = { harness: 'claude' as const, model: 'haiku', effort: '' };
 
-describe('resolveChain', () => {
-  it('uses the level’s own mapping', () => {
+/** The owner's computers: Claude Code (opus, sonnet, haiku) and Codex (gpt-6-sol). */
+const options: ModelOptions = {
+  harnesses: [
+    {
+      id: 'claude',
+      online: true,
+      machines: ['Desk'],
+      reported: true,
+      models: ['opus', 'sonnet', 'haiku'].map((id) => ({
+        id,
+        label: null,
+        efforts: ['low', 'high'],
+        online: true,
+      })),
+      efforts: ['low', 'high'],
+    },
+    {
+      id: 'codex',
+      online: true,
+      machines: ['Desk'],
+      reported: true,
+      models: [{ id: 'gpt-6-sol', label: null, efforts: ['high'], online: true }],
+      efforts: ['high'],
+    },
+  ],
+};
+const claudeOnly: ModelOptions = { harnesses: options.harnesses.slice(0, 1) };
+
+describe('resolveJobModel', () => {
+  it('runs the model chosen when approving, exactly', () => {
     expect(
-      resolveChain({
-        levels,
-        difficultyId: 'hard',
-        project: { levels: { hard: codex } },
-        defaults: { chain: opus, levels: {} },
+      resolveJobModel({
+        override: codex,
+        requester: { step: haiku, by: '@caden' },
+        project: { chain: sonnet, name: 'API' },
+        account: opus,
+        options,
       }),
-    ).toEqual({ chain: codex, source: 'Hard' });
-  });
-
-  it('falls back to the closest mapped level below, then above', () => {
-    const project = { levels: { easy: sonnet, hard: codex } };
-    expect(resolveChain({ levels, difficultyId: 'normal', project, defaults: null })).toEqual({
-      chain: sonnet,
-      source: 'Easy (closest mapped level)',
-    });
-    expect(
-      resolveChain({
-        levels,
-        difficultyId: 'easy',
-        project: { levels: { hard: codex } },
-        defaults: null,
-      }),
-    ).toEqual({ chain: codex, source: 'Hard (closest mapped level)' });
-  });
-
-  it('then the account default for a level of that name, then the default chain', () => {
-    const defaults = { chain: opus, levels: { hard: codex } };
-    expect(resolveChain({ levels, difficultyId: 'hard', project: null, defaults })).toEqual({
+    ).toEqual({
       chain: codex,
-      source: 'Hard (account default)',
-    });
-    expect(resolveChain({ levels, difficultyId: 'easy', project: null, defaults })).toEqual({
-      chain: opus,
-      source: 'account default',
+      source: 'chosen by your owner when approving the request',
+      modelSource: 'approval',
+      skipped: [],
     });
   });
 
-  it('uses the default chain for tasks without a level, and Claude opus without any mapping', () => {
+  it('takes the requester’s suggestion when a computer has it, the default after it', () => {
+    const resolved = resolveJobModel({
+      requester: { step: sol, by: '@caden' },
+      stage: { step: haiku, stage: 'Planning' },
+      project: { chain: sonnet, name: 'API' },
+      account: opus,
+      options,
+    });
+    expect(resolved.chain).toEqual([sol, ...sonnet]);
+    expect(resolved.modelSource).toBe('requester');
+    expect(resolved.source).toBe('suggested by @caden; then your default for API');
+  });
+
+  it('skips a suggestion no computer has, then uses the stage’s', () => {
+    const resolved = resolveJobModel({
+      requester: { step: sol, by: '@caden' },
+      stage: { step: haiku, stage: 'Planning' },
+      project: { chain: sonnet, name: 'API' },
+      account: opus,
+      options: claudeOnly,
+    });
+    expect(resolved.chain).toEqual([haiku, ...sonnet]);
+    expect(resolved.modelSource).toBe('stage');
+    expect(resolved.skipped).toEqual([
+      'suggested by @caden (Codex · gpt-6-sol · high), not used: You don’t have Codex set up on any of your computers',
+    ]);
+  });
+
+  it('falls back to the project default, then the account default, then Claude opus', () => {
+    const unavailable = { step: sol, by: '@caden' };
     expect(
-      resolveChain({
-        levels,
-        difficultyId: null,
-        project: { levels: { easy: sonnet } },
-        defaults: { chain: codex, levels: {} },
+      resolveJobModel({
+        requester: unavailable,
+        project: { chain: sonnet, name: 'API' },
+        account: opus,
+        options: claudeOnly,
       }),
-    ).toEqual({ chain: codex, source: 'account default' });
+    ).toMatchObject({ chain: sonnet, modelSource: 'project', source: 'your default for API' });
     expect(
-      resolveChain({ levels, difficultyId: null, project: null, defaults: null }).chain,
-    ).toEqual(opus);
+      resolveJobModel({ project: { chain: [], name: 'API' }, account: codex, options }),
+    ).toMatchObject({ chain: codex, modelSource: 'account', source: 'your account default' });
+    expect(resolveJobModel({})).toMatchObject({
+      chain: [{ harness: 'claude', model: 'opus', effort: 'high' }],
+      modelSource: 'account',
+    });
+  });
+
+  it('takes suggestions as they are when no computer has reported yet', () => {
+    expect(
+      resolveJobModel({ stage: { step: sol, stage: 'Build' }, account: opus, options: null }),
+    ).toMatchObject({ chain: [sol, ...opus], modelSource: 'stage' });
+  });
+});
+
+describe('withFirst and stepLabel', () => {
+  it('puts a step first without repeating it', () => {
+    expect(withFirst(opus[0]!, [...sonnet, ...opus])).toEqual([...opus, ...sonnet]);
+    expect(stepLabel(sol)).toBe('Codex · gpt-6-sol · high');
+    expect(stepLabel({ harness: 'claude', model: '', effort: '' })).toBe('Claude Code');
   });
 });
 

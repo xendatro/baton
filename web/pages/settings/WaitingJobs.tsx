@@ -149,7 +149,7 @@ function runReason(run: JobRun | null): string {
 function harnessText(run: JobRun): string | null {
   if (!run.harness) return null;
   const label = HARNESS_LABELS[run.harness as HarnessId] ?? run.harness;
-  return run.model ? `${label} · ${run.model}` : label;
+  return [label, run.model, run.effort].filter(Boolean).join(' · ');
 }
 
 function JobRow({ job, options }: { job: WaitingJob; options: RowOptions }) {

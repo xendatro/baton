@@ -20,7 +20,7 @@ import { appPaths } from '../lib/urls';
 import { requireProjectAccess } from './access';
 import { recordActivity } from './activity';
 import { jobChanged, jobItem } from './agentJobs';
-import { mappedChain } from './agentRunner';
+import { jobSuggestion, ranWithOf, resolveModelForJob } from './agentRunner';
 import { findAgentId, personActor } from './agents';
 import { emitAfterCommit } from './events';
 import { findItem, type ItemInfo } from './items';
@@ -248,8 +248,14 @@ function person(summary: UserSummary | undefined, fallback: string) {
     : { id: '', username: null, name: fallback };
 }
 
-function toRequests(db: DbExecutor, rows: readonly JobRow[], ownerId: string): AgentRequest[] {
+function toRequests(
+  deps: AppDeps,
+  rows: readonly JobRow[],
+  owner: { ownerId: string; agentId: string | null },
+): AgentRequest[] {
   if (rows.length === 0) return [];
+  const db = deps.db.orm;
+  const { ownerId } = owner;
   const users = getUserSummaries(db, [
     ownerId,
     ...rows.flatMap((row) => [row.agentUserId, row.triggeredById]),
@@ -275,12 +281,18 @@ function toRequests(db: DbExecutor, rows: readonly JobRow[], ownerId: string): A
           .all()
     ).map((row) => [row.id, row]),
   );
+  const ran = ranWithOf(
+    db,
+    rows.map((row) => row.id),
+  );
   return rows.map((job) => {
     const item: ItemInfo | null = jobItem(db, job);
     const requester = job.triggeredById ? (users.get(job.triggeredById) ?? null) : null;
     const wording = requestWording(job, requester?.name ?? null, item?.ref ?? null);
     const reply = job.triggerReplyId ? replies.get(job.triggerReplyId) : undefined;
-    const { resolved } = mappedChain(db, ownerId, job);
+    // What runs without a choice: the "Run with" picker starts at its first step.
+    const resolved = resolveModelForJob(deps, owner, { ...job, modelOverride: null });
+    const suggestion = jobSuggestion(job);
     return {
       jobId: job.id,
       kind: job.kind,
@@ -308,6 +320,9 @@ function toRequests(db: DbExecutor, rows: readonly JobRow[], ownerId: string): A
       stage: stageOfJob(job),
       suggestedChain: resolved.chain,
       suggestedSource: resolved.source,
+      suggestedModel: suggestion?.step ?? null,
+      suggestedModelFrom: suggestion?.from ?? null,
+      ranWith: ran.get(job.id) ?? null,
       createdAt: job.createdAt.toISOString(),
       decidedAt: (job.requestDecidedAt ?? job.clearedAt)?.toISOString() ?? null,
       reason: job.requestReason ?? null,
@@ -352,7 +367,7 @@ export function listAgentRequests(deps: AppDeps, actor: Actor): { requests: Agen
     .limit(50)
     .all()
     .filter((row) => !isOpenRequest(row));
-  return { requests: toRequests(orm, [...open, ...settled], owner.ownerId) };
+  return { requests: toRequests(deps, [...open, ...settled], owner) };
 }
 
 function requireOwnersRequest(deps: AppDeps, owner: Owner, jobId: string): JobRow {
@@ -364,11 +379,7 @@ function requireOwnersRequest(deps: AppDeps, owner: Owner, jobId: string): JobRo
 }
 
 function oneRequest(deps: AppDeps, owner: Owner, jobId: string): AgentRequest {
-  const [request] = toRequests(
-    deps.db.orm,
-    [requireOwnersRequest(deps, owner, jobId)],
-    owner.ownerId,
-  );
+  const [request] = toRequests(deps, [requireOwnersRequest(deps, owner, jobId)], owner);
   if (!request) throw errors.notFound('Request');
   return request;
 }
@@ -565,9 +576,9 @@ export function itemAgentRequests(
   });
   const mine = ownAgentId
     ? toRequests(
-        orm,
+        deps,
         rows.filter((row) => row.agentUserId === ownAgentId && isOpenRequest(row)),
-        viewer.userId,
+        { ownerId: viewer.userId, agentId: ownAgentId },
       )
     : [];
   return { mine, waiting };

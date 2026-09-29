@@ -79,8 +79,9 @@ async function createIssue(
   projectId: string,
   body: { title: string; body?: string; labelIds?: string[] },
 ) {
+  // These specs cover the threaded forum view; new issues are chats unless asked (e2e/chat.spec.ts).
   const res = await page.request.post(`/api/projects/${projectId}/issues`, {
-    data: body,
+    data: { conversationMode: 'forum', ...body },
     headers: ORIGIN,
   });
   expect(res.status(), await res.text()).toBe(201);

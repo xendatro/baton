@@ -19,7 +19,11 @@ test('reacts to a task and a reply, and takes the reactions back', async ({ page
   expect(project.status(), await project.text()).toBe(201);
   const { id: projectId } = (await project.json()) as { id: string };
   const task = await page.request.post(`/api/projects/${projectId}/tasks`, {
-    data: { title: 'Launch the rocket', description: 'Countdown from ten.' },
+    data: {
+      title: 'Launch the rocket',
+      description: 'Countdown from ten.',
+      conversationMode: 'forum',
+    },
     headers: ORIGIN,
   });
   expect(task.status(), await task.text()).toBe(201);

@@ -1,5 +1,11 @@
 import { z } from 'zod';
-import { CLAIM_LEASE, ISSUE_LINK_KINDS, LIMITS, PRIORITY_KEYS } from '@shared/constants';
+import {
+  CLAIM_LEASE,
+  CONVERSATION_MODES,
+  ISSUE_LINK_KINDS,
+  LIMITS,
+  PRIORITY_KEYS,
+} from '@shared/constants';
 import { formatTaskRef } from '@shared/refs';
 import { dueDateSchema } from '@shared/schemas/common';
 import {
@@ -437,7 +443,7 @@ const getTaskTool = defineTool({
   name: 'get_task',
   title: 'Get task',
   description:
-    "Full context of a task before you work on it: description (markdown), status, priority, due date, assignees, labels, blockers (blockedBy) and tasks waiting for it (blocking) with their statuses, linked issues (fixes/relates), the claim (holder, key, expiry), attachments, the latest 20 replies, each with parentReplyId (the reply it answers, null for a top-level comment) (replyCount says how many there are; list_replies pages through them all) and the latest 20 history entries (get_activity pages through all of them). When the project has a pipeline, `stage` tells you what to do: the stage's instructions, its exit criteria with the evidence given so far, approvals (given, required, whether you may approve), `missing` (what still blocks moving on), `next` (the stage it moves on to), `canMoveTo` ({ forward: { id, name, missing[] } | null, back: [{ id, name }] }: the only moves you can make — forward to the next stage, or back to one of `back` with a reason), `returnReason` (why it was sent back to this stage: deal with it first), `blockedMoves` (why other statuses are refused), `pool` (claim it with claim_task), `visits` (its stage history) and `previousApprovals` (what reviewers approved or asked for in earlier stages and visits, with their comments: follow them).",
+    "Full context of a task before you work on it: description (markdown), conversationMode (chat: a flat message stream, answer briefly like a chat message; forum: threaded comments), status, priority, due date, assignees, labels, blockers (blockedBy) and tasks waiting for it (blocking) with their statuses, linked issues (fixes/relates), the claim (holder, key, expiry), attachments, the latest 20 replies, each with parentReplyId (the reply it answers, null for a top-level comment) (replyCount says how many there are; list_replies pages through them all) and the latest 20 history entries (get_activity pages through all of them). When the project has a pipeline, `stage` tells you what to do: the stage's instructions, its exit criteria with the evidence given so far, approvals (given, required, whether you may approve), `missing` (what still blocks moving on), `next` (the stage it moves on to), `canMoveTo` ({ forward: { id, name, missing[] } | null, back: [{ id, name }] }: the only moves you can make — forward to the next stage, or back to one of `back` with a reason), `returnReason` (why it was sent back to this stage: deal with it first), `blockedMoves` (why other statuses are refused), `pool` (claim it with claim_task), `visits` (its stage history) and `previousApprovals` (what reviewers approved or asked for in earlier stages and visits, with their comments: follow them).",
   input: toolInput({ task: taskRef }),
   annotations: { readOnlyHint: true },
   handler: (ctx, input) => {
@@ -516,6 +522,12 @@ const createTaskTool = defineTool({
       .max(LIMITS.attachmentsPerItem)
       .optional()
       .describe('Ids from upload_attachment (pending uploads) to attach'),
+    conversation: z
+      .enum(CONVERSATION_MODES)
+      .optional()
+      .describe(
+        'Response style: chat (default; a flat, Discord-like message stream) or forum (threaded comments)',
+      ),
   }),
   annotations: { destructiveHint: false },
   handler: (ctx, input) => {
@@ -546,6 +558,7 @@ const createTaskTool = defineTool({
           kind: link.kind,
         })),
         attachmentIds: input.attachmentIds,
+        conversationMode: input.conversation,
       },
       TASK_FIELD_NAMES,
     );

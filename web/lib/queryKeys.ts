@@ -124,6 +124,15 @@ export const queryKeys = {
     /** One view of an item's comment tree (BAT-13); `list` covers every view of the item. */
     tree: (parentType: string, parentId: string, view: KeyParams) =>
       ['replies', parentType, parentId, view] as const,
+    /** An item's chat stream (pages of messages); `list` covers it. */
+    chat: (parentType: string, parentId: string) =>
+      ['replies', parentType, parentId, 'chat'] as const,
+  },
+
+  /** The viewer's own catch-up summaries of a chat (`agent_job.changed` refreshes them). */
+  catchUp: {
+    all: () => ['catch-up'] as const,
+    item: (parentType: string, parentId: string) => ['catch-up', parentType, parentId] as const,
   },
 
   activity: (entityType: string, entityId: string) => ['activity', entityType, entityId] as const,

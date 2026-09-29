@@ -102,7 +102,11 @@ test('denying a role REPLY in one project removes the reply box there only', asy
   await member.page.goto(seeded.closedTask.path);
   await expect(member.page.getByRole('heading', { name: 'Closed task' })).toBeVisible();
   await expect(member.page.getByRole('region', { name: 'Description' })).toBeVisible();
-  await expect(member.page.getByRole('textbox', { name: 'Reply' })).toHaveCount(0);
+  // New tasks are chats: the message box is gone, with a note saying why.
+  await expect(member.page.getByRole('textbox', { name: 'Message' })).toHaveCount(0);
+  await expect(
+    member.page.getByText('You don’t have permission to send messages here.'),
+  ).toBeVisible();
   const refused = await member.page.request.post('/api/replies', {
     data: { parentType: 'task', parentId: seeded.closedTask.id, body: 'Let me in' },
     headers: ORIGIN,
@@ -112,7 +116,7 @@ test('denying a role REPLY in one project removes the reply box there only', asy
   // In the Open project nothing changed.
   await member.page.goto(seeded.openTask.path);
   await expect(member.page.getByRole('heading', { name: 'Open task' })).toBeVisible();
-  await expect(member.page.getByRole('textbox', { name: 'Reply' })).toBeVisible();
+  await expect(member.page.getByRole('textbox', { name: 'Message' })).toBeVisible();
   await member.context.close();
 });
 

@@ -23,7 +23,8 @@ async function setupTask(page: Page) {
   expect(project.status(), await project.text()).toBe(201);
   const { id: projectId } = (await project.json()) as { id: string };
   const task = await page.request.post(`/api/projects/${projectId}/tasks`, {
-    data: { title: 'Pick a database' },
+    // Threads are the forum view (new tasks are chats unless asked).
+    data: { title: 'Pick a database', conversationMode: 'forum' },
     headers: ORIGIN,
   });
   expect(task.status(), await task.text()).toBe(201);

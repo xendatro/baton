@@ -14,6 +14,7 @@ import { toast } from 'sonner';
 import type { MeProject, MeTeam } from '@shared/schemas/core';
 import { titleSchema } from '@shared/schemas/common';
 import type { Issue } from '@shared/schemas/issues';
+import { Conversation, ConversationModeMenuItem } from '@web/components/chat/Conversation';
 import { BackLink } from '@web/components/common/BackLink';
 import { ConfirmDialog } from '@web/components/common/ConfirmDialog';
 import { EmptyState } from '@web/components/common/EmptyState';
@@ -24,8 +25,6 @@ import { Spinner } from '@web/components/common/Spinner';
 import { UserName } from '@web/components/common/UserName';
 import { usePaletteCommands } from '@web/components/palette/registry';
 import { ActivitySheet } from '@web/components/replies/ActivitySheet';
-import { ReplyComposer } from '@web/components/replies/ReplyComposer';
-import { Timeline } from '@web/components/replies/Timeline';
 import { Button } from '@web/components/ui/button';
 import {
   DropdownMenu,
@@ -253,6 +252,8 @@ function IssueDetail({
                 className="h-8"
               />
               <IssueMenu
+                issue={issue}
+                canEdit={canEdit}
                 canDelete={canDelete}
                 onCopyLink={() => void copyText(link)}
                 onCopyRef={() => void copyText(issue.ref, 'Reference')}
@@ -297,21 +298,20 @@ function IssueDetail({
             onLabelsOpenChange={setLabelsOpen}
           />
         </aside>
-        <section
-          aria-labelledby="issue-thread"
-          className="grid min-w-0 content-start gap-4 [grid-area:thread]"
-        >
-          <h2 id="issue-thread" className="flex items-center gap-2 text-sm font-semibold">
-            <MessagesSquareIcon className="size-4 text-muted-foreground" aria-hidden="true" />
-            Conversation
-          </h2>
-          <Timeline parentType="issue" parentId={issue.id} />
-          <ReplyComposer
+        <section aria-label="Conversation" className="min-w-0 [grid-area:thread]">
+          <Conversation
             parentType="issue"
             parentId={issue.id}
             teamId={team.id}
             projectId={issue.projectId}
+            mode={issue.conversationMode}
             item={issue}
+            forumHeading={
+              <h2 className="flex items-center gap-2 text-sm font-semibold">
+                <MessagesSquareIcon className="size-4 text-muted-foreground" aria-hidden="true" />
+                Conversation
+              </h2>
+            }
           />
         </section>
       </div>
@@ -330,11 +330,15 @@ function IssueDetail({
 }
 
 function IssueMenu({
+  issue,
+  canEdit,
   canDelete,
   onCopyLink,
   onCopyRef,
   onDelete,
 }: {
+  issue: Issue;
+  canEdit: boolean;
   canDelete: boolean;
   onCopyLink: () => void;
   onCopyRef: () => void;
@@ -358,6 +362,14 @@ function IssueMenu({
           </span>
           Copy reference
         </DropdownMenuItem>
+        {canEdit ? (
+          <ConversationModeMenuItem
+            parentType="issue"
+            parentId={issue.id}
+            projectId={issue.projectId}
+            mode={issue.conversationMode}
+          />
+        ) : null}
         {canDelete ? (
           <>
             <DropdownMenuSeparator />

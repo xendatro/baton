@@ -188,6 +188,16 @@ export function isInlineImage(mimeType: string): boolean {
   return INLINE_IMAGE_TYPES.has(mimeType);
 }
 
+/**
+ * Videos the browser plays inline (chat), recognised by their content: served with their type
+ * and byte ranges so the player can seek. Everything else still downloads.
+ */
+const INLINE_VIDEO_TYPES: ReadonlySet<string> = new Set(['video/mp4', 'video/webm', 'video/ogg']);
+
+export function isInlineVideo(mimeType: string): boolean {
+  return INLINE_VIDEO_TYPES.has(mimeType);
+}
+
 function isTextType(mimeType: string): boolean {
   return (
     mimeType.startsWith('text/') ||
@@ -767,8 +777,10 @@ export interface AttachmentFile {
   attachment: AttachmentRow;
   /** Absolute path on disk. */
   path: string;
-  /** Rendered inline (raster images); everything else downloads. */
+  /** Rendered inline (raster images and playable videos); everything else downloads. */
   inline: boolean;
+  /** A playable video (served with byte ranges). */
+  video: boolean;
 }
 
 /** The file behind `GET /api/attachments/:id/:filename`. */
@@ -779,7 +791,8 @@ export function getAttachmentFile(deps: AppDeps, actor: Actor, id: string): Atta
     deps.logger.error({ attachmentId: id }, 'attachment file missing on disk');
     throw errors.notFound('Attachment');
   }
-  return { attachment, path: file, inline: isInlineImage(attachment.mimeType) };
+  const video = isInlineVideo(attachment.mimeType);
+  return { attachment, path: file, inline: isInlineImage(attachment.mimeType) || video, video };
 }
 
 /** Attachments of an issue, task, reply or project (non-deleted, oldest first). */

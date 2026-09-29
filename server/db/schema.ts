@@ -33,6 +33,7 @@ import {
   AGENT_NOTIFICATION_LEVELS,
   ACTOR_SOURCES,
   ATTACHMENT_PARENT_TYPES,
+  CONVERSATION_MODES,
   ISSUE_LINK_KINDS,
   NOTIFICATION_TYPES,
   REACTION_TARGET_TYPES,
@@ -714,6 +715,10 @@ export const issue = sqliteTable(
     resolved: bool('resolved').notNull().default(false),
     resolvedAt: timestamp('resolved_at'),
     resolvedById: text('resolved_by_id').references(() => user.id, { onDelete: 'set null' }),
+    /** How its replies are shown (chat or forum). New issues default to chat in the service. */
+    conversationMode: text('conversation_mode', { enum: CONVERSATION_MODES })
+      .notNull()
+      .default('forum'),
     replyCount: integer('reply_count').notNull().default(0),
     lastActivityAt: timestamp('last_activity_at')
       .notNull()
@@ -798,6 +803,10 @@ export const task = sqliteTable(
      * claimed, assigned or leaves the stage.
      */
     poolRule: text('pool_rule', { mode: 'json' }).$type<PrincipalRule>(),
+    /** How its replies are shown (chat or forum). New tasks default to chat in the service. */
+    conversationMode: text('conversation_mode', { enum: CONVERSATION_MODES })
+      .notNull()
+      .default('forum'),
     replyCount: integer('reply_count').notNull().default(0),
     lastActivityAt: timestamp('last_activity_at')
       .notNull()
@@ -1264,6 +1273,38 @@ export const agentJob = sqliteTable(
     index('agent_job_team_idx').on(t.teamId),
     index('agent_job_project_idx').on(t.projectId),
     index('agent_job_trigger_reply_idx').on(t.triggerReplyId),
+  ],
+);
+
+/**
+ * A chat's recent messages summarized for one person by their own agent (`catch_up` job, MCP
+ * `submit_catch_up`). Private: only `user_id` ever reads it.
+ */
+export const catchUpSummary = sqliteTable(
+  'catch_up_summary',
+  {
+    id: idColumn(),
+    /** The person it was written for (the agent's owner). */
+    userId: text('user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    projectId: text('project_id')
+      .notNull()
+      .references(() => project.id, { onDelete: 'cascade' }),
+    itemType: text('item_type', { enum: REPLY_PARENT_TYPES }).notNull(),
+    itemId: text('item_id').notNull(),
+    /** The job that wrote it. */
+    jobId: text('job_id').references(() => agentJob.id, { onDelete: 'set null' }),
+    /** Which messages it covers: `{ kind: 'unread' | 'last', count, fromReplyId, toReplyId }`. */
+    range: text('range', { mode: 'json' }).$type<Record<string, unknown>>().notNull(),
+    /** Markdown. */
+    summary: text('summary').notNull(),
+    createdAt: createdAtColumn(),
+  },
+  (t) => [
+    index('catch_up_summary_user_item_idx').on(t.userId, t.itemType, t.itemId, t.createdAt),
+    index('catch_up_summary_project_idx').on(t.projectId),
+    index('catch_up_summary_job_idx').on(t.jobId),
   ],
 );
 

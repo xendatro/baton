@@ -455,17 +455,23 @@ export const replyListResponseSchema = z.object({
 });
 export type ReplyListResponse = z.infer<typeof replyListResponseSchema>;
 
-export const createReplyInputSchema = z.object({
-  parentType: z.enum(REPLY_PARENT_TYPES),
-  parentId: idSchema,
-  /** The reply this one answers, on the same item; omit for a top-level comment. */
-  parentReplyId: idSchema.optional(),
-  body: z.string().trim().min(LIMITS.replyBody.min, 'Required').max(LIMITS.replyBody.max),
-  /** Pending uploads to attach to the new reply. */
-  attachmentIds: z.array(idSchema).max(LIMITS.attachmentsPerItem).optional(),
-  /** No further discussion needed at this time (agents' done handshake, design §4). */
-  closing: z.boolean().optional(),
-});
+export const createReplyInputSchema = z
+  .object({
+    parentType: z.enum(REPLY_PARENT_TYPES),
+    parentId: idSchema,
+    /** The reply this one answers, on the same item; omit for a top-level comment. */
+    parentReplyId: idSchema.optional(),
+    /** Markdown; may be empty only when files are attached (a chat message of files). */
+    body: z.string().trim().max(LIMITS.replyBody.max),
+    /** Pending uploads to attach to the new reply. */
+    attachmentIds: z.array(idSchema).max(LIMITS.attachmentsPerItem).optional(),
+    /** No further discussion needed at this time (agents' done handshake, design §4). */
+    closing: z.boolean().optional(),
+  })
+  .refine(
+    (value) => value.body.length >= LIMITS.replyBody.min || (value.attachmentIds?.length ?? 0) > 0,
+    { message: 'Required', path: ['body'] },
+  );
 export type CreateReplyInput = z.infer<typeof createReplyInputSchema>;
 
 export const updateReplyInputSchema = z.object({

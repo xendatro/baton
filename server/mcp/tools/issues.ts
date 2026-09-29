@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { LIMITS } from '@shared/constants';
+import { CONVERSATION_MODES, LIMITS } from '@shared/constants';
 import type { ActivityEntry, Attachment, Reply } from '@shared/schemas/core';
 import {
   createIssueInputSchema,
@@ -185,11 +185,19 @@ const listIssuesTool = defineTool({
   },
 });
 
+/** Response style of a new issue or task. */
+const conversationField = z
+  .enum(CONVERSATION_MODES)
+  .optional()
+  .describe(
+    'Response style: chat (default; a flat, Discord-like message stream) or forum (threaded comments)',
+  );
+
 const getIssueTool = defineTool({
   name: 'get_issue',
   title: 'Get issue',
   description:
-    'Everything about an issue: title, markdown body, labels, author (and the key they used), resolved state, attachments, the tasks addressing it ("fixes" resolves it when the task is done), whether you are subscribed, the latest 20 replies in order, each with parentReplyId (the reply it answers, null for a top-level comment) (replyCount says how many there are; list_replies pages through them all) and a summary of its latest history.',
+    'Everything about an issue: title, markdown body, conversationMode (chat: a flat message stream, answer briefly like a chat message; forum: threaded comments), labels, author (and the key they used), resolved state, attachments, the tasks addressing it ("fixes" resolves it when the task is done), whether you are subscribed, the latest 20 replies in order, each with parentReplyId (the reply it answers, null for a top-level comment) (replyCount says how many there are; list_replies pages through them all) and a summary of its latest history.',
   input: toolInput({ issue: issueRef }),
   annotations: { readOnlyHint: true },
   handler: (ctx, input) => {
@@ -228,6 +236,7 @@ const createIssueTool = defineTool({
       .describe('Markdown body: context, steps to reproduce, expected and actual behaviour'),
     labels: labelNames('Labels to add').optional(),
     attachmentIds: attachmentIdsField.optional(),
+    conversation: conversationField,
   }),
   annotations: { destructiveHint: false },
   handler: (ctx, input) => {
@@ -237,6 +246,7 @@ const createIssueTool = defineTool({
       body: input.body,
       labelIds: labelIds(ctx, project.id, input.labels),
       attachmentIds: input.attachmentIds,
+      conversationMode: input.conversation,
     });
     return issueForAgent(ctx, createIssue(ctx.deps, ctx.actor, project.id, parsed));
   },

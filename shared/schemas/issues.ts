@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { ISSUE_LINK_KINDS, LIMITS, STATUS_ICONS } from '../constants';
+import { CONVERSATION_MODES, ISSUE_LINK_KINDS, LIMITS, STATUS_ICONS } from '../constants';
 import {
   cursorPaginationSchema,
   idSchema,
@@ -113,6 +113,8 @@ export const issueSchema = issueSummarySchema.extend({
   reactions: z.array(reactionSummarySchema),
   /** Is the viewer subscribed to reply notifications? */
   subscribed: z.boolean(),
+  /** How the replies are shown: `chat` or `forum` (absent in older fixtures: forum). */
+  conversationMode: z.enum(CONVERSATION_MODES).optional(),
 });
 export type Issue = z.infer<typeof issueSchema>;
 
@@ -172,6 +174,8 @@ export const createIssueInputSchema = z.object({
   labelIds: labelIdsSchema.optional(),
   /** Pending uploads to attach (files; images linked from the body are attached automatically). */
   attachmentIds: z.array(idSchema).max(LIMITS.attachmentsPerItem).optional(),
+  /** Response style: `chat` (default) or `forum`. */
+  conversationMode: z.enum(CONVERSATION_MODES).optional(),
 });
 export type CreateIssueInput = z.infer<typeof createIssueInputSchema>;
 

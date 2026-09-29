@@ -54,8 +54,7 @@ import { PriorityPicker } from '@web/components/pickers/PriorityPicker';
 import { StatusPicker } from '@web/components/pickers/StatusPicker';
 import { useDeleteAttachment } from '@web/components/replies/queries';
 import { ActivitySheet } from '@web/components/replies/ActivitySheet';
-import { ReplyComposer } from '@web/components/replies/ReplyComposer';
-import { Timeline } from '@web/components/replies/Timeline';
+import { Conversation, ConversationModeMenuItem } from '@web/components/chat/Conversation';
 import { Button } from '@web/components/ui/button';
 import {
   DropdownMenu,
@@ -904,20 +903,16 @@ function TaskView({ task, team, project }: { task: Task; team: MeTeam; project: 
             )}
           </section>
 
-          <section aria-labelledby="conversation-heading" className="mt-8">
-            <h2 id="conversation-heading" className="mb-3 text-sm font-semibold">
-              Conversation
-            </h2>
-            <Timeline parentType="task" parentId={task.id} />
-            <div className="mt-4">
-              <ReplyComposer
-                parentType="task"
-                parentId={task.id}
-                teamId={team.id}
-                projectId={task.projectId}
-                item={task}
-              />
-            </div>
+          <section aria-label="Conversation" className="mt-8">
+            <Conversation
+              parentType="task"
+              parentId={task.id}
+              teamId={team.id}
+              projectId={task.projectId}
+              mode={task.conversationMode}
+              item={task}
+              forumHeading={<h2 className="text-sm font-semibold">Conversation</h2>}
+            />
           </section>
         </div>
       </div>
@@ -1181,6 +1176,14 @@ function TaskMenu({
           {task.subscribed ? <BellOffIcon aria-hidden="true" /> : <BellIcon aria-hidden="true" />}
           {task.subscribed ? 'Unsubscribe' : 'Subscribe'}
         </DropdownMenuItem>
+        {canEditText ? (
+          <ConversationModeMenuItem
+            parentType="task"
+            parentId={task.id}
+            projectId={task.projectId}
+            mode={task.conversationMode}
+          />
+        ) : null}
         {canDelete ? (
           <>
             <DropdownMenuSeparator />

@@ -930,11 +930,16 @@ export interface AgentJobContext {
 const CLOSE_HINT =
   'When you think the discussion is finished, answer with add_reply { closing: true } ("no further discussion needed at this time").';
 
+/** Chat conversations: the agent answers like a chat member (shown by jobs caused by replies). */
+export const CHAT_HINT =
+  'This conversation is a chat (a flat, Discord-like message stream): answer briefly, like a chat message, with add_reply, replying to the message that pinged you (inReplyTo). Put long output (plans, logs) in a file or the task instead of the chat.';
+
 function jobInstructions(
   job: JobRow,
   ref: string,
   author: string | null,
   hasEarlier: boolean,
+  chat = false,
 ): string {
   const who = author ? `@${author}` : 'Someone';
   const more = hasEarlier ? ' Earlier replies triggered it too: read the thread since them.' : '';
@@ -960,6 +965,9 @@ function jobInstructions(
     case 'action_result':
       text = `A person decided on an action you asked for (see payload). Carry on accordingly.`;
       break;
+    case 'catch_up':
+      // Private to the owner: nothing is posted in the chat, and there is no handshake.
+      return catchUpInstructions(job, ref);
   }
   // BAT-27: the task was sent back into the stage this job is for.
   const returnReason = typeof job.payload.returnReason === 'string' ? job.payload.returnReason : '';
@@ -969,10 +977,22 @@ function jobInstructions(
     const stage = typeof job.payload.stage === 'string' ? ` to ${job.payload.stage}` : '';
     text = `${ref} was sent back${stage}${from} because: “${returnReason}”. Deal with that first. ${text}`;
   }
+  if (chat && (job.kind === 'mention' || job.kind === 'thread_reply'))
+    text = `${text} ${CHAT_HINT}`;
   const handshake = job.closing
     ? ' The trigger reply is marked closing: the other agent thinks nothing more is needed. If you agree, call complete_job { jobId, agreeDone: true } WITHOUT replying (that closes the thread for agents until a person replies); if you disagree, reply and complete the job.'
     : ` ${CLOSE_HINT}`;
   return `${text}${handshake} Call complete_job { jobId: "${job.id}" } when you are done, or release_job to hand it back.`;
+}
+
+/** What a `catch_up` job asks: summarize a range of the chat, privately, for the owner. */
+function catchUpInstructions(job: JobRow, ref: string): string {
+  const range = job.payload.range as { count?: unknown; fromReplyId?: unknown } | undefined;
+  const count = typeof range?.count === 'number' ? range.count : 0;
+  const from = typeof range?.fromReplyId === 'string' ? range.fromReplyId : null;
+  return `Your owner asked you to catch them up on the chat of ${ref}: summarize its ${count} latest messages${
+    from ? ` (from reply ${from} on)` : ''
+  } (read them with list_replies { item: "${ref}", order: "desc", limit: ${Math.max(count, 1)} } unless they are given to you). Write a short markdown summary for them: what happened, decisions, open questions, and anything that needs them (who asked what). Submit it with submit_catch_up { jobId: "${job.id}", summary } — it is shown only to your owner. Do NOT post in the chat (no add_reply) and do not change anything. submit_catch_up completes the job.`;
 }
 
 function projectsById(db: DbExecutor, projectIds: readonly string[]): Map<string, AgentJobProject> {
@@ -1091,6 +1111,7 @@ export function jobContexts(deps: AppDeps, rows: readonly JobRow[]): AgentJobCon
         ref ?? 'the item',
         author?.username ?? null,
         earlierReplyIds.length > 0,
+        item?.conversationMode === 'chat',
       ),
     };
   });

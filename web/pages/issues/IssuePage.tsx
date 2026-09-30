@@ -383,8 +383,8 @@ function IssueDetail({
         {header}
         <div className="mt-4 grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)] gap-6 lg:grid-cols-[minmax(0,1fr)_16rem] lg:gap-x-8">
           <div className="flex min-h-0 min-w-0 flex-col gap-4">
-            <div className="max-h-[60%] min-h-0 shrink overflow-y-auto">{post}</div>
-            <section aria-label="Conversation" className="flex min-h-56 min-w-0 flex-1 flex-col">
+            <div className="max-h-[40%] min-h-0 shrink overflow-y-auto">{post}</div>
+            <section aria-label="Conversation" className="flex min-h-72 min-w-0 flex-1 flex-col">
               {conversation}
             </section>
           </div>

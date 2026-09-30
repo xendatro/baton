@@ -955,7 +955,7 @@ function TaskView({ task, team, project }: { task: Task; team: MeTeam; project: 
         {header}
         <div className="mt-4 grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)] gap-6 lg:grid-cols-[minmax(0,1fr)_19rem] lg:gap-x-8">
           <div className="flex min-h-0 min-w-0 flex-col gap-4">
-            <div className="max-h-[60%] min-h-0 shrink overflow-y-auto">
+            <div className="max-h-[40%] min-h-0 shrink overflow-y-auto">
               <div className="mb-4 grid gap-4 empty:hidden">
                 {notice}
                 {stagePanel}
@@ -965,7 +965,7 @@ function TaskView({ task, team, project }: { task: Task; team: MeTeam; project: 
                 {filesSection}
               </ReadMore>
             </div>
-            <section aria-label="Conversation" className="flex min-h-56 min-w-0 flex-1 flex-col">
+            <section aria-label="Conversation" className="flex min-h-72 min-w-0 flex-1 flex-col">
               {conversation}
             </section>
           </div>

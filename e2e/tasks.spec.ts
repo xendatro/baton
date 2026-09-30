@@ -476,7 +476,7 @@ test('updates live by long-polling when the event stream is held back', async ({
     headers: ORIGIN,
   });
   expect(reply.status(), await reply.text()).toBe(201);
-  await expect(page.getByText('Arrived without a refresh')).toBeVisible();
+  await expect(page.getByText('Arrived without a refresh', { exact: true })).toBeVisible();
 });
 
 // Agents A: a reply through a key is the owner's agent member's ("Ethan AI", AI badge), with the

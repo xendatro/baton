@@ -89,6 +89,43 @@ function renderBoard() {
     'POST /api/tasks/task1/move': record(moved),
     'PATCH /api/tasks/task1': record(card),
     'POST /api/tasks/task1/claim': record(card),
+    '/api/teams/t1/members': {
+      items: [
+        {
+          user: { id: 'u1', username: 'ada', name: 'Ada Lovelace', image: null },
+          joinedAt: '2026-09-01T10:00:00.000Z',
+          isOwner: true,
+          roles: [],
+          color: null,
+        },
+        {
+          user: { id: 'u2', username: 'mia', name: 'Mia Chen', image: null },
+          joinedAt: '2026-09-01T10:00:00.000Z',
+          isOwner: false,
+          roles: [],
+          color: null,
+        },
+      ],
+    },
+    '/api/teams/t1/roles': {
+      items: [
+        {
+          id: 'r1',
+          teamId: 't1',
+          name: 'Backend',
+          slug: 'backend',
+          color: null,
+          position: 1,
+          permissions: [],
+          mentionable: true,
+          hoist: false,
+          isEveryone: false,
+          memberCount: 1,
+          createdAt: '2026-09-01T10:00:00.000Z',
+          updatedAt: '2026-09-01T10:00:00.000Z',
+        },
+      ],
+    },
     '/api/projects/p1/labels': {
       items: [
         {
@@ -104,7 +141,7 @@ function renderBoard() {
     },
   });
   const onMove = vi.fn();
-  const { queryClient } = renderWorkPage(
+  const { queryClient, router } = renderWorkPage(
     <Board
       board={board}
       canMove
@@ -118,7 +155,7 @@ function renderBoard() {
   );
   // The menus follow the viewer's permissions, from `me`.
   const ready = () => waitFor(() => expect(queryClient.getQueryData(queryKeys.me())).toBeDefined());
-  return { sent, ready };
+  return { sent, ready, router };
 }
 
 describe('Task card right-click menu', () => {
@@ -221,5 +258,92 @@ describe('Task card right-click menu', () => {
     );
     // The submenu stays open for the next label.
     expect(screen.getByRole('menuitemcheckbox', { name: 'bug' })).toBeInTheDocument();
+  });
+});
+
+/** BAT#33: the "⋯" button in a card's corner opens the same actions, plus Rename, Priority, Assign. */
+describe('Task card ⋯ menu', () => {
+  it('opens the actions without opening the task', async () => {
+    const user = userEvent.setup();
+    const { ready, router } = renderBoard();
+    await ready();
+    await user.click(await screen.findByRole('button', { name: 'Actions for WEB-7' }));
+    // Radix names a dropdown after its trigger.
+    const menu = await screen.findByRole('menu', { name: 'Actions for WEB-7' });
+    const names = within(menu)
+      .getAllByRole('menuitem')
+      .map((item) => item.textContent);
+    for (const name of ['Open', 'Copy link', 'Rename…', 'Move to', 'Priority', 'Assign', 'Labels'])
+      expect(names.some((text) => text?.startsWith(name))).toBe(true);
+    expect(router.state.location.pathname).toBe('/t/acme/p/WEB/tasks');
+  });
+
+  it('renames the task, checking the title inline first', async () => {
+    const user = userEvent.setup();
+    const { sent, ready } = renderBoard();
+    await ready();
+    await user.click(await screen.findByRole('button', { name: 'Actions for WEB-7' }));
+    await user.click(await screen.findByRole('menuitem', { name: 'Rename…' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Rename WEB-7' });
+    const input = within(dialog).getByRole('textbox', { name: 'Title' });
+    expect(input).toHaveValue('Fix the login redirect');
+    await user.clear(input);
+    await user.click(within(dialog).getByRole('button', { name: 'Rename' }));
+    expect(await within(dialog).findByRole('alert')).toBeInTheDocument();
+    expect(sent).toEqual([]);
+    await user.type(input, 'Fix the logout redirect');
+    await user.click(within(dialog).getByRole('button', { name: 'Rename' }));
+    await waitFor(() =>
+      expect(sent).toContainEqual({
+        method: 'PATCH',
+        path: '/api/tasks/task1',
+        body: { title: 'Fix the logout redirect' },
+      }),
+    );
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+  });
+
+  it('adds a person from the Assign submenu', async () => {
+    const user = userEvent.setup();
+    const { sent, ready } = renderBoard();
+    await ready();
+    await user.click(await screen.findByRole('button', { name: 'Actions for WEB-7' }));
+    await user.click(await screen.findByRole('menuitem', { name: 'Assign' }));
+    const mia = await screen.findByRole('menuitemcheckbox', { name: /Mia Chen/ });
+    expect(mia).toHaveAttribute('aria-checked', 'false');
+    // You first, then the others, then roles.
+    expect(screen.getByRole('menuitemcheckbox', { name: /Ada Lovelace \(you\)/ })).toBeVisible();
+    expect(screen.getByRole('menuitemcheckbox', { name: /Backend/ })).toBeVisible();
+    mia.focus();
+    await user.keyboard('{Enter}');
+    await waitFor(() =>
+      expect(sent).toContainEqual({
+        method: 'PATCH',
+        path: '/api/tasks/task1',
+        body: { assigneeUsers: { add: ['u2'] } },
+      }),
+    );
+  });
+
+  it('sets the priority from the right-click menu too', async () => {
+    const user = userEvent.setup();
+    const { sent, ready } = renderBoard();
+    await ready();
+    fireEvent.contextMenu(await screen.findByRole('link', { name: /WEB-7/ }));
+    await user.click(await screen.findByRole('menuitem', { name: 'Priority' }));
+    expect(await screen.findByRole('menuitemradio', { name: 'No priority' })).toHaveAttribute(
+      'aria-checked',
+      'true',
+    );
+    const high = screen.getByRole('menuitemradio', { name: 'High' });
+    high.focus();
+    await user.keyboard('{Enter}');
+    await waitFor(() =>
+      expect(sent).toContainEqual({
+        method: 'PATCH',
+        path: '/api/tasks/task1',
+        body: { priority: 3 },
+      }),
+    );
   });
 });

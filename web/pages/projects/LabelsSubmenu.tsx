@@ -60,7 +60,7 @@ export function LabelsSubmenu({ menu, ...props }: LabelsSubmenuProps) {
   const { Sub, SubTrigger, SubContent } = PARTS[menu];
   return (
     <Sub>
-      <SubTrigger>
+      <SubTrigger className="gap-2">
         <TagIcon aria-hidden="true" />
         Labels
       </SubTrigger>

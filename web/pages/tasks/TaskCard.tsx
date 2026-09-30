@@ -13,24 +13,35 @@ import { WorkingDot } from '@web/components/common/WorkingDot';
 import { cn } from '@web/lib/utils';
 
 /**
- * Body of a board card: key, unread badge (BAT-16), priority and blocked state, title, labels,
- * claim, due date, replies and assignees. The card wrapper (link, drag handle) is the board's.
+ * Body of a board card: key, unread badge (BAT-16), blocked state, title, labels, claim, then a
+ * footer of priority (BAT#33: bottom left, nothing for "No priority"), due date, replies and
+ * assignees. The card wrapper (link, drag handle, "⋯" button) is the board's.
  */
 export function TaskCardBody({
   task,
   showPipeline = false,
+  actionsSpace = false,
 }: {
   task: TaskCardData;
   /** The "All" view of several pipelines: which one the card is in. */
   showPipeline?: boolean;
+  /** Keep the top-right corner free for the card's "⋯" actions button. */
+  actionsSpace?: boolean;
 }) {
   const done = task.completedAt !== null;
   const { users, roles } = task.assignees;
+  // BAT#33: priority sits at the footer's start; "No priority" shows nothing on a card.
+  const hasPriority = task.priority !== 0;
   const hasFooter =
-    task.dueDate !== null || task.replyCount > 0 || users.length > 0 || roles.length > 0;
+    hasPriority ||
+    task.dueDate !== null ||
+    task.replyCount > 0 ||
+    users.length > 0 ||
+    roles.length > 0;
   return (
     <div className="flex flex-col gap-2">
-      <div className="flex items-center gap-2">
+      {/* Room on the right for the board's "⋯" actions button. */}
+      <div className={cn('flex items-center gap-2', actionsSpace && 'pr-6')}>
         <span className="font-mono text-xs text-muted-foreground tabular-nums">{task.ref}</span>
         {/* BAT-25: with several pipelines on one board, a card says which one it is in. */}
         {showPipeline && task.status.pipeline ? (
@@ -44,7 +55,6 @@ export function TaskCardBody({
         <WorkingDot working={task.agentWorking} />
         <UnreadBadge count={task.unreadCount} />
         {task.blocked ? <BlockedBadge blockers={task.blockers} /> : null}
-        <PriorityIcon value={task.priority} className="ml-auto" />
       </div>
       <p
         className={cn(
@@ -72,6 +82,7 @@ export function TaskCardBody({
       ) : null}
       {hasFooter ? (
         <div className="flex min-h-5 items-center gap-3">
+          {hasPriority ? <PriorityIcon value={task.priority} /> : null}
           {task.dueDate ? <DueDate value={task.dueDate} done={done} /> : null}
           {task.replyCount > 0 ? (
             <span

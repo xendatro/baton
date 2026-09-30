@@ -4,6 +4,7 @@ import {
   LinkIcon,
   MessagesSquareIcon,
   MoreHorizontalIcon,
+  PanelRightIcon,
   PencilIcon,
   SearchXIcon,
   Trash2Icon,
@@ -19,8 +20,10 @@ import { BackLink } from '@web/components/common/BackLink';
 import { ConfirmDialog } from '@web/components/common/ConfirmDialog';
 import { EmptyState } from '@web/components/common/EmptyState';
 import { ErrorState } from '@web/components/common/ErrorState';
+import { ItemPageFrame, ItemRailToggle } from '@web/components/itemRail/ItemPageFrame';
 import { PageContainer } from '@web/components/common/PageContainer';
 import { RelativeTime } from '@web/components/common/RelativeTime';
+import { ViewportFill } from '@web/components/common/ViewportFill';
 import { Spinner } from '@web/components/common/Spinner';
 import { UserName } from '@web/components/common/UserName';
 import { WorkingDot } from '@web/components/common/WorkingDot';
@@ -35,6 +38,7 @@ import {
   DropdownMenuTrigger,
 } from '@web/components/ui/dropdown-menu';
 import { Input } from '@web/components/ui/input';
+import { Sheet, SheetContent, SheetDescription, SheetTitle } from '@web/components/ui/sheet';
 import { Skeleton } from '@web/components/ui/skeleton';
 import { errorMessage, isApiError } from '@web/lib/api';
 import { pluralize } from '@web/lib/format';
@@ -42,9 +46,12 @@ import { useHotkey } from '@web/lib/hotkeys';
 import { useProjectAccess } from '@web/lib/permissions';
 import { useRouteContext } from '@web/lib/routeContext';
 import { useDocumentTitle } from '@web/lib/title';
+import { useMediaQuery } from '@web/lib/useMediaQuery';
+import { cn } from '@web/lib/utils';
 import { useMarkItemRead } from '@web/pages/inbox/useMarkItemRead';
 import { copyText } from '@web/pages/teams/clipboard';
 import { IssuePost } from './IssuePost';
+import { IssueRail } from './IssueRail';
 import { IssueSidebar } from './IssueSidebar';
 import { IssueStateBadge } from './IssueState';
 import {
@@ -62,15 +69,27 @@ import { useIssueLabelsMenu } from './issueLabelsMenu';
  * addressing it and the subscription toggle. Resolve/reopen, copy link and delete (with Undo) sit
  * in the header; `e` edits the title, `l` opens the labels and `u` goes back to the issue list.
  */
+/** The details sidebar sits beside a chat issue from here; narrower, it opens as a sheet. */
+const DETAILS_BESIDE_QUERY = '(min-width: 1024px)';
+
 export default function IssuePage() {
   const { team, project } = useRouteContext();
   const params = useParams();
   const number = Number(params.number);
   if (!team || !project) return null;
-  if (!Number.isSafeInteger(number) || number < 1)
-    return <IssueMissing team={team} project={project} />;
+  const valid = Number.isSafeInteger(number) && number >= 1;
+  // BAT-44: the rail stays mounted while the viewer switches issues (it keeps its scroll).
   return (
-    <IssueView key={`${project.id}:${number}`} team={team} project={project} number={number} />
+    <ItemPageFrame
+      label="Issues"
+      rail={<IssueRail team={team} project={project} currentNumber={number} />}
+    >
+      {valid ? (
+        <IssueView key={`${project.id}:${number}`} team={team} project={project} number={number} />
+      ) : (
+        <IssueMissing team={team} project={project} />
+      )}
+    </ItemPageFrame>
   );
 }
 
@@ -134,6 +153,11 @@ function IssueDetail({
   const [editingBody, setEditingBody] = useState(false);
   const [labelsOpen, setLabelsOpen] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  // BAT-43: a chat issue is one screen tall; below lg its details open as a sheet.
+  const chat = issue.conversationMode === 'chat';
+  const wide = useMediaQuery(DETAILS_BESIDE_QUERY);
+  const detailsInSheet = chat && !wide;
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const setResolved = useSetResolved(issue);
   const remove = useDeleteIssue();
   const restore = useRestoreIssue();
@@ -172,11 +196,18 @@ function IssueDetail({
     group: 'Issue',
     enabled: canEdit && !editingTitle,
   });
-  useHotkey('l', () => setLabelsOpen(true), {
-    description: 'Edit labels',
-    group: 'Issue',
-    enabled: canTriage,
-  });
+  useHotkey(
+    'l',
+    () => {
+      if (detailsInSheet) setDetailsOpen(true);
+      setLabelsOpen(true);
+    },
+    {
+      description: 'Edit labels',
+      group: 'Issue',
+      enabled: canTriage,
+    },
+  );
   usePaletteCommands([
     {
       id: `issue.${issue.id}.copy-link`,
@@ -202,124 +233,129 @@ function IssueDetail({
       : []),
   ]);
 
-  return (
-    <PageContainer>
-      <IssuesBackLink team={team} project={project} />
-      <header className="flex flex-col gap-3 border-b pb-4">
-        <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
-          {editingTitle ? (
-            <TitleEditor issue={issue} onClose={() => setEditingTitle(false)} />
-          ) : (
-            <h1 className="min-w-0 grow basis-full text-xl leading-snug font-semibold tracking-tight break-words sm:basis-0 sm:text-2xl">
-              {issue.title}{' '}
-              <span className="font-normal text-muted-foreground">#{issue.number}</span>
-              <WorkingDot working={issue.agentWorking} className="ml-2 align-middle" />
-            </h1>
-          )}
-          {editingTitle ? null : (
-            <div className="flex shrink-0 items-center gap-2">
-              {canEdit ? (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setEditingTitle(true)}
-                  aria-keyshortcuts="e"
-                >
-                  <PencilIcon aria-hidden="true" />
-                  <span className="sr-only sm:not-sr-only">Edit title</span>
-                </Button>
-              ) : null}
-              {canTriage ? (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={toggleResolved}
-                  disabled={setResolved.isPending}
-                >
-                  {issue.resolved ? (
-                    <CircleDotIcon aria-hidden="true" className="text-primary" />
-                  ) : (
-                    <CheckCircle2Icon
-                      aria-hidden="true"
-                      className="text-emerald-600 dark:text-emerald-400"
-                    />
-                  )}
-                  {issue.resolved ? 'Reopen' : 'Resolve'}
-                </Button>
-              ) : null}
-              <ActivitySheet
-                parentType="issue"
-                parentId={issue.id}
-                itemRef={issue.ref}
-                group="Issue"
-                className="h-8"
-              />
-              <IssueMenu
-                issue={issue}
-                canEdit={canEdit}
-                canTriage={canTriage}
-                canDelete={canDelete}
-                onCopyLink={() => void copyText(link)}
-                onCopyRef={() => void copyText(issue.ref, 'Reference')}
-                onDelete={() => setConfirmDelete(true)}
-              />
-            </div>
-          )}
-        </div>
-        <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-sm text-muted-foreground">
-          <IssueStateBadge resolved={issue.resolved} className="mr-1" />
-          <UserName user={issue.author} via={issue.via} />
-          <span>opened this issue</span>
-          <RelativeTime value={issue.createdAt} className="text-sm" />
-          <span aria-hidden="true">·</span>
-          <span>{pluralize(issue.replyCount, 'reply', 'replies')}</span>
-          {issue.resolved && issue.resolvedAt ? (
-            <>
-              <span aria-hidden="true">·</span>
-              <span>resolved by</span>
-              <UserName user={issue.resolvedBy} />
-              <RelativeTime value={issue.resolvedAt} className="text-sm" />
-            </>
-          ) : null}
-        </div>
-      </header>
-
-      <div className="mt-6 grid gap-6 [grid-template-areas:'post'_'side'_'thread'] lg:grid-cols-[minmax(0,1fr)_16rem] lg:grid-rows-[auto_1fr] lg:gap-x-8 lg:[grid-template-areas:'post_side'_'thread_side']">
-        <div className="min-w-0 [grid-area:post]">
-          <IssuePost
-            issue={issue}
-            access={access}
-            editing={editingBody}
-            onEditingChange={setEditingBody}
-          />
-        </div>
-        <aside aria-label="Issue details" className="[grid-area:side] lg:self-start">
-          <IssueSidebar
-            issue={issue}
-            access={access}
-            canTriage={canTriage}
-            labelsOpen={labelsOpen}
-            onLabelsOpenChange={setLabelsOpen}
-          />
-        </aside>
-        <section aria-label="Conversation" className="min-w-0 [grid-area:thread]">
-          <Conversation
-            parentType="issue"
-            parentId={issue.id}
-            teamId={team.id}
-            projectId={issue.projectId}
-            mode={issue.conversationMode}
-            item={issue}
-            forumHeading={
-              <h2 className="flex items-center gap-2 text-sm font-semibold">
-                <MessagesSquareIcon className="size-4 text-muted-foreground" aria-hidden="true" />
-                Conversation
-              </h2>
-            }
-          />
-        </section>
+  const header = (
+    <header className={cn('flex flex-col gap-3 border-b', chat ? 'shrink-0 pb-3' : 'pb-4')}>
+      <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
+        {editingTitle ? (
+          <TitleEditor issue={issue} onClose={() => setEditingTitle(false)} />
+        ) : (
+          <h1 className="min-w-0 grow basis-full text-xl leading-snug font-semibold tracking-tight break-words sm:basis-0 sm:text-2xl">
+            {issue.title} <span className="font-normal text-muted-foreground">#{issue.number}</span>
+            <WorkingDot working={issue.agentWorking} className="ml-2 align-middle" />
+          </h1>
+        )}
+        {editingTitle ? null : (
+          <div className="flex shrink-0 items-center gap-2">
+            {canEdit ? (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setEditingTitle(true)}
+                aria-keyshortcuts="e"
+              >
+                <PencilIcon aria-hidden="true" />
+                <span className="sr-only sm:not-sr-only">Edit title</span>
+              </Button>
+            ) : null}
+            {canTriage ? (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={toggleResolved}
+                disabled={setResolved.isPending}
+              >
+                {issue.resolved ? (
+                  <CircleDotIcon aria-hidden="true" className="text-primary" />
+                ) : (
+                  <CheckCircle2Icon
+                    aria-hidden="true"
+                    className="text-emerald-600 dark:text-emerald-400"
+                  />
+                )}
+                {issue.resolved ? 'Reopen' : 'Resolve'}
+              </Button>
+            ) : null}
+            <ActivitySheet
+              parentType="issue"
+              parentId={issue.id}
+              itemRef={issue.ref}
+              group="Issue"
+              className="h-8"
+            />
+            {detailsInSheet ? (
+              <Button variant="outline" size="sm" onClick={() => setDetailsOpen(true)}>
+                <PanelRightIcon aria-hidden="true" />
+                Details
+              </Button>
+            ) : null}
+            <IssueMenu
+              issue={issue}
+              canEdit={canEdit}
+              canTriage={canTriage}
+              canDelete={canDelete}
+              onCopyLink={() => void copyText(link)}
+              onCopyRef={() => void copyText(issue.ref, 'Reference')}
+              onDelete={() => setConfirmDelete(true)}
+            />
+          </div>
+        )}
       </div>
+      <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-sm text-muted-foreground">
+        <IssueStateBadge resolved={issue.resolved} className="mr-1" />
+        <UserName user={issue.author} via={issue.via} />
+        <span>opened this issue</span>
+        <RelativeTime value={issue.createdAt} className="text-sm" />
+        <span aria-hidden="true">·</span>
+        <span>{pluralize(issue.replyCount, 'reply', 'replies')}</span>
+        {issue.resolved && issue.resolvedAt ? (
+          <>
+            <span aria-hidden="true">·</span>
+            <span>resolved by</span>
+            <UserName user={issue.resolvedBy} />
+            <RelativeTime value={issue.resolvedAt} className="text-sm" />
+          </>
+        ) : null}
+      </div>
+    </header>
+  );
 
+  const sidebar = (
+    <IssueSidebar
+      issue={issue}
+      access={access}
+      canTriage={canTriage}
+      labelsOpen={labelsOpen}
+      onLabelsOpenChange={setLabelsOpen}
+    />
+  );
+  const conversation = (
+    <Conversation
+      parentType="issue"
+      parentId={issue.id}
+      teamId={team.id}
+      projectId={issue.projectId}
+      mode={issue.conversationMode}
+      item={issue}
+      fill={chat}
+      forumHeading={
+        <h2 className="flex items-center gap-2 text-sm font-semibold">
+          <MessagesSquareIcon className="size-4 text-muted-foreground" aria-hidden="true" />
+          Conversation
+        </h2>
+      }
+    />
+  );
+  const post = (
+    <IssuePost
+      issue={issue}
+      access={access}
+      editing={editingBody}
+      onEditingChange={setEditingBody}
+      collapsible={chat}
+    />
+  );
+  const dialogs = (
+    <>
       <ConfirmDialog
         open={confirmDelete}
         onOpenChange={setConfirmDelete}
@@ -329,6 +365,69 @@ function IssueDetail({
         destructive
         onConfirm={deleteIssue}
       />
+    </>
+  );
+
+  if (chat) {
+    // BAT-43: exactly one screen below the app header. The post is cut to a few lines ("Read
+    // more"); the chat takes the rest, scrolls on its own and keeps its composer at the bottom.
+    return (
+      <ViewportFill
+        className="mx-auto flex h-[calc(100dvh-3rem)] w-full max-w-6xl flex-col px-4 pt-3 pb-3 sm:px-6"
+        data-testid="issue-chat-layout"
+      >
+        <div className="flex shrink-0 items-center gap-1">
+          <ItemRailToggle className="-ml-1.5" />
+          <IssuesBackLink team={team} project={project} className="mb-0" />
+        </div>
+        {header}
+        <div className="mt-4 grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)] gap-6 lg:grid-cols-[minmax(0,1fr)_16rem] lg:gap-x-8">
+          <div className="flex min-h-0 min-w-0 flex-col gap-4">
+            <div className="max-h-[40%] min-h-0 shrink overflow-y-auto">{post}</div>
+            <section aria-label="Conversation" className="flex min-h-72 min-w-0 flex-1 flex-col">
+              {conversation}
+            </section>
+          </div>
+          {detailsInSheet ? null : (
+            <aside aria-label="Issue details" className="min-h-0 overflow-y-auto pb-2">
+              {sidebar}
+            </aside>
+          )}
+        </div>
+        {detailsInSheet ? (
+          <Sheet open={detailsOpen} onOpenChange={setDetailsOpen}>
+            <SheetContent side="right" className="w-80 overflow-y-auto p-4 pt-12">
+              <SheetTitle className="sr-only">Issue details</SheetTitle>
+              <SheetDescription className="sr-only">
+                Labels, the tasks addressing it and notifications.
+              </SheetDescription>
+              <aside aria-label="Issue details">{sidebar}</aside>
+            </SheetContent>
+          </Sheet>
+        ) : null}
+        {dialogs}
+      </ViewportFill>
+    );
+  }
+
+  return (
+    <PageContainer>
+      <div className="flex items-center gap-1">
+        <ItemRailToggle className="mb-3 -ml-1.5" />
+        <IssuesBackLink team={team} project={project} />
+      </div>
+      {header}
+
+      <div className="mt-6 grid gap-6 [grid-template-areas:'post'_'side'_'thread'] lg:grid-cols-[minmax(0,1fr)_16rem] lg:grid-rows-[auto_1fr] lg:gap-x-8 lg:[grid-template-areas:'post_side'_'thread_side']">
+        <div className="min-w-0 [grid-area:post]">{post}</div>
+        <aside aria-label="Issue details" className="[grid-area:side] lg:self-start">
+          {sidebar}
+        </aside>
+        <section aria-label="Conversation" className="min-w-0 [grid-area:thread]">
+          {conversation}
+        </section>
+      </div>
+      {dialogs}
     </PageContainer>
   );
 }
@@ -489,8 +588,18 @@ function IssueMissing({ team, project }: { team: MeTeam; project: MeProject }) {
 }
 
 /** "← Issues": back to the issue list the issue was opened from, filters and scroll included. */
-function IssuesBackLink({ team, project }: { team: MeTeam; project: MeProject }) {
-  return <BackLink to={`/t/${team.slug}/p/${project.key}/issues`} label="Issues" />;
+function IssuesBackLink({
+  team,
+  project,
+  className,
+}: {
+  team: MeTeam;
+  project: MeProject;
+  className?: string;
+}) {
+  return (
+    <BackLink to={`/t/${team.slug}/p/${project.key}/issues`} label="Issues" className={className} />
+  );
 }
 
 function IssueSkeleton({ team, project }: { team: MeTeam; project: MeProject }) {

@@ -104,7 +104,11 @@ const issue: Issue = {
   subscribed: false,
 };
 
-function mockIssueApi(permissions: readonly Permission[], list: IssueListResponse) {
+function mockIssueApi(
+  permissions: readonly Permission[],
+  list: IssueListResponse,
+  extra: Record<string, unknown> = {},
+) {
   return mockApi({
     '/api/auth/get-session': testSession,
     '/api/me': me(permissions),
@@ -118,6 +122,7 @@ function mockIssueApi(permissions: readonly Permission[], list: IssueListRespons
     '/api/replies': { items: [], total: 0, topLevelCount: 0, ancestors: [] },
     '/api/activity': { items: [] },
     '/api/teams/t1/mentionables': { users: [], roles: [] },
+    ...extra,
   });
 }
 
@@ -259,6 +264,51 @@ describe('issue page', { timeout: 20_000 }, () => {
     // Not the author and no EDIT_ANY_CONTENT / CREATE_TASKS.
     expect(screen.queryByRole('button', { name: 'Edit title' })).toBeNull();
     expect(within(details).queryByRole('button', { name: 'Create task' })).toBeNull();
+  });
+
+  it('fits a chat issue in one screen: the post cut with Read more, the chat and its composer below (BAT-43)', async () => {
+    // happy-dom lays nothing out: every element reports a tall content height.
+    const scrollHeight = vi
+      .spyOn(HTMLElement.prototype, 'scrollHeight', 'get')
+      .mockReturnValue(2000);
+    try {
+      mockIssueApi(
+        ['RESOLVE_ISSUES', 'REPLY'],
+        { items: [], nextCursor: null, counts: { open: 0, resolved: 0, all: 0 } },
+        {
+          '/api/projects/p1/issues/12': {
+            ...issue,
+            conversationMode: 'chat',
+            body: Array.from({ length: 40 }, (_, n) => `Paragraph ${n + 1}.`).join('\n\n'),
+          },
+          '/api/items/issue/i1/chat': {
+            items: [],
+            olderCursor: null,
+            total: 0,
+            unread: { count: 0, firstReplyId: null },
+            workingAgents: [],
+          },
+        },
+      );
+      renderAt('/t/acme/p/WEB/issues/12');
+      const layout = await screen.findByTestId('issue-chat-layout', {}, LAZY);
+      expect(layout.className).toContain('h-[calc(100dvh-3rem)]');
+      expect(within(layout).getByTestId('chat-view')).toBeInTheDocument();
+      expect(await within(layout).findByRole('textbox', { name: 'Message' })).toBeVisible();
+      const content = within(layout).getByTestId('read-more-content');
+      expect(content).toHaveAttribute('data-clamped');
+      const more = within(layout).getByRole('button', { name: 'Read more' });
+      expect(more).toHaveAttribute('aria-expanded', 'false');
+      fireEvent.click(more);
+      const less = within(layout).getByRole('button', { name: 'Show less' });
+      expect(less).toHaveAttribute('aria-expanded', 'true');
+      expect(content).not.toHaveAttribute('data-clamped');
+      fireEvent.click(less);
+      expect(within(layout).getByRole('button', { name: 'Read more' })).toBeVisible();
+      expect(content).toHaveAttribute('data-clamped');
+    } finally {
+      scrollHeight.mockRestore();
+    }
   });
 
   it('explains a missing issue', async () => {

@@ -22,6 +22,8 @@ export interface ConversationProps {
   item: ThreadWrite & { ref: string; path: string };
   /** Heading of the forum view (the chat has its own). */
   forumHeading?: ReactNode;
+  /** BAT-43: a chat fills the parent's height (see `ChatView`); the forum ignores it. */
+  fill?: boolean;
 }
 
 /** An item's conversation in its mode: the chat, or the threaded forum with its reply box. */
@@ -33,6 +35,7 @@ export function Conversation({
   mode,
   item,
   forumHeading,
+  fill = false,
 }: ConversationProps) {
   const authorId = item.author?.id ?? null;
   const context = useMemo<ConversationItem>(
@@ -56,6 +59,7 @@ export function Conversation({
           teamId={teamId}
           projectId={projectId}
           item={item}
+          fill={fill}
         />
       </ConversationItemContext.Provider>
     );

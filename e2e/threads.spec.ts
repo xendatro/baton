@@ -70,7 +70,9 @@ test('answer a reply in its thread, then collapse and reopen the thread', async 
   const collapse = page.getByRole('button', { name: `Collapse thread: reply by ${author.name}` });
   await expect(collapse).toHaveAttribute('aria-expanded', 'true');
   await collapse.click();
-  await expect(page.getByText('SQLite: one file, no server.')).toHaveCount(0);
+  await expect(
+    page.getByRole('list', { name: 'Conversation' }).getByText('SQLite: one file, no server.'),
+  ).toHaveCount(0);
   const collapsed = page.getByRole('button', { name: new RegExp(`Expand thread: ${author.name}`) });
   await expect(collapsed).toHaveAttribute('aria-expanded', 'false');
   await expect(collapsed).toContainText('1 reply hidden');
@@ -87,7 +89,9 @@ test('answer a reply in its thread, then collapse and reopen the thread', async 
   await page.keyboard.press('Enter');
   await expect(collapsed).toBeFocused();
   await page.keyboard.press('Enter');
-  await expect(page.getByText('SQLite: one file, no server.')).toBeVisible();
+  await expect(
+    page.getByRole('list', { name: 'Conversation' }).getByText('SQLite: one file, no server.'),
+  ).toBeVisible();
   await expect(collapse).toBeFocused();
 });
 
@@ -108,6 +112,8 @@ test('a deleted reply with answers stays as [deleted]', async ({ page }) => {
 
   await page.goto(task.path);
   await expect(page.getByRole('article', { name: 'Deleted reply' })).toContainText('[deleted]');
-  await expect(page.getByText('An answer that stays')).toBeVisible();
+  await expect(
+    page.getByRole('list', { name: 'Conversation' }).getByText('An answer that stays'),
+  ).toBeVisible();
   await expect(page.getByText('A question that gets deleted')).toHaveCount(0);
 });

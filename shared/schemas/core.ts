@@ -99,6 +99,26 @@ export const attachmentSchema = z.object({
 });
 export type Attachment = z.infer<typeof attachmentSchema>;
 
+/**
+ * The newest live reply of an issue or task, as the item rail shows it ("Caden: sounds good · 2m",
+ * BAT-44). Sent by the issue and task lists when asked for with `latestReply=true`.
+ */
+export const latestReplySchema = z.object({
+  id: z.string(),
+  /** Null for deleted accounts. */
+  author: userSummarySchema.nullable(),
+  /** One line of plain text. */
+  excerpt: z.string(),
+  createdAt: timestampSchema,
+});
+export type LatestReply = z.infer<typeof latestReplySchema>;
+
+/** `latestReply=true` in a list's query string. */
+export const latestReplyFlagSchema = z
+  .enum(['true', 'false'])
+  .transform((value) => value === 'true')
+  .optional();
+
 /** Someone who reacted, and the API key they reacted through ("Claude via Ethan's MSI"). */
 export const reactorSchema = userSummarySchema.extend({ via: viaKeySchema.nullable() });
 export type Reactor = z.infer<typeof reactorSchema>;

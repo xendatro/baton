@@ -326,6 +326,29 @@ describe('listIssues', () => {
     expect(() => list(owner, { cursor: 'garbage' })).toThrow(/cursor/);
   });
 
+  it("sends each issue's newest reply only when asked (BAT-44: the issue rail)", () => {
+    const quiet = open(member, 'Quiet');
+    const busy = open(member, 'Busy');
+    createReply(ctx.deps, actorOf(owner), {
+      parentType: 'issue',
+      parentId: busy.id,
+      body: 'first',
+    });
+    const last = createReply(ctx.deps, actorOf(member), {
+      parentType: 'issue',
+      parentId: busy.id,
+      body: 'Sounds **good**',
+    });
+    expect(list(owner).items.every((issue) => issue.latestReply === undefined)).toBe(true);
+    const items = issueListResponseSchema.parse(list(owner, { latestReply: 'true' })).items;
+    expect(items.find((issue) => issue.id === quiet.id)?.latestReply).toBeNull();
+    expect(items.find((issue) => issue.id === busy.id)?.latestReply).toMatchObject({
+      id: last.id,
+      author: { id: member.id, name: 'Mia' },
+      excerpt: 'Sounds good',
+    });
+  });
+
   it('is 404 for non-members', () => {
     expect(() => list(outsider)).toThrow(/not found/);
   });

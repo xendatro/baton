@@ -12,6 +12,7 @@ import {
 } from '../constants';
 import { dueDateSchema, idSchema, markdownSchema, timestampSchema, titleSchema } from './common';
 import {
+  agentWorkingSchema,
   attachmentSchema,
   latestReplyFlagSchema,
   latestReplySchema,
@@ -169,6 +170,8 @@ export const taskCardSchema = taskSummarySchema.extend({
   lastActivityAt: timestampSchema.optional(),
   /** The newest reply (null: none yet). Sent only when the list is asked with `latestReply=true`. */
   latestReply: latestReplySchema.nullable().optional(),
+  /** BAT#42: agents working on it right now (the pulsing dot); null when none. */
+  agentWorking: agentWorkingSchema.nullable().optional(),
 });
 export type TaskCard = z.infer<typeof taskCardSchema>;
 

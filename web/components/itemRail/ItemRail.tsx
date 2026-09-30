@@ -1,3 +1,4 @@
+import type { AgentWorking } from '@shared/schemas/core';
 import { InboxIcon, SearchIcon } from 'lucide-react';
 import { useEffect, useMemo, useRef, type ReactNode } from 'react';
 import { Link } from 'react-router';
@@ -5,6 +6,7 @@ import { ErrorState } from '@web/components/common/ErrorState';
 import { RelativeTime } from '@web/components/common/RelativeTime';
 import { Spinner } from '@web/components/common/Spinner';
 import { UnreadBadge } from '@web/components/common/UnreadBadge';
+import { WorkingDot } from '@web/components/common/WorkingDot';
 import { Input } from '@web/components/ui/input';
 import { Skeleton } from '@web/components/ui/skeleton';
 import { useInView } from '@web/lib/useInView';
@@ -142,17 +144,18 @@ export function ItemRail({
 
 /**
  * One row: title and time, ref and detail with the unread badge, then "Caden: sounds good".
- * `working` is the slot for the agent-working dot (BAT-42); it renders nothing yet.
+ * The agent-working dot (BAT#42) follows the title while an agent works on the item.
  */
 export function ItemRailRow({
   item,
   active,
-  working,
+  working = item.working,
   onNavigate,
 }: {
   item: RailItem;
   active: boolean;
-  working?: boolean;
+  /** Agents working on it (default: the item's). */
+  working?: AgentWorking | null;
   onNavigate?: () => void;
 }) {
   const unread = active ? 0 : (item.unreadCount ?? 0);
@@ -163,19 +166,19 @@ export function ItemRailRow({
       replace
       onClick={onNavigate}
       aria-current={active ? 'page' : undefined}
-      data-working={working ? '' : undefined}
       data-testid="item-rail-row"
       className={cn(
         'flex flex-col gap-0.5 rounded-md px-2.5 py-2 text-sm outline-none hover:bg-accent/70 focus-visible:ring-2 focus-visible:ring-ring',
         active && 'bg-accent text-accent-foreground',
       )}
     >
-      <span className="flex min-w-0 items-baseline gap-2">
+      <span className="flex min-w-0 items-center gap-1.5">
         <span
           className={cn('min-w-0 flex-1 truncate', unread > 0 ? 'font-semibold' : 'font-medium')}
         >
           {item.title}
         </span>
+        <WorkingDot working={working} />
         <RelativeTime value={item.activityAt} className="shrink-0 text-[11px]" />
       </span>
       <span className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">

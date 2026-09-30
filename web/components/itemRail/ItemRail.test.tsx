@@ -119,7 +119,11 @@ describe('Issue rail', () => {
         },
       }),
       issue(7, 'Done already', { resolved: true, lastActivityAt: '2026-09-22T10:00:00.000Z' }),
-      issue(9, 'Slow search', { lastActivityAt: '2026-09-15T10:00:00.000Z', unreadCount: 2 }),
+      issue(9, 'Slow search', {
+        lastActivityAt: '2026-09-15T10:00:00.000Z',
+        unreadCount: 2,
+        agentWorking: { agentIds: ['a1'], names: ['Ethan AI'] },
+      }),
     ]);
     await screen.findByRole('list', { name: 'Open issues' });
     expect(rowTitles()).toEqual(['Export fails', 'Slow search', 'Old question']);
@@ -127,6 +131,11 @@ describe('Issue rail', () => {
     expect(current).toHaveTextContent('Export fails');
     expect(current).toHaveTextContent('Caden: sounds good');
     expect(screen.getByRole('img', { name: '2 unread notifications' })).toBeInTheDocument();
+    // BAT#42: the working dot on the row an agent works on, and only there.
+    expect(screen.getByRole('link', { name: /Slow search/ })).toContainElement(
+      screen.getByRole('img', { name: 'Ethan AI is working' }),
+    );
+    expect(screen.getAllByTestId('working-dot')).toHaveLength(1);
     expect(screen.queryByText('Done already')).not.toBeInTheDocument();
     const request = sent.find((call) => call.path === '/api/projects/p1/issues');
     expect(request?.search).toContain('state=open');

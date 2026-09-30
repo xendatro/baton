@@ -130,9 +130,10 @@ test('a long chat issue keeps its composer on screen without scrolling', async (
   const composer = page.getByRole('textbox', { name: 'Message' });
   await expect(composer).toBeVisible();
   await expect(composer).toBeInViewport();
-  expect(await page.evaluate(() => window.scrollY)).toBe(0);
+  expect(await page.evaluate('window.scrollY')).toBe(0);
+  // The page itself doesn't scroll: it is exactly one screen tall.
   expect(
-    await page.evaluate(() => document.documentElement.scrollHeight <= window.innerHeight + 1),
+    await page.evaluate('document.documentElement.scrollHeight <= window.innerHeight + 1'),
   ).toBe(true);
   await expect(page.getByText('Paragraph 60:')).not.toBeInViewport();
 

@@ -694,3 +694,15 @@ export type SecurityLogQuery = z.infer<typeof securityLogQuerySchema>;
 
 export const securityLogResponseSchema = paginatedSchema(activityEntrySchema);
 export type SecurityLogResponse = z.infer<typeof securityLogResponseSchema>;
+
+/**
+ * BAT#42: the agent members working on a task or issue right now: a desktop runner reports its
+ * harness running a job about the item, or a live MCP listener claimed one (a job only queued,
+ * waiting for usage or held doesn't count). Null when no agent is working on it.
+ */
+export const agentWorkingSchema = z.object({
+  agentIds: z.array(z.string()),
+  /** Display names, in the order of `agentIds` ("Ethan AI"). */
+  names: z.array(z.string()),
+});
+export type AgentWorking = z.infer<typeof agentWorkingSchema>;

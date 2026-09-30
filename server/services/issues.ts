@@ -36,6 +36,7 @@ import {
 } from './access';
 import { recordActivity } from './activity';
 import { clearSettledJobs } from './agentJobs';
+import { agentWorkingByItem } from './agentWorking';
 import { attachmentsByParent, attachToParent, referencedPendingUploads } from './attachments';
 import { emitAfterCommit } from './events';
 import { queueLinkedTaskEvents } from './linkEvents';
@@ -158,6 +159,11 @@ function toSummaries(
     db,
     rows.map((row) => row.viaKeyId),
   );
+  const working = agentWorkingByItem(
+    db,
+    'issue',
+    rows.map((row) => row.id),
+  );
   return rows.map((row) => ({
     id: row.id,
     teamId: row.teamId,
@@ -176,6 +182,7 @@ function toSummaries(
     updatedAt: row.updatedAt.toISOString(),
     editedAt: row.editedAt?.toISOString() ?? null,
     path: appPaths.issue(context.teamSlug, context.key, row.number),
+    agentWorking: working.get(row.id) ?? null,
   }));
 }
 

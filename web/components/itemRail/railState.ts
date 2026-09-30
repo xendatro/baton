@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useSyncExternalStore } from 'react';
-import type { LatestReply } from '@shared/schemas/core';
+import type { AgentWorking, LatestReply } from '@shared/schemas/core';
 import { useSession } from '@web/lib/auth';
 import type { ReactNode } from 'react';
 
@@ -80,6 +80,8 @@ export interface RailItem {
   latestReply?: LatestReply | null;
   /** A second line detail, e.g. the task's stage and assignees. */
   detail?: ReactNode;
+  /** Agents working on it right now (BAT#42's dot). */
+  working?: AgentWorking | null;
 }
 
 /** What the rail needs of its (infinite) query. */

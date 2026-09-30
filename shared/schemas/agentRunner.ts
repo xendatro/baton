@@ -194,6 +194,11 @@ export const runnerHeartbeatInputSchema = z.object({
   running: z.number().int().nonnegative().max(10_000).default(0),
   /** Ids of the jobs running now: the answer names those cancelled meanwhile (BAT-33). */
   jobIds: z.array(idSchema).max(1_000).optional(),
+  /**
+   * BAT#42: of `jobIds`, those whose harness is running now (not starting, waiting for usage or
+   * finishing): the items show "… is working". Older apps omit it and all of `jobIds` count.
+   */
+  activeJobIds: z.array(idSchema).max(1_000).optional(),
 });
 export type RunnerHeartbeatInput = z.infer<typeof runnerHeartbeatInputSchema>;
 

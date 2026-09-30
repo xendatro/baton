@@ -59,6 +59,7 @@ export function IssueRail({
         unreadCount: issue.unreadCount,
         activityAt: issue.lastActivityAt,
         latestReply: issue.latestReply,
+        working: issue.agentWorking,
       })),
     [issues],
   );

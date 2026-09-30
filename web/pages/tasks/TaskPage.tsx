@@ -45,6 +45,7 @@ import { Spinner } from '@web/components/common/Spinner';
 import { StatusBadge } from '@web/components/common/StatusBadge';
 import { UserAvatar } from '@web/components/common/UserAvatar';
 import { UserName } from '@web/components/common/UserName';
+import { WorkingDot } from '@web/components/common/WorkingDot';
 import { RichTextEditor } from '@web/components/editor/RichTextEditor';
 import { MarkdownView } from '@web/components/markdown/MarkdownView';
 import { ReactionBar } from '@web/components/reactions/ReactionBar';
@@ -485,6 +486,7 @@ function TaskView({ task, team, project }: { task: Task; team: MeTeam; project: 
               onDoubleClick={canEditText ? () => setEditingTitle(true) : undefined}
             >
               {task.title}
+              <WorkingDot working={task.agentWorking} className="ml-2 align-middle" />
             </h1>
           )}
         </div>

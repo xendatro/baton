@@ -65,6 +65,7 @@ export function TaskRail({
         unreadCount: task.unreadCount,
         activityAt: task.lastActivityAt ?? task.updatedAt,
         latestReply: task.latestReply,
+        working: task.agentWorking,
         detail: <TaskDetail task={task} />,
       })),
     [tasks],

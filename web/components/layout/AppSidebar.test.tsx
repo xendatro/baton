@@ -358,6 +358,7 @@ describe('AppSidebar team order, pinned projects and right-click menus', () => {
       'Open team',
       'Members',
       'Team settings',
+      'Your settings',
       'Fold projects',
       'Copy link',
       'Leave team…',

@@ -5,6 +5,7 @@ import {
   ListTodoIcon,
   PlusIcon,
   SettingsIcon,
+  UserCogIcon,
   UserPlusIcon,
   UsersIcon,
 } from 'lucide-react';
@@ -131,6 +132,12 @@ function TeamHome({ team }: { team: MeTeam }) {
                 Invite people
               </Button>
             ) : null}
+            <Button variant="ghost" size="sm" asChild>
+              <Link to={`/t/${team.slug}/me`} aria-label="Your settings for this team">
+                <UserCogIcon aria-hidden="true" />
+                Your settings
+              </Link>
+            </Button>
             <Button variant="outline" size="sm" asChild>
               <Link to={`/t/${team.slug}/settings`}>
                 <SettingsIcon aria-hidden="true" />

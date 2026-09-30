@@ -176,6 +176,8 @@ export const notificationSchema = z.object({
   url: z.string(),
   readAt: timestampSchema.nullable(),
   createdAt: timestampSchema,
+  /** The project of its subject (BAT-34); null for team-level notifications. */
+  projectId: z.string().nullable().optional(),
 });
 export type Notification = z.infer<typeof notificationSchema>;
 
@@ -368,6 +370,10 @@ export type CreateApiKeyResponse = z.infer<typeof createApiKeyResponseSchema>;
 
 export const listNotificationsQuerySchema = cursorPaginationSchema.extend({
   unread: z.enum(['1', '0']).optional(),
+  /** Only notifications from this team (BAT-34). */
+  teamId: idSchema.optional(),
+  /** Only notifications about this project's items (BAT-34). */
+  projectId: idSchema.optional(),
 });
 export type ListNotificationsQuery = z.infer<typeof listNotificationsQuerySchema>;
 
@@ -376,6 +382,22 @@ export type NotificationListResponse = z.infer<typeof notificationListResponseSc
 
 export const unreadCountResponseSchema = z.object({ count: z.number().int().nonnegative() });
 export type UnreadCountResponse = z.infer<typeof unreadCountResponseSchema>;
+
+/** One team's or project's notifications in the inbox: how many, and how many unread. */
+const notificationTallySchema = z.object({
+  total: z.number().int().nonnegative(),
+  unread: z.number().int().nonnegative(),
+});
+
+/**
+ * `GET /api/notifications/counts` (BAT-34): the inbox broken down by team and by project, only
+ * those the viewer has notifications from. Team-level notifications count for their team only.
+ */
+export const notificationCountsResponseSchema = z.object({
+  teams: z.array(notificationTallySchema.extend({ teamId: z.string() })),
+  projects: z.array(notificationTallySchema.extend({ teamId: z.string(), projectId: z.string() })),
+});
+export type NotificationCountsResponse = z.infer<typeof notificationCountsResponseSchema>;
 
 /** A task or issue: `item` marks every notification about it and its replies (BAT-15). */
 export const notificationItemSchema = z.object({
@@ -389,12 +411,19 @@ export const markNotificationsReadInputSchema = z
     ids: z.array(idSchema).min(1).max(LIMITS.bulkIds).optional(),
     all: z.literal(true).optional(),
     item: notificationItemSchema.optional(),
+    /** With `all`: only this team's notifications (the inbox's team filter, BAT-34). */
+    teamId: idSchema.optional(),
+    /** With `all`: only this project's notifications (the inbox's project filter, BAT-34). */
+    projectId: idSchema.optional(),
   })
   .refine(
     (value) =>
       [value.ids, value.all, value.item].filter((field) => field !== undefined).length === 1,
     { message: 'Pass one of ids, all: true or item' },
-  );
+  )
+  .refine((value) => value.all || (value.teamId === undefined && value.projectId === undefined), {
+    message: 'teamId and projectId go with all: true',
+  });
 export type MarkNotificationsReadInput = z.infer<typeof markNotificationsReadInputSchema>;
 
 export const markNotificationsReadResponseSchema = z.object({

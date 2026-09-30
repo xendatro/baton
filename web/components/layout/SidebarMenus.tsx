@@ -149,6 +149,7 @@ export function TeamContextMenu({
             label="Team settings"
             onSelect={() => go(`${base}/settings/general`)}
           />
+          <MenuRow icon={UserCogIcon} label="Your settings" onSelect={() => go(`${base}/me`)} />
           {onToggleFold ? (
             <MenuRow
               icon={team.collapsed ? ChevronsUpDownIcon : ChevronsDownUpIcon}

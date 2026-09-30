@@ -53,3 +53,41 @@ test('right-click a task card → Move to its next stage', async ({ page }) => {
     .click();
   await expect(page).toHaveURL(new RegExp(`${task.path}$`));
 });
+
+test('right-click a task card → Labels → check one: the chip appears', async ({ page }) => {
+  await signedInUser(page);
+  const slug = `lbl-${randomBytes(4).toString('hex')}`;
+  const team = await post<{ id: string }>(page, '/api/teams', { name: `L ${slug}`, slug });
+  const project = await post<{ id: string }>(page, `/api/teams/${team.id}/projects`, {
+    name: 'Labels',
+    key: 'LBL',
+  });
+  await post(page, `/api/projects/${project.id}/labels`, { name: 'frontend', color: '#6366f1' });
+  const task = await post<{ ref: string; id: string }>(page, `/api/projects/${project.id}/tasks`, {
+    title: 'Label me',
+  });
+  await page.goto(`/t/${slug}/p/LBL/tasks`);
+  const card = column(page, 'Backlog').getByRole('link', { name: /Label me/ });
+  await expect(card).toBeVisible();
+  await expect(card.getByText('frontend')).toHaveCount(0);
+
+  await card.click({ button: 'right' });
+  const menu = page.getByRole('menu', { name: `${task.ref} actions` });
+  await menu.getByRole('menuitem', { name: 'Labels' }).click();
+  const item = page.getByRole('menuitemcheckbox', { name: 'frontend' });
+  await expect(item).toHaveAttribute('aria-checked', 'false');
+  await item.click();
+  await expect(item).toHaveAttribute('aria-checked', 'true');
+  await page.keyboard.press('Escape');
+  await expect(card.getByText('frontend')).toBeVisible();
+
+  // Saved on the server.
+  const saved = (await (await page.request.get(`/api/tasks/${task.id}`)).json()) as {
+    labels: Array<{ name: string }>;
+  };
+  expect(saved.labels.map((label) => label.name)).toEqual(['frontend']);
+  await page.reload();
+  await expect(column(page, 'Backlog').getByRole('link', { name: /Label me/ })).toContainText(
+    'frontend',
+  );
+});

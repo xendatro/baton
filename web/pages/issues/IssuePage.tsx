@@ -61,6 +61,7 @@ import {
   useSetResolved,
   useUpdateIssue,
 } from './queries';
+import { useIssueLabelsMenu } from './issueLabelsMenu';
 
 /**
  * Issue page (`/t/:team/p/:key/issues/:number`): the header (title edited in place, state, author),
@@ -290,6 +291,7 @@ function IssueDetail({
             <IssueMenu
               issue={issue}
               canEdit={canEdit}
+              canTriage={canTriage}
               canDelete={canDelete}
               onCopyLink={() => void copyText(link)}
               onCopyRef={() => void copyText(issue.ref, 'Reference')}
@@ -433,6 +435,7 @@ function IssueDetail({
 function IssueMenu({
   issue,
   canEdit,
+  canTriage,
   canDelete,
   onCopyLink,
   onCopyRef,
@@ -440,48 +443,55 @@ function IssueMenu({
 }: {
   issue: Issue;
   canEdit: boolean;
+  canTriage: boolean;
   canDelete: boolean;
   onCopyLink: () => void;
   onCopyRef: () => void;
   onDelete: () => void;
 }) {
+  // BAT-40: Labels › here too (the same people as the sidebar's labels).
+  const labels = useIssueLabelsMenu(issue, 'dropdown', canTriage);
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button variant="outline" size="icon-sm" aria-label="More actions">
-          <MoreHorizontalIcon aria-hidden="true" />
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-48">
-        <DropdownMenuItem onSelect={onCopyLink}>
-          <LinkIcon aria-hidden="true" />
-          Copy link
-        </DropdownMenuItem>
-        <DropdownMenuItem onSelect={onCopyRef}>
-          <span aria-hidden="true" className="w-4 text-center font-mono text-xs">
-            #
-          </span>
-          Copy reference
-        </DropdownMenuItem>
-        {canEdit ? (
-          <ConversationModeMenuItem
-            parentType="issue"
-            parentId={issue.id}
-            projectId={issue.projectId}
-            mode={issue.conversationMode}
-          />
-        ) : null}
-        {canDelete ? (
-          <>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem variant="destructive" onSelect={onDelete}>
-              <Trash2Icon aria-hidden="true" />
-              Delete issue
-            </DropdownMenuItem>
-          </>
-        ) : null}
-      </DropdownMenuContent>
-    </DropdownMenu>
+    <>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button variant="outline" size="icon-sm" aria-label="More actions">
+            <MoreHorizontalIcon aria-hidden="true" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-48">
+          <DropdownMenuItem onSelect={onCopyLink}>
+            <LinkIcon aria-hidden="true" />
+            Copy link
+          </DropdownMenuItem>
+          <DropdownMenuItem onSelect={onCopyRef}>
+            <span aria-hidden="true" className="w-4 text-center font-mono text-xs">
+              #
+            </span>
+            Copy reference
+          </DropdownMenuItem>
+          {labels.submenu}
+          {canEdit ? (
+            <ConversationModeMenuItem
+              parentType="issue"
+              parentId={issue.id}
+              projectId={issue.projectId}
+              mode={issue.conversationMode}
+            />
+          ) : null}
+          {canDelete ? (
+            <>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem variant="destructive" onSelect={onDelete}>
+                <Trash2Icon aria-hidden="true" />
+                Delete issue
+              </DropdownMenuItem>
+            </>
+          ) : null}
+        </DropdownMenuContent>
+      </DropdownMenu>
+      {labels.dialog}
+    </>
   );
 }
 

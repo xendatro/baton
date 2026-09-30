@@ -89,6 +89,19 @@ function renderBoard() {
     'POST /api/tasks/task1/move': record(moved),
     'PATCH /api/tasks/task1': record(card),
     'POST /api/tasks/task1/claim': record(card),
+    '/api/projects/p1/labels': {
+      items: [
+        {
+          id: 'l1',
+          projectId: 'p1',
+          name: 'bug',
+          color: '#ef4444',
+          description: '',
+          issueCount: 0,
+          taskCount: 0,
+        },
+      ],
+    },
   });
   const onMove = vi.fn();
   const { queryClient } = renderWorkPage(
@@ -184,5 +197,29 @@ describe('Task card right-click menu', () => {
         .getAllByRole('menuitem')
         .map((item) => item.textContent),
     ).toEqual(['New task here…', 'Edit stage']);
+  });
+
+  it('adds a label from the Labels submenu', async () => {
+    const user = userEvent.setup();
+    const { sent, ready } = renderBoard();
+    await ready();
+    const cardLink = await screen.findByRole('link', { name: /WEB-7/ });
+    fireEvent.contextMenu(cardLink);
+    await user.click(await screen.findByRole('menuitem', { name: 'Labels' }));
+    const bug = await screen.findByRole('menuitemcheckbox', { name: 'bug' });
+    expect(bug).toHaveAttribute('aria-checked', 'false');
+    // The viewer manages labels: New label… is offered too.
+    expect(screen.getByRole('menuitem', { name: 'New label…' })).toBeInTheDocument();
+    bug.focus();
+    await user.keyboard('{Enter}');
+    await waitFor(() =>
+      expect(sent).toContainEqual({
+        method: 'PATCH',
+        path: '/api/tasks/task1',
+        body: { labels: { add: ['l1'] } },
+      }),
+    );
+    // The submenu stays open for the next label.
+    expect(screen.getByRole('menuitemcheckbox', { name: 'bug' })).toBeInTheDocument();
   });
 });

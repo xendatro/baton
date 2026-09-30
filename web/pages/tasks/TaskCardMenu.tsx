@@ -42,11 +42,13 @@ import {
   useToggleAssignee,
 } from './queries';
 import { SendBackDialog } from './SendBackDialog';
+import { useTaskLabelsMenu } from './taskLabelsMenu';
 
 /**
  * A task's right-click menu on the board and in the list: open it (here or in a new tab), copy
  * its link or ref, move it along its pipeline (the next stage, or back with a reason: the strict
- * moves of BAT-27), assign it to yourself, claim it, delete it (with confirmation and Undo).
+ * moves of BAT-27), add or remove labels (BAT-40), assign it to yourself, claim it, delete it (with
+ * confirmation and Undo).
  * Wraps the card or row; a normal click still opens the task, and the Menu key / Shift+F10 on the
  * focused card opens the menu too.
  */
@@ -81,6 +83,7 @@ export function TaskContextMenu({
   const back = moves?.back ?? [];
   const assigned = task.assignees.users.some((user) => user.id === viewerId);
   const claimedByMe = task.claim?.user.id === viewerId;
+  const labels = useTaskLabelsMenu(task, 'context', canMove);
 
   const moveForward = (status: Status) =>
     move.mutate(
@@ -191,6 +194,7 @@ export function TaskContextMenu({
               </ContextMenuSub>
             </>
           ) : null}
+          {labels.submenu}
           {canMove && !assigned && viewerId ? (
             <MenuRow icon={UserPlusIcon} label="Assign to me" onSelect={assignToMe} />
           ) : null}
@@ -231,6 +235,7 @@ export function TaskContextMenu({
           }
         />
       ) : null}
+      {labels.dialog}
       <ConfirmDialog
         open={confirmDelete}
         onOpenChange={setConfirmDelete}

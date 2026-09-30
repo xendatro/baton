@@ -22,6 +22,8 @@ export const queryKeys = {
     all: () => ['notifications'] as const,
     list: (params: KeyParams = {}) => ['notifications', 'list', params] as const,
     unreadCount: () => ['notifications', 'unread-count'] as const,
+    /** Per-team and per-project counts (the inbox filters, BAT-34). */
+    counts: () => ['notifications', 'counts'] as const,
   },
 
   teams: {
@@ -206,5 +208,7 @@ export const queryKeys = {
         : (['account', 'agent-actions', params] as const),
     /** Your settings for one project (BAT-29); `me.updated` refreshes them. */
     projectSettings: (projectId: string) => ['account', 'project-settings', projectId] as const,
+    /** Your settings for one team (BAT-34). */
+    teamSettings: (teamId: string) => ['account', 'team-settings', teamId] as const,
   },
 };

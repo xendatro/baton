@@ -23,11 +23,13 @@ import {
   type MoveTaskInput,
   type Task,
   type TaskCard,
+  type TaskLabelSummary,
   type UpdateTaskInput,
 } from '@shared/schemas/tasks';
 import type { AssigneeToggle } from '@web/components/pickers/AssigneePicker';
 import { api } from '@web/lib/api';
 import { queryKeys, type KeyParams } from '@web/lib/queryKeys';
+import { toggleLabel, type LabelToggle } from '../projects/labelToggle';
 import { useMembers, useRoles } from '../teams/api';
 
 /**
@@ -331,6 +333,72 @@ export function useToggleAssignee(task: Pick<Task, 'id' | 'projectId' | 'number'
       if (lastInFlight()) void storeTask(queryClient, updated);
     },
     onSettled: () => (lastInFlight() ? refreshTasks(queryClient, task.projectId) : undefined),
+  });
+}
+
+/** Applies `update` to the task's labels wherever the project's task caches hold it. */
+function patchTaskLabels(
+  queryClient: QueryClient,
+  task: Pick<Task, 'id' | 'projectId'>,
+  update: (labels: TaskLabelSummary[]) => TaskLabelSummary[],
+): void {
+  const patch = <T extends TaskCard>(card: T): T =>
+    card.id === task.id && Array.isArray(card.labels)
+      ? { ...card, labels: update(card.labels) }
+      : card;
+  queryClient.setQueriesData<unknown>(
+    { queryKey: queryKeys.tasks.all(task.projectId) },
+    (data: unknown) => {
+      if (typeof data !== 'object' || data === null) return data;
+      if ('columns' in data) {
+        const board = data as BoardResponse;
+        return {
+          ...board,
+          columns: board.columns.map((column) => ({ ...column, tasks: column.tasks.map(patch) })),
+        };
+      }
+      if ('items' in data) {
+        const list = data as { items: TaskCard[] };
+        return { ...list, items: list.items.map(patch) };
+      }
+      if ('id' in data && 'labels' in data) return patch(data as Task);
+      return data;
+    },
+  );
+}
+
+/**
+ * Adds or removes one label of a task (BAT-40: the right-click menus' Labels submenu): its own
+ * `{add}` / `{remove}` request, shown at once on every cached board, list and task page, and
+ * undone on failure. Like assignee toggles, only the last toggle in flight refreshes.
+ */
+export function useToggleTaskLabel(task: Pick<Task, 'id' | 'projectId'>) {
+  const queryClient = useQueryClient();
+  const mutationKey = ['tasks', task.id, 'labels'];
+  const lastInFlight = () => queryClient.isMutating({ mutationKey }) === 1;
+  return useMutation({
+    mutationKey,
+    mutationFn: (toggle: LabelToggle<TaskLabelSummary>) =>
+      api.patch(
+        `/api/tasks/${enc(task.id)}`,
+        {
+          labels: toggle.add ? { add: [toggle.label.id] } : { remove: [toggle.label.id] },
+        } satisfies UpdateTaskInput,
+        { schema: taskSchema },
+      ),
+    onMutate: async (toggle) => {
+      await queryClient.cancelQueries({ queryKey: queryKeys.tasks.all(task.projectId) });
+      patchTaskLabels(queryClient, task, (labels) => toggleLabel(labels, toggle));
+    },
+    onError: (_error, toggle) =>
+      patchTaskLabels(queryClient, task, (labels) =>
+        toggleLabel(labels, { ...toggle, add: !toggle.add }),
+      ),
+    onSuccess: (updated) => {
+      if (lastInFlight()) void storeTask(queryClient, updated);
+    },
+    onSettled: () => (lastInFlight() ? refreshTasks(queryClient, task.projectId) : undefined),
+    meta: { suppressErrorToast: true },
   });
 }
 

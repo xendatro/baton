@@ -12,7 +12,9 @@ export interface PriorityIconProps {
   className?: string;
 }
 
-/** Linear-style priority: dashes (none), 1–3 filled bars (low–high), or an urgent badge. */
+/**
+ * Linear-style priority: empty bar outlines (none), 1–3 filled bars (low–high), or an urgent badge.
+ */
 export function PriorityIcon({ value, showLabel = false, className }: PriorityIconProps) {
   const label = priorityLabel(value);
   return (
@@ -43,10 +45,26 @@ function PriorityGlyph({ value }: { value: PriorityValue }) {
     );
   }
   if (value === 0) {
+    // BAT#33: the bars' empty outlines, not three dashes (which read as a "⋯" menu button).
     return (
-      <svg viewBox="0 0 16 16" className="size-4 shrink-0 text-muted-foreground" aria-hidden="true">
-        {[1.5, 6.5, 11.5].map((x) => (
-          <rect key={x} x={x} y="7.25" width="3" height="1.5" rx="0.75" fill="currentColor" />
+      <svg
+        viewBox="0 0 16 16"
+        className="size-4 shrink-0 text-muted-foreground/70"
+        aria-hidden="true"
+        data-testid="no-priority-glyph"
+      >
+        {BARS.map((bar) => (
+          <rect
+            key={bar.x}
+            x={bar.x + 0.5}
+            y={bar.y + 0.5}
+            width="2"
+            height={bar.height - 1}
+            rx="0.75"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1"
+          />
         ))}
       </svg>
     );

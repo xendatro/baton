@@ -54,6 +54,27 @@ describe('TaskCardBody', () => {
     expect(screen.getByText(/Mia via Claude on laptop claimed this/)).toBeInTheDocument();
   });
 
+  it('puts the priority at the start of the footer, and nothing for no priority (BAT#33)', () => {
+    const { container, rerender } = render(
+      <TooltipProvider>
+        <TaskCardBody task={base} />
+      </TooltipProvider>,
+    );
+    const priority = screen.getByTitle('Urgent');
+    // The footer row (with the due date and replies), first; not the top row with the key.
+    const footer = priority.parentElement!;
+    expect(footer.firstElementChild).toBe(priority);
+    expect(footer).toHaveTextContent('replies');
+    expect(footer).not.toHaveTextContent('API-7');
+    rerender(
+      <TooltipProvider>
+        <TaskCardBody task={{ ...base, priority: 0 }} />
+      </TooltipProvider>,
+    );
+    expect(screen.queryByText('No priority')).not.toBeInTheDocument();
+    expect(container.querySelector('[data-testid="no-priority-glyph"]')).toBeNull();
+  });
+
   it('shows a labelled dot while an agent works on it, and none otherwise (BAT#42)', () => {
     const { rerender } = render(
       <TooltipProvider>

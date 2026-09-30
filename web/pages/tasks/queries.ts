@@ -268,22 +268,41 @@ export function useUpdateTask(task: Pick<Task, 'id' | 'projectId' | 'number'>) {
     mutationFn: ({ input }: { input: UpdateTaskInput; optimistic?: Partial<Task> }) =>
       api.patch(`/api/tasks/${enc(task.id)}`, input, { schema: taskSchema }),
     onMutate: async ({ optimistic }) => {
-      if (!optimistic) return { previous: undefined };
-      await queryClient.cancelQueries({ queryKey: key });
+      if (!optimistic) return { previous: undefined, cards: [] };
+      // BAT#33: a title or priority set from a card's menu shows at once on boards and lists too.
+      const cardFields = pickCardFields(optimistic);
+      const all = queryKeys.tasks.all(task.projectId);
+      await queryClient.cancelQueries({ queryKey: cardFields ? all : key });
       const previous = queryClient.getQueryData<Task>(key);
+      const cards = cardFields ? queryClient.getQueriesData({ queryKey: all }) : [];
+      if (cardFields) patchTaskCards(queryClient, task, (card) => ({ ...card, ...cardFields }));
       if (previous) queryClient.setQueryData(key, { ...previous, ...optimistic });
-      return { previous };
+      return { previous, cards };
     },
     onError: (_error, _variables, context) => {
-      if (context?.previous) queryClient.setQueryData(key, context.previous);
+      if (context?.cards.length) restore(queryClient, context.cards);
+      else if (context?.previous) queryClient.setQueryData(key, context.previous);
     },
     onSuccess: (updated) => storeTask(queryClient, updated),
     onSettled: () => refreshTasks(queryClient, task.projectId),
   });
 }
 
+/** The fields of an optimistic edit that board cards and list rows show as they are. */
+function pickCardFields(
+  optimistic: Partial<Task>,
+): Partial<Pick<TaskCard, 'title' | 'priority'>> | null {
+  const fields: Partial<Pick<TaskCard, 'title' | 'priority'>> = {};
+  if (optimistic.title !== undefined) fields.title = optimistic.title;
+  if (optimistic.priority !== undefined) fields.priority = optimistic.priority;
+  return Object.keys(fields).length > 0 ? fields : null;
+}
+
 /** The task with one toggle applied to its assignees (idempotent). */
-export function applyAssigneeToggle(task: Task, toggle: AssigneeToggle): Task {
+export function applyAssigneeToggle<T extends Pick<TaskCard, 'assignees'>>(
+  task: T,
+  toggle: AssigneeToggle,
+): T {
   const { users, roles } = task.assignees;
   const without = <T extends { id: string }>(list: readonly T[]) =>
     list.filter((item) => item.id !== toggle.assignee.id);
@@ -303,7 +322,6 @@ export function applyAssigneeToggle(task: Task, toggle: AssigneeToggle): Task {
  */
 export function useToggleAssignee(task: Pick<Task, 'id' | 'projectId' | 'number'>) {
   const queryClient = useQueryClient();
-  const key = queryKeys.tasks.detail(task.projectId, task.number);
   const mutationKey = ['tasks', task.id, 'assignees'];
   const lastInFlight = () => queryClient.isMutating({ mutationKey }) === 1;
   return useMutation({
@@ -318,17 +336,15 @@ export function useToggleAssignee(task: Pick<Task, 'id' | 'projectId' | 'number'
         } satisfies UpdateTaskInput,
         { schema: taskSchema },
       ),
+    // The task page and every cached board and list (BAT#33: a card's Assign submenu).
     onMutate: async (toggle) => {
-      await queryClient.cancelQueries({ queryKey: key });
-      queryClient.setQueryData<Task>(key, (previous) =>
-        previous ? applyAssigneeToggle(previous, toggle) : previous,
-      );
+      await queryClient.cancelQueries({ queryKey: queryKeys.tasks.all(task.projectId) });
+      patchTaskCards(queryClient, task, (card) => applyAssigneeToggle(card, toggle));
     },
-    onError: (_error, toggle) => {
-      queryClient.setQueryData<Task>(key, (previous) =>
-        previous ? applyAssigneeToggle(previous, { ...toggle, add: !toggle.add }) : previous,
-      );
-    },
+    onError: (_error, toggle) =>
+      patchTaskCards(queryClient, task, (card) =>
+        applyAssigneeToggle(card, { ...toggle, add: !toggle.add }),
+      ),
     onSuccess: (updated) => {
       if (lastInFlight()) void storeTask(queryClient, updated);
     },
@@ -342,10 +358,18 @@ function patchTaskLabels(
   task: Pick<Task, 'id' | 'projectId'>,
   update: (labels: TaskLabelSummary[]) => TaskLabelSummary[],
 ): void {
-  const patch = <T extends TaskCard>(card: T): T =>
-    card.id === task.id && Array.isArray(card.labels)
-      ? { ...card, labels: update(card.labels) }
-      : card;
+  patchTaskCards(queryClient, task, (card) =>
+    Array.isArray(card.labels) ? { ...card, labels: update(card.labels) } : card,
+  );
+}
+
+/** Applies `update` to the task wherever the project's task caches hold it (boards, lists, page). */
+function patchTaskCards(
+  queryClient: QueryClient,
+  task: Pick<Task, 'id' | 'projectId'>,
+  update: <T extends TaskCard>(card: T) => T,
+): void {
+  const patch = <T extends TaskCard>(card: T): T => (card.id === task.id ? update(card) : card);
   queryClient.setQueriesData<unknown>(
     { queryKey: queryKeys.tasks.all(task.projectId) },
     (data: unknown) => {

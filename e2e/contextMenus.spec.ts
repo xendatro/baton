@@ -1,5 +1,6 @@
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomInt } from 'node:crypto';
 import type { Page } from '@playwright/test';
+import { E2E_BASE_URL } from './support/env.ts';
 import { expect, ORIGIN, signedInUser, test } from './support/fixtures.ts';
 
 /**
@@ -90,4 +91,85 @@ test('right-click a task card → Labels → check one: the chip appears', async
   await expect(column(page, 'Backlog').getByRole('link', { name: /Label me/ })).toContainText(
     'frontend',
   );
+});
+
+/** BAT#33: the "⋯" button in a card's top-right corner. */
+async function menuBoard(page: Page, prefix: string, key: string, title: string) {
+  const slug = `${prefix}-${randomBytes(4).toString('hex')}`;
+  const team = await post<{ id: string }>(page, '/api/teams', { name: `D ${slug}`, slug });
+  const project = await post<{ id: string }>(page, `/api/teams/${team.id}/projects`, {
+    name: 'Dots',
+    key,
+  });
+  const task = await post<{ id: string; ref: string }>(page, `/api/projects/${project.id}/tasks`, {
+    title,
+  });
+  return { slug, team, project, task };
+}
+
+test('⋯ on a task card → Rename: the title changes on the board', async ({ page }) => {
+  await signedInUser(page);
+  const { slug, task } = await menuBoard(page, 'ren', 'REN', 'Old name');
+  await page.goto(`/t/${slug}/p/REN/tasks`);
+  const card = column(page, 'Backlog').getByRole('link', { name: /Old name/ });
+  await expect(card).toBeVisible();
+
+  await card.hover();
+  await page.getByRole('button', { name: `Actions for ${task.ref}` }).click();
+  // The button opens the menu, not the task.
+  await expect(page).toHaveURL(new RegExp(`/t/${slug}/p/REN/tasks(\\?|$)`));
+  await page.getByRole('menuitem', { name: 'Rename…' }).click();
+  const dialog = page.getByRole('dialog', { name: `Rename ${task.ref}` });
+  await dialog.getByRole('textbox', { name: 'Title' }).fill('New name');
+  await dialog.getByRole('button', { name: 'Rename' }).click();
+  await expect(dialog).toBeHidden();
+
+  await expect(column(page, 'Backlog').getByRole('link', { name: /New name/ })).toBeVisible();
+  const saved = (await (await page.request.get(`/api/tasks/${task.id}`)).json()) as {
+    title: string;
+  };
+  expect(saved.title).toBe('New name');
+  await page.reload();
+  await expect(column(page, 'Backlog').getByRole('link', { name: /New name/ })).toBeVisible();
+});
+
+test('⋯ on a task card → Assign → a teammate is added', async ({ page, browser }) => {
+  await signedInUser(page);
+  const { slug, team, task } = await menuBoard(page, 'asg', 'ASG', 'Needs a hand');
+  const invite = await post<{ code: string }>(page, `/api/teams/${team.id}/invites`, {
+    expiresIn: '7d',
+    maxUses: null,
+  });
+  const context = await browser.newContext({
+    baseURL: E2E_BASE_URL,
+    extraHTTPHeaders: {
+      'CF-Connecting-IP': `10.${randomInt(256)}.${randomInt(256)}.${randomInt(1, 255)}`,
+    },
+  });
+  const matePage = await context.newPage();
+  const mate = await signedInUser(matePage);
+  const accepted = await matePage.request.post(`/api/invites/${invite.code}/accept`, {
+    headers: ORIGIN,
+  });
+  expect(accepted.status()).toBe(200);
+  await context.close();
+
+  await page.goto(`/t/${slug}/p/ASG/tasks`);
+  const card = column(page, 'Backlog').getByRole('link', { name: /Needs a hand/ });
+  await expect(card).toBeVisible();
+  await card.hover();
+  await page.getByRole('button', { name: `Actions for ${task.ref}` }).click();
+  await page.getByRole('menuitem', { name: 'Assign', exact: true }).click();
+  // Their agent is listed too ("<name> AI").
+  const item = page.getByRole('menuitemcheckbox', { name: mate.name, exact: true });
+  await expect(item).toHaveAttribute('aria-checked', 'false');
+  await item.click();
+  await expect(item).toHaveAttribute('aria-checked', 'true');
+  await page.keyboard.press('Escape');
+  await expect(card).toContainText(`Assigned to ${mate.name}`);
+
+  const saved = (await (await page.request.get(`/api/tasks/${task.id}`)).json()) as {
+    assignees: { users: Array<{ name: string }> };
+  };
+  expect(saved.assignees.users.map((user) => user.name)).toEqual([mate.name]);
 });

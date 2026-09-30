@@ -392,7 +392,7 @@ export function Board({
       <DragOverlay dropAnimation={{ duration: 150, easing: 'ease-out' }}>
         {active ? (
           <div className="w-[17rem] cursor-grabbing rounded-lg border bg-card p-3 shadow-lg ring-2 ring-primary/30">
-            <TaskCardBody task={active} showPipeline={Boolean(pipelineNameOf)} />
+            <TaskCardBody task={active} showPipeline={Boolean(pipelineNameOf)} actionsSpace />
           </div>
         ) : null}
       </DragOverlay>
@@ -606,7 +606,7 @@ function SortableCard({
       style={{ transform: CSS.Translate.toString(transform), transition }}
       className={cn(isDragging && 'opacity-40')}
     >
-      <TaskContextMenu task={task} statuses={statuses} disabled={isDragging}>
+      <TaskContextMenu task={task} statuses={statuses} disabled={isDragging} actionsButton>
         <Link
           ref={setNodeRef}
           to={task.path}
@@ -621,7 +621,7 @@ function SortableCard({
               'cursor-grab touch-manipulation select-none [-webkit-touch-callout:none] active:cursor-grabbing',
           )}
         >
-          <TaskCardBody task={task} showPipeline={showPipeline} />
+          <TaskCardBody task={task} showPipeline={showPipeline} actionsSpace />
         </Link>
       </TaskContextMenu>
     </li>
